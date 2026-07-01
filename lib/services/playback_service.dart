@@ -1,0 +1,134 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+
+import '../domain/playback_state.dart';
+import '../domain/queue_item.dart';
+import 'queue_service.dart';
+
+class PlaybackService extends ChangeNotifier {
+  PlaybackService({
+    required QueueService queueService,
+    QueueItem? initialItem,
+  })  : _queueService = queueService,
+        _state = PlaybackState.initial(currentItem: initialItem) {
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+  }
+
+  final QueueService _queueService;
+  late final Timer _ticker;
+  PlaybackState _state;
+
+  PlaybackState get state => _state;
+
+  void disposeService() {
+    _ticker.cancel();
+  }
+
+  void play() {
+    _setState(_state.copyWith(mode: PlaybackMode.playing));
+  }
+
+  void pause() {
+    _setState(_state.copyWith(mode: PlaybackMode.paused));
+  }
+
+  void togglePlayPause() {
+    _state.isPlaying ? pause() : play();
+  }
+
+  void replay() {
+    _setState(
+      _state.copyWith(
+        position: Duration.zero,
+        mode: PlaybackMode.playing,
+      ),
+    );
+  }
+
+  void next() {
+    final nextItem = _queueService.takeNext();
+    if (nextItem == null) {
+      _setState(
+        _state.copyWith(
+          mode: PlaybackMode.paused,
+          position: Duration.zero,
+          clearCurrentItem: true,
+          clearUpNext: true,
+        ),
+      );
+      return;
+    }
+
+    _setState(
+      _state.copyWith(
+        mode: PlaybackMode.playing,
+        position: Duration.zero,
+        currentItem: nextItem,
+        upNext: _peekNextQueueItem(),
+      ),
+    );
+  }
+
+  void setCurrent(QueueItem item, {bool startPlaying = true}) {
+    _setState(
+      _state.copyWith(
+        currentItem: item,
+        mode: startPlaying ? PlaybackMode.playing : PlaybackMode.paused,
+        position: Duration.zero,
+        upNext: _peekNextQueueItem(),
+      ),
+    );
+  }
+
+  void setKey(int key) {
+    _setState(_state.copyWith(key: key.clamp(-6, 6).toInt()));
+  }
+
+  void transposeBy(int delta) {
+    setKey(_state.key + delta);
+  }
+
+  void setVolume(int volume) {
+    _setState(_state.copyWith(volume: volume.clamp(0, 100).toInt()));
+  }
+
+  void changeVolumeBy(int delta) {
+    setVolume(_state.volume + delta);
+  }
+
+  void toggleAudioTrack() {
+    final nextMode = _state.audioTrackMode == AudioTrackMode.vocal
+        ? AudioTrackMode.accompaniment
+        : AudioTrackMode.vocal;
+    _setState(_state.copyWith(audioTrackMode: nextMode));
+  }
+
+  void refreshUpNext() {
+    _setState(_state.copyWith(upNext: _peekNextQueueItem()));
+  }
+
+  void _tick() {
+    if (!_state.isPlaying || _state.currentSong == null) {
+      return;
+    }
+
+    final songDuration = _state.currentSong!.duration;
+    final nextPosition = _state.position + const Duration(seconds: 1);
+    if (nextPosition >= songDuration) {
+      next();
+      return;
+    }
+
+    _setState(_state.copyWith(position: nextPosition));
+  }
+
+  void _setState(PlaybackState nextState) {
+    _state = nextState;
+    notifyListeners();
+  }
+
+  QueueItem? _peekNextQueueItem() {
+    return _queueService.items.isEmpty ? null : _queueService.items.first;
+  }
+}

@@ -1,0 +1,18 @@
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+coverage/
+
+.idea/
+.vscode/
+*.iml
+.agents/
+.codex/
+kira-ktv-demo - *.html
+
+android/.gradle/
+android/local.properties
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
