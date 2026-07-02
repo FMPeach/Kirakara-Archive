@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 
+import '../../ime/ime_candidate.dart';
 import '../theme/kirakara_theme.dart';
 
 class CandidateBar extends StatelessWidget {
   const CandidateBar({
     super.key,
     required this.candidates,
+    required this.preedit,
     required this.onCandidateSelected,
   });
 
-  final List<String> candidates;
-  final ValueChanged<String> onCandidateSelected;
+  final List<ImeCandidate> candidates;
+  final String preedit;
+  final ValueChanged<int> onCandidateSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -22,12 +25,17 @@ class CandidateBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          for (final candidate in candidates)
+          if (preedit.isNotEmpty) ...[
+            _PreeditChip(text: preedit),
+            const SizedBox(width: 8),
+          ],
+          for (var index = 0; index < candidates.length; index++)
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: _CandidateChip(
-                text: candidate,
-                onTap: () => onCandidateSelected(candidate),
+                index: index,
+                candidate: candidates[index],
+                onTap: () => onCandidateSelected(index),
               ),
             ),
         ],
@@ -36,13 +44,45 @@ class CandidateBar extends StatelessWidget {
   }
 }
 
+class _PreeditChip extends StatelessWidget {
+  const _PreeditChip({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0x12ffffff),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: KiraColors.line),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: KiraColors.muted,
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
 class _CandidateChip extends StatelessWidget {
   const _CandidateChip({
-    required this.text,
+    required this.index,
+    required this.candidate,
     required this.onTap,
   });
 
-  final String text;
+  final int index;
+  final ImeCandidate candidate;
   final VoidCallback onTap;
 
   @override
@@ -62,7 +102,7 @@ class _CandidateChip extends StatelessWidget {
           ),
           child: Center(
             child: Text(
-              text,
+              '${index + 1} ${candidate.text}',
               style: const TextStyle(
                 color: KiraColors.cream,
                 fontSize: 16,

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../domain/song.dart';
+import '../../ime/ime_controller.dart';
+import '../../ime/search_query_controller.dart';
 import '../../services/search_service.dart';
 import '../theme/kirakara_theme.dart';
 import '../widgets/karaoke_input_panel.dart';
@@ -39,7 +41,8 @@ class BrowseScreen extends StatefulWidget {
 }
 
 class _BrowseScreenState extends State<BrowseScreen> {
-  final TextEditingController _searchController = TextEditingController();
+  late final SearchQueryController _searchQueryController;
+  late final ImeController _imeController;
 
   late BrowseMode _mode;
   String _songQuery = '';
@@ -50,7 +53,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
   String _categoryQuery = '';
   String _activeCategory = '热门';
   String _activeRanking = '热门榜';
-  String _imeMode = '英文';
   ArtistSummary? _activeArtist;
 
   @override
@@ -58,6 +60,11 @@ class _BrowseScreenState extends State<BrowseScreen> {
     super.initState();
     _mode = widget.initialMode;
     _songQuery = widget.initialQuery;
+    _searchQueryController = SearchQueryController(text: _songQuery);
+    _searchQueryController.addListener(_handleSearchControllerChanged);
+    _imeController = ImeController(
+      searchQueryController: _searchQueryController,
+    );
     _syncSearchController();
   }
 
@@ -76,7 +83,9 @@ class _BrowseScreenState extends State<BrowseScreen> {
 
   @override
   void dispose() {
-    _searchController.dispose();
+    _searchQueryController.removeListener(_handleSearchControllerChanged);
+    _imeController.dispose();
+    _searchQueryController.dispose();
     super.dispose();
   }
 
@@ -129,12 +138,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
           child: KaraokeInputPanel(
             activeTab: '歌名',
             placeholder: '搜索歌名、歌手、编号',
-            controller: _searchController,
-            imeMode: _imeMode,
-            onChanged: _handleSearchChanged,
+            controller: _searchQueryController.textController,
+            imeController: _imeController,
             onTab: _switchSearchTab,
-            onKey: _handleKey,
-            onImeMode: (mode) => setState(() => _imeMode = mode),
+            onSearch: _handleSearchSubmit,
           ),
         ),
       ],
@@ -180,12 +187,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
           child: KaraokeInputPanel(
             activeTab: '歌手',
             placeholder: '搜索歌手、角色、社团或声库',
-            controller: _searchController,
-            imeMode: _imeMode,
-            onChanged: _handleSearchChanged,
+            controller: _searchQueryController.textController,
+            imeController: _imeController,
             onTab: _switchSearchTab,
-            onKey: _handleKey,
-            onImeMode: (mode) => setState(() => _imeMode = mode),
+            onSearch: _handleSearchSubmit,
           ),
         ),
       ],
@@ -207,7 +212,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
           child: _ArtistDetailRail(
             artist: artist,
             songCount: total,
-            searchController: _searchController,
+            searchController: _searchQueryController.textController,
             onBack: () {
               setState(() {
                 _mode = BrowseMode.artists;
@@ -238,12 +243,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
             activeTab: '歌手内',
             tabs: const ['歌手内'],
             placeholder: '在 ${artist.name} 的歌曲中搜索',
-            controller: _searchController,
-            imeMode: _imeMode,
-            onChanged: _handleSearchChanged,
+            controller: _searchQueryController.textController,
+            imeController: _imeController,
             onTab: _switchSearchTab,
-            onKey: _handleKey,
-            onImeMode: (mode) => setState(() => _imeMode = mode),
+            onSearch: _handleSearchSubmit,
           ),
         ),
       ],
@@ -291,12 +294,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
           child: KaraokeInputPanel(
             activeTab: '分类',
             placeholder: '在当前分类中搜索歌曲、歌手、编号',
-            controller: _searchController,
-            imeMode: _imeMode,
-            onChanged: _handleSearchChanged,
+            controller: _searchQueryController.textController,
+            imeController: _imeController,
             onTab: _switchSearchTab,
-            onKey: _handleKey,
-            onImeMode: (mode) => setState(() => _imeMode = mode),
+            onSearch: _handleSearchSubmit,
           ),
         ),
       ],
@@ -316,12 +317,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
             activeTab: '外链',
             tabs: const ['外链'],
             placeholder: '搜索已解析的外链歌曲',
-            controller: _searchController,
-            imeMode: _imeMode,
-            onChanged: _handleSearchChanged,
+            controller: _searchQueryController.textController,
+            imeController: _imeController,
             onTab: _switchSearchTab,
-            onKey: _handleKey,
-            onImeMode: (mode) => setState(() => _imeMode = mode),
+            onSearch: _handleSearchSubmit,
           ),
         ),
       ],
@@ -376,12 +375,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
             activeTab: '排行',
             tabs: const ['排行'],
             placeholder: '在排行榜中搜索歌曲',
-            controller: _searchController,
-            imeMode: _imeMode,
-            onChanged: _handleSearchChanged,
+            controller: _searchQueryController.textController,
+            imeController: _imeController,
             onTab: _switchSearchTab,
-            onKey: _handleKey,
-            onImeMode: (mode) => setState(() => _imeMode = mode),
+            onSearch: _handleSearchSubmit,
           ),
         ),
       ],
@@ -444,24 +441,15 @@ class _BrowseScreenState extends State<BrowseScreen> {
     widget.onAnnouncement('搜索范围：$scope');
   }
 
-  void _handleKey(String key) {
-    if (key == '搜索') {
-      widget.onAnnouncement('搜索：${_searchController.text}');
+  void _handleSearchControllerChanged() {
+    if (!mounted) {
       return;
     }
+    _handleSearchChanged(_searchQueryController.text);
+  }
 
-    final current = _searchController.text;
-    final next = switch (key) {
-      '退格' => current.isEmpty ? current : current.substring(0, current.length - 1),
-      '清空' => '',
-      '空格' => '$current ',
-      _ => '$current$key',
-    };
-    _searchController.value = TextEditingValue(
-      text: next,
-      selection: TextSelection.collapsed(offset: next.length),
-    );
-    _handleSearchChanged(next);
+  void _handleSearchSubmit() {
+    widget.onAnnouncement('搜索：${_searchQueryController.text}');
   }
 
   String get _modeTitle {
@@ -504,10 +492,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
 
   void _syncSearchController() {
     final value = _currentQuery();
-    _searchController.value = TextEditingValue(
-      text: value,
-      selection: TextSelection.collapsed(offset: value.length),
-    );
+    _searchQueryController.setText(value);
   }
 }
 

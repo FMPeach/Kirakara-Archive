@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../ime/ime_controller.dart';
+import '../../ime/ime_mode.dart';
 import '../theme/kirakara_theme.dart';
 import 'candidate_bar.dart';
 import 'touch_keyboard_layout.dart';
@@ -10,23 +12,19 @@ class KaraokeInputPanel extends StatelessWidget {
     required this.activeTab,
     required this.placeholder,
     required this.controller,
-    required this.imeMode,
-    required this.onChanged,
+    required this.imeController,
     required this.onTab,
-    required this.onKey,
-    required this.onImeMode,
+    required this.onSearch,
     this.tabs = const ['歌名', '歌手', '分类'],
   });
 
   final String activeTab;
   final String placeholder;
   final TextEditingController controller;
-  final String imeMode;
+  final ImeController imeController;
   final List<String> tabs;
-  final ValueChanged<String> onChanged;
   final ValueChanged<String> onTab;
-  final ValueChanged<String> onKey;
-  final ValueChanged<String> onImeMode;
+  final VoidCallback onSearch;
 
   static const _letters = [
     'A',
@@ -60,8 +58,6 @@ class KaraokeInputPanel extends StatelessWidget {
     '空格',
     '搜索',
   ];
-  static const _imeModes = ['英文', '拼音', '日语罗马音', '手写'];
-
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
@@ -125,7 +121,6 @@ class KaraokeInputPanel extends StatelessWidget {
               height: 60,
               child: TextField(
                 controller: controller,
-                onChanged: onChanged,
                 decoration: InputDecoration(
                   hintText: placeholder,
                   hintStyle: const TextStyle(
@@ -157,11 +152,18 @@ class KaraokeInputPanel extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            CandidateBar(
-              candidates: const [],
-              onCandidateSelected: onKey,
+            AnimatedBuilder(
+              animation: imeController,
+              builder: (context, _) {
+                final composition = imeController.composition;
+                return CandidateBar(
+                  preedit: composition.preedit,
+                  candidates: composition.candidates,
+                  onCandidateSelected: imeController.commitCandidate,
+                );
+              },
             ),
-            TouchKeyboardLayout(keys: _letters, onKey: onKey),
+            TouchKeyboardLayout(keys: _letters, onKey: _handleKey),
             const SizedBox(height: 16),
             Container(
               width: double.infinity,
@@ -172,24 +174,29 @@ class KaraokeInputPanel extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  for (final mode in _imeModes) ...[
-                    TextButton(
-                      onPressed: () => onImeMode(mode),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        foregroundColor: imeMode == mode
-                            ? KiraColors.amber
-                            : KiraColors.muted,
-                      ),
-                      child: Text(
-                        mode,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
+                  for (final mode in ImeMode.values) ...[
+                    AnimatedBuilder(
+                      animation: imeController,
+                      builder: (context, _) {
+                        return TextButton(
+                          onPressed: () => imeController.setMode(mode),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            foregroundColor: imeController.mode == mode
+                                ? KiraColors.amber
+                                : KiraColors.muted,
+                          ),
+                          child: Text(
+                            mode.label,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        );
+                      },
                     ),
-                    if (mode != _imeModes.last) const SizedBox(width: 4),
+                    if (mode != ImeMode.values.last) const SizedBox(width: 4),
                   ],
                 ],
               ),
@@ -198,6 +205,14 @@ class KaraokeInputPanel extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  void _handleKey(String key) {
+    if (key == '搜索') {
+      imeController.commitRaw().then((_) => onSearch());
+      return;
+    }
+    imeController.handleKeyboardKey(key);
   }
 }
 
