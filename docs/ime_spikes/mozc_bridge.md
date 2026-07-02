@@ -1,8 +1,9 @@
 # Mozc Bridge Spike
 
 Phase 4 keeps Japanese romaji input behind the same `ImeEngine` interface as
-English, Rime, and handwriting. `MozcImeEngine` tries a native bridge first and
-falls back to `MockJapaneseImeEngine` until an app-owned Mozc runtime exists.
+English, Rime, and handwriting. `MozcImeEngine` now probes an app-owned Windows
+helper first and falls back to `MockJapaneseImeEngine` only when that helper is
+missing or fails during development.
 
 Hard boundary:
 
@@ -13,39 +14,73 @@ Hard boundary:
 - The bridge returns only input candidates; Search / Catalog handles song
   matching after commit.
 
-Preferred Windows artifact shape:
+Bundled Windows runtime:
 
 ```text
-Kirakara app-owned runtime
-  -> either a native library wrapping Mozc session/converter
-  -> or a packaged mozc_server.exe plus app-owned IPC client
+ime/
+  mozc/
+    windows/
+      runtime/
+        kirakara_mozc_bridge.exe
+      COPYING.mozc
 ```
 
-Desired bridge shape:
+Flutter calls the helper as a short-lived app-owned process:
 
 ```text
-kirakara_mozc_create_session() -> session handle
-kirakara_mozc_destroy_session(handle)
-kirakara_mozc_compose_utf8(handle, raw_input, page_index) -> json utf8
-kirakara_mozc_clear(handle)
+kirakara_mozc_bridge.exe compose <raw_input> <page_index> <page_size>
+kirakara_mozc_bridge.exe clear
+kirakara_mozc_bridge.exe activate
+kirakara_mozc_bridge.exe deactivate
 ```
 
-The first independent native spike should verify:
+Each command writes one UTF-8 JSON object to stdout. `compose` maps directly to
+`NativeImeResult`:
 
-- session lifecycle
-- romaji input such as `zankokunatenshi`
-- candidate list paging
-- candidate commit
-- no dependency on the Windows system Japanese IME
-- no dependency on any user-installed third-party IME
+```json
+{
+  "ok": true,
+  "rawInput": "nihongo",
+  "preedit": "にほんご",
+  "pageIndex": 0,
+  "hasPreviousPage": false,
+  "hasNextPage": true,
+  "candidates": [
+    {"text": "日本語"},
+    {"text": "ニホンゴ"},
+    {"text": "にほんご"}
+  ]
+}
+```
 
-The bridge returns `NativeImeResult`, so Flutter UI code stays unchanged when
-the native bridge replaces the mock fallback.
+Verified inputs:
 
-Current blocker:
+- `nihongo` returns `日本語`, `ニホンゴ`, and `にほんご`.
+- `zankokunatenshi` returns `残酷な天使` as the first full-preedit candidate.
+- `ai` returns candidates such as `愛`, `アイ`, and `あい`.
 
-- Mozc requires a reproducible native build chain before it can become the
-  default runtime.
-- A previous Bazel 9.0.2 download was corrupt; redo the download cleanly before
-  attempting the Mozc build again.
-- Until that build is verified, the app must not pretend Mozc is integrated.
+Rebuild notes:
+
+1. Use the clean Mozc source tree at `D:\Kirakara-Mozc-src\src`.
+2. Copy `third_party/ime/mozc/windows/source/kirakara_mozc_bridge.cc` into
+   `src/session/kirakara_mozc_bridge.cc`.
+3. Append the target from `third_party/ime/mozc/windows/source/BUILD.bazel` to
+   `src/session/BUILD.bazel`. Mozc's private target visibility requires the
+   bridge to live in the upstream `//session` package.
+4. Build with Bazel 9.0.2 and Mozc's Windows deps:
+
+```powershell
+$bazel = Join-Path $env:TEMP 'kirakara-tools\bazel-9.0.2.exe'
+$env:PATH = 'D:\Kirakara-Mozc-src\src\third_party\msys64\usr\bin;D:\Kirakara-Mozc-src\src\third_party\ninja;' + $env:PATH
+$env:BAZEL_LLVM = 'D:\Kirakara-Mozc-src\src\third_party\llvm'
+$env:BAZEL_SH = 'D:\Kirakara-Mozc-src\src\third_party\msys64\usr\bin\bash.exe'
+& $bazel --nowindows_enable_symlinks build --config oss_windows --config release_build --noenable_runfiles //session:kirakara_mozc_bridge
+```
+
+5. Copy
+   `D:\Kirakara-Mozc-src\src\bazel-bin\session\kirakara_mozc_bridge.exe` to
+   `third_party/ime/mozc/windows/runtime/kirakara_mozc_bridge.exe`.
+
+The helper is intentionally Windows-only for this prototype. Android can keep
+the same Dart `ImeEngine` contract and replace the process bridge with a native
+library or platform channel later.

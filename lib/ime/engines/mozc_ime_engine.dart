@@ -3,6 +3,7 @@ import '../ime_composition.dart';
 import '../ime_engine.dart';
 import '../ime_mode.dart';
 import '../native/ime_native_bridge.dart';
+import '../native/mozc_native_bridge.dart';
 import 'mock_japanese_ime_engine.dart';
 
 class MozcImeEngine implements ImeEngine {
@@ -10,11 +11,7 @@ class MozcImeEngine implements ImeEngine {
     NativeImeBridge? bridge,
     ImeEngine? fallback,
     this.sessionId = 'kirakara-mozc-session',
-  })  : _bridge = bridge ??
-            const UnavailableNativeImeBridge(
-              engineName: 'mozc',
-              reason: 'Mozc bridge DLL is not configured',
-            ),
+  })  : _bridge = bridge ?? const MozcNativeBridgeProbe().probe(),
         _fallback = fallback ?? MockJapaneseImeEngine();
 
   final NativeImeBridge _bridge;
@@ -23,8 +20,8 @@ class MozcImeEngine implements ImeEngine {
 
   String _rawInput = '';
   int _pageIndex = 0;
-  ImeComposition _composition =
-      ImeComposition.empty(ImeMode.japaneseRomaji);
+  bool _nativeFailed = false;
+  ImeComposition _composition = ImeComposition.empty(ImeMode.japaneseRomaji);
 
   @override
   ImeMode get mode => ImeMode.japaneseRomaji;
@@ -32,42 +29,70 @@ class MozcImeEngine implements ImeEngine {
   @override
   ImeComposition get composition => _composition;
 
-  bool get isNativeAvailable => _bridge.isAvailable;
-  String? get nativeUnavailableReason => _bridge.unavailableReason;
+  bool get isNativeAvailable => _bridge.isAvailable && !_nativeFailed;
+  String? get nativeUnavailableReason {
+    if (_nativeFailed) {
+      return 'Mozc native bridge failed and fallback is active';
+    }
+    return _bridge.unavailableReason;
+  }
 
   @override
   Future<void> activate() async {
-    if (_bridge.isAvailable) {
-      await _bridge.activateSession(sessionId);
-      return;
+    if (isNativeAvailable) {
+      try {
+        await _bridge.activateSession(sessionId);
+        return;
+      } on Object {
+        _nativeFailed = true;
+      }
     }
     await _fallback.activate();
   }
 
   @override
   Future<void> deactivate() async {
-    if (_bridge.isAvailable) {
-      await _bridge.deactivateSession(sessionId);
+    if (isNativeAvailable) {
+      try {
+        await _bridge.deactivateSession(sessionId);
+      } on Object {
+        _nativeFailed = true;
+      }
       return;
     }
     await _fallback.deactivate();
   }
 
+  bool get _shouldUseFallback => !_bridge.isAvailable || _nativeFailed;
+
+  Future<ImeComposition> _syncFallbackInput() async {
+    var composition = await _fallback.clear();
+    for (final codeUnit in _rawInput.codeUnits) {
+      composition = await _fallback.inputKey(String.fromCharCode(codeUnit));
+    }
+    return composition;
+  }
+
   @override
   Future<ImeComposition> inputKey(String key) async {
-    if (!_bridge.isAvailable) {
+    if (_shouldUseFallback) {
       _composition = await _fallback.inputKey(key);
       return _composition;
     }
     _rawInput = '$_rawInput${key.toLowerCase()}';
     _pageIndex = 0;
-    _composition = await _composeNative();
+    try {
+      _composition = await _composeNative();
+    } on Object {
+      _nativeFailed = true;
+      _composition = await _syncFallbackInput();
+    }
     return _composition;
   }
 
   @override
   Future<ImeComposition> backspace() async {
-    if (!_bridge.isAvailable) {
+    if (_shouldUseFallback) {
       _composition = await _fallback.backspace();
       return _composition;
     }
@@ -75,54 +100,74 @@ class MozcImeEngine implements ImeEngine {
       _rawInput = _rawInput.substring(0, _rawInput.length - 1);
     }
     _pageIndex = 0;
-    _composition = _rawInput.isEmpty
-        ? ImeComposition.empty(mode)
-        : await _composeNative();
+    try {
+      _composition = _rawInput.isEmpty
+          ? ImeComposition.empty(mode)
+          : await _composeNative();
+    } on Object {
+      _nativeFailed = true;
+      _composition = await _syncFallbackInput();
+    }
     return _composition;
   }
 
   @override
   Future<ImeComposition> clear() async {
-    if (!_bridge.isAvailable) {
+    _rawInput = '';
+    _pageIndex = 0;
+    if (_shouldUseFallback) {
       _composition = await _fallback.clear();
       return _composition;
     }
-    _rawInput = '';
-    _pageIndex = 0;
-    final result = await _bridge.clear(sessionId);
-    _composition = _fromNative(result);
+    try {
+      final result = await _bridge.clear(sessionId);
+      _composition = _fromNative(result);
+    } on Object {
+      _nativeFailed = true;
+      _composition = await _fallback.clear();
+    }
     return _composition;
   }
 
   @override
   Future<ImeComposition> nextPage() async {
-    if (!_bridge.isAvailable) {
+    if (_shouldUseFallback) {
       _composition = await _fallback.nextPage();
       return _composition;
     }
     if (_composition.hasNextPage) {
       _pageIndex += 1;
-      _composition = await _composeNative();
+      try {
+        _composition = await _composeNative();
+      } on Object {
+        _nativeFailed = true;
+        _composition = await _syncFallbackInput();
+      }
     }
     return _composition;
   }
 
   @override
   Future<ImeComposition> previousPage() async {
-    if (!_bridge.isAvailable) {
+    if (_shouldUseFallback) {
       _composition = await _fallback.previousPage();
       return _composition;
     }
     if (_pageIndex > 0) {
       _pageIndex -= 1;
-      _composition = await _composeNative();
+      try {
+        _composition = await _composeNative();
+      } on Object {
+        _nativeFailed = true;
+        _composition = await _syncFallbackInput();
+      }
     }
     return _composition;
   }
 
   @override
   Future<ImeCommitResult> commitCandidate(int index) async {
-    if (!_bridge.isAvailable) {
+    if (_shouldUseFallback) {
       final result = await _fallback.commitCandidate(index);
       _composition = result.composition;
       return result;
@@ -137,7 +182,7 @@ class MozcImeEngine implements ImeEngine {
 
   @override
   Future<ImeCommitResult> commitRaw() async {
-    if (!_bridge.isAvailable) {
+    if (_shouldUseFallback) {
       final result = await _fallback.commitRaw();
       _composition = result.composition;
       return result;
