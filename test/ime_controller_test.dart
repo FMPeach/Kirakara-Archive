@@ -51,11 +51,11 @@ void main() {
     }
     expect(
       ime.composition.candidates.map((c) => c.text),
-      contains('残酷な天使'),
+      contains('残酷'),
     );
 
     await ime.handleKeyboardKey('空格');
-    expect(search.text, '残酷な天使');
+    expect(search.text, '残酷');
     expect(ime.composition.rawInput, isEmpty);
   });
 }

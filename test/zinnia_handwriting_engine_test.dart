@@ -6,7 +6,12 @@ import 'package:kirakara_app/ime/native/zinnia_native_bridge.dart';
 
 void main() {
   test('Zinnia handwriting engine falls back to mock recognition', () async {
-    final engine = ZinniaHandwritingEngine();
+    final engine = ZinniaHandwritingEngine(
+      bridge: const UnavailableNativeHandwritingBridge(
+        engineName: 'zinnia',
+        reason: 'test',
+      ),
+    );
 
     expect(engine.isNativeAvailable, isFalse);
     await engine.beginStroke(0, 0);

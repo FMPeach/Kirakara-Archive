@@ -27,6 +27,7 @@
 - 抽出 `KaraokeInputPanel`、`CandidateBar`、`TouchKeyboardLayout` 和输入模式切换。
 - 硬件键盘继续走系统 IME；触屏和鼠标点击走 Kirakara 自己的输入面板。
 - 歌手详情页、分类详情页不再写死分类列表。
+- 输入法只负责输入候选和提交文本，不做曲库匹配。
 
 验收：
 
@@ -41,6 +42,7 @@
 - 定义 `catalog index manifest`：歌曲、歌手、作品 tag、资源版本、hash、URI。
 - 先用 mock JSON / 内存索引，后续按数据量接 SQLite FTS。
 - 本地派生拼音、假名、罗马音、简繁转换和 token，不要求服务器维护大规模别名。
+- `qilixiang -> 七里香` 这类召回由本地搜索索引完成，不塞进输入法候选逻辑。
 
 验收：
 

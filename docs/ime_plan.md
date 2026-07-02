@@ -11,6 +11,7 @@ Kirakara-App 的输入法不是系统级 IME，而是一个服务于点歌屏的
 - 候选栏成为正式 UI，不再作为装饰或搜索建议区。
 - 中文、日文、手写都复用同一套候选栏和提交流程。
 - 先用 mock 引擎跑通状态机，再逐步接入 Rime、Mozc、Zinnia 等开源引擎。
+- IME 只负责输入法候选和提交文本，不读取、不查询、不匹配曲库。
 
 非目标：
 
@@ -18,7 +19,16 @@ Kirakara-App 的输入法不是系统级 IME，而是一个服务于点歌屏的
 - 不控制 Windows / Android 系统软键盘的位置、大小或候选窗。
 - 不在第一阶段实现完整公网词库或云端输入服务。
 - 不把搜索建议、历史记录、热门歌曲混进 IME 候选栏。
+- 不把曲库命中、歌曲 ID、歌手 ID 或 catalog tag 混进 IME 候选栏。
 - 不要求服务器维护每首歌的大规模民间别名、译名和错拼变体。
+
+## 当前实现状态
+
+- 输入面板、候选栏、A-Z 输入、数字键盘、模式切换和手写板 UI 已进入 Flutter 原型。
+- Windows 版 Rime 已作为 App 自带 runtime 接入，用户不需要安装第三方输入法。
+- Windows 版 Zinnia 已静态链接进 runner，并随 App 打包日文和中文手写模型。
+- Mozc 仍处于 native spike 阶段；在可重复构建出 App 自带 runtime 之前，日语罗马音继续使用 mock fallback。
+- 所有 native / mock 引擎都通过统一 `ImeEngine` 返回输入候选，不直接访问 `SearchService`、Catalog API 或页面结果。
 
 ## 输入通道划分
 
@@ -43,6 +53,7 @@ Kirakara-App 的输入法不是系统级 IME，而是一个服务于点歌屏的
 - 输入事件送到内置 `ImeEngine`。
 - 引擎返回 preedit 和 candidates。
 - 选中候选后写入统一的搜索 query。
+- 页面搜索由 Search / Catalog 层消费 query，IME 不知道当前页面有多少首歌。
 
 这个通道是 KTV 点歌屏的主路径。
 
@@ -252,13 +263,14 @@ abstract class HandwritingImeEngine implements ImeEngine {
 2. 再做 Windows 上的 librime FFI spike。
 3. 跑通 `inputKey -> candidates -> commitCandidate`。
 4. 再处理 Android native library 打包。
-5. 最后导入曲库专名词典，如歌手、社团、番剧、声库和高频作品名。
+5. 保持 Rime 作为语言输入引擎，不从曲库 catalog 自动注入歌曲、歌手或别名。
 
 注意：
 
 - Rime 适合中文，不负责日语主转换。
 - schema、用户词典、部署目录要由 App 管理。
 - 候选结果进入 CandidateBar，不直接进搜索建议。
+- `qilixiang -> 七里香` 如果来自 Rime 通用词库是输入法行为；如果是为了召回歌曲，则应由本地搜索索引的拼音字段完成。
 
 ### 日语
 
@@ -399,6 +411,7 @@ Catalog 权威边界：
 ## IME 与搜索的边界
 
 IME 不负责替服务器补别名库。
+IME 也不负责替本地搜索做曲库匹配。
 
 它只帮助用户更容易输入：
 
@@ -406,6 +419,22 @@ IME 不负责替服务器补别名库。
 - 日文假名 / 汉字转换候选。
 - 英文原文。
 - 手写识别候选。
+
+IME 输出的数据只能是：
+
+- raw input
+- preedit
+- 候选文本
+- 候选注释和分页状态
+
+IME 不输出：
+
+- song id
+- artist id
+- category id
+- ranking id
+- 搜索结果数量
+- catalog tag 命中信息
 
 本地 FTS 负责在已下载索引里召回：
 
@@ -428,9 +457,14 @@ FTS: 命中作品 tag: EVA / 新世纪福音战士
 结果: 返回该作品下的歌曲
 
 用户输入: zankokunatenshi
-IME: Mozc 候选可给出 残酷な天使
-FTS: 命中原文歌名或索引派生假名/罗马音字段
+IME: Mozc 只负责把 romaji 转成日文文本，可能分段提交 残酷 / 天使
+FTS: 用原文歌名、假名、罗马音或作品 tag 索引召回歌曲
 结果: 返回 残酷な天使のテーゼ
+
+用户输入: qilixiang
+IME: Rime 可能返回通用词库里的 七里香，也可能只提交拼音 raw input
+FTS: 用歌曲标题、拼音字段或编号字段召回曲库条目
+结果: 返回 七里香
 
 用户手写: 残
 IME: Zinnia 候选栏返回 残 / 歯 / ...
@@ -470,7 +504,7 @@ lib/
       handwriting_pad.dart
 ```
 
-第一阶段只实现 mock / English，不引入 native 依赖。
+原型阶段允许 mock fallback 存在，但 release 路径应优先使用 App 自带 native runtime。mock 只验证状态机和 UI，不作为最终输入质量方案。
 
 ## 执行步骤
 
@@ -567,7 +601,7 @@ lib/
 - 本地搜索接入原文、编号、歌手、社团、番剧/作品 tag、服务器分类 tag、服务器歌手分类 tag。
 - 本地派生拼音、罗马音、假名、简繁等辅助搜索字段。
 - 选中歌曲后，通过 media asset URI 请求本地或云端资源服务。
-- 输入法词典只加入曲库专名，不承担大规模别名维护。
+- 输入法不加入曲库专名；曲库召回靠本地索引字段、派生读音字段和服务器下发的 tag。
 - 歌名、歌手、分类、排行榜页面都消费服务器下发的 manifest，不在 UI 里写死列表。
 
 验收：
@@ -580,9 +614,9 @@ lib/
 - 点歌后可以从本地或云端资源 URI 拉取媒体、封面和 KRL。
 - 服务器无需提供每首歌的完整民间别名列表。
 
-## 先做的最小闭环
+## 已完成的最小闭环
 
-最小闭环不接 Rime / Mozc / Zinnia：
+最小闭环先不依赖真实引擎，目标是让 UI 和状态机稳定：
 
 1. 拆出 `KaraokeInputPanel`。
 2. 新增 `ImeController` 和 `ImeEngine`。
@@ -590,7 +624,7 @@ lib/
 4. 点击候选写入搜索 query。
 5. 让歌名、歌手、分类页全部走这个面板。
 
-这个闭环完成后，再接任何真实引擎都不会重写 UI。
+这个闭环已经允许真实引擎替换 mock。当前 Windows 版 Rime 和 Zinnia 已走真实 App 自带 runtime；Mozc 等待 native runtime 可重复构建后再切换。
 
 ## 参考
 

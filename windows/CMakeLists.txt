@@ -106,7 +106,9 @@ set(KIRAKARA_IME_RUNTIME_DIR "${CMAKE_SOURCE_DIR}/../third_party/ime")
 if(EXISTS "${KIRAKARA_IME_RUNTIME_DIR}")
   install(DIRECTORY "${KIRAKARA_IME_RUNTIME_DIR}/"
     DESTINATION "${CMAKE_INSTALL_PREFIX}/ime"
-    COMPONENT Runtime)
+    COMPONENT Runtime
+    PATTERN "_sources" EXCLUDE
+    PATTERN "source" EXCLUDE)
 endif()
 
 # Install the AOT library on non-Debug builds only.

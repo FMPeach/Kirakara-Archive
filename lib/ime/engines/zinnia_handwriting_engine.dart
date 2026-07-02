@@ -3,6 +3,7 @@ import '../ime_candidate.dart';
 import '../ime_composition.dart';
 import '../ime_engine.dart';
 import '../ime_mode.dart';
+import '../native/ime_native_bridge.dart';
 import '../native/zinnia_native_bridge.dart';
 import 'mock_handwriting_ime_engine.dart';
 
@@ -11,11 +12,7 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
     NativeHandwritingBridge? bridge,
     HandwritingImeEngine? fallback,
     this.sessionId = 'kirakara-zinnia-session',
-  })  : _bridge = bridge ??
-            const UnavailableNativeHandwritingBridge(
-              engineName: 'zinnia',
-              reason: 'Zinnia bridge DLL is not configured',
-            ),
+  })  : _bridge = bridge ?? const ZinniaNativeBridgeProbe().probe(),
         _fallback = fallback ?? MockHandwritingImeEngine();
 
   final NativeHandwritingBridge _bridge;
@@ -24,6 +21,7 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
 
   final List<ImeStroke> _strokes = [];
   ImeStroke? _activeStroke;
+  bool _nativeFailed = false;
   ImeComposition _composition = ImeComposition.empty(ImeMode.handwriting);
 
   @override
@@ -32,22 +30,54 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
   @override
   ImeComposition get composition => _composition;
 
-  bool get isNativeAvailable => _bridge.isAvailable;
-  String? get nativeUnavailableReason => _bridge.unavailableReason;
+  bool get isNativeAvailable => _bridge.isAvailable && !_nativeFailed;
+  String? get nativeUnavailableReason {
+    if (_nativeFailed) {
+      return 'Zinnia native bridge failed and fallback is active';
+    }
+    return _bridge.unavailableReason;
+  }
+
+  Future<ImeComposition> _syncFallbackStrokesAndRecognize() async {
+    await _fallback.clear();
+    ImeComposition composition = ImeComposition.empty(mode);
+    for (final stroke in _strokes) {
+      if (stroke.isEmpty) {
+        continue;
+      }
+      composition = await _fallback.beginStroke(stroke.first.x, stroke.first.y);
+      for (final point in stroke.skip(1)) {
+        composition = await _fallback.appendStrokePoint(point.x, point.y);
+      }
+      composition = await _fallback.endStroke();
+    }
+    if (_strokes.isNotEmpty) {
+      composition = await _fallback.recognize();
+    }
+    return composition;
+  }
 
   @override
   Future<void> activate() async {
-    if (_bridge.isAvailable) {
-      await _bridge.activateSession(sessionId);
-      return;
+    if (isNativeAvailable) {
+      try {
+        await _bridge.activateSession(sessionId);
+        return;
+      } on Object {
+        _nativeFailed = true;
+      }
     }
     await _fallback.activate();
   }
 
   @override
   Future<void> deactivate() async {
-    if (_bridge.isAvailable) {
-      await _bridge.deactivateSession(sessionId);
+    if (isNativeAvailable) {
+      try {
+        await _bridge.deactivateSession(sessionId);
+      } on Object {
+        _nativeFailed = true;
+      }
       return;
     }
     await _fallback.deactivate();
@@ -60,7 +90,7 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
 
   @override
   Future<ImeComposition> beginStroke(double x, double y) async {
-    if (!_bridge.isAvailable) {
+    if (!isNativeAvailable) {
       _composition = await _fallback.beginStroke(x, y);
       return _composition;
     }
@@ -71,7 +101,7 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
 
   @override
   Future<ImeComposition> appendStrokePoint(double x, double y) async {
-    if (!_bridge.isAvailable) {
+    if (!isNativeAvailable) {
       _composition = await _fallback.appendStrokePoint(x, y);
       return _composition;
     }
@@ -82,7 +112,7 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
 
   @override
   Future<ImeComposition> endStroke() async {
-    if (!_bridge.isAvailable) {
+    if (!isNativeAvailable) {
       _composition = await _fallback.endStroke();
       return _composition;
     }
@@ -97,7 +127,7 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
 
   @override
   Future<ImeComposition> recognize() async {
-    if (!_bridge.isAvailable) {
+    if (!isNativeAvailable) {
       _composition = await _fallback.recognize();
       return _composition;
     }
@@ -105,10 +135,17 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
       _composition = ImeComposition.empty(mode);
       return _composition;
     }
-    final candidates = await _bridge.recognize(
-      sessionId: sessionId,
-      strokes: _strokes,
-    );
+    late final List<NativeImeCandidate> candidates;
+    try {
+      candidates = await _bridge.recognize(
+        sessionId: sessionId,
+        strokes: _strokes,
+      );
+    } on Object {
+      _nativeFailed = true;
+      _composition = await _syncFallbackStrokesAndRecognize();
+      return _composition;
+    }
     _composition = _strokeComposition(
       candidates: [
         for (final candidate in candidates)
@@ -136,7 +173,7 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
   Future<ImeComposition> clear() async {
     _strokes.clear();
     _activeStroke = null;
-    if (!_bridge.isAvailable) {
+    if (!isNativeAvailable) {
       _composition = await _fallback.clear();
       return _composition;
     }

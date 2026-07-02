@@ -6,20 +6,17 @@ import '../ime_mode.dart';
 class MockJapaneseImeEngine implements ImeEngine {
   static const _pageSize = 6;
   static const _dictionary = <String, List<String>>{
-    'itami': ['痛み', 'いたみ'],
-    'furishiteita': ['フリしていた'],
-    'nagare': ['流れる涙は', 'ながれ'],
-    'zankoku': ['残酷な天使', 'ざんこく'],
+    'nihongo': ['日本語', 'にほんご'],
+    'sakura': ['桜', 'さくら'],
+    'tokyo': ['東京', 'とうきょう'],
+    'zankoku': ['残酷', 'ざんこく'],
     'tenshi': ['天使', 'てんし'],
-    'ryokuoushoku': ['緑黄色社会'],
-    'hoshimachi': ['星街すいせい'],
-    'suisei': ['すいせい', '彗星'],
+    'suisei': ['彗星', 'すいせい'],
   };
 
   String _rawInput = '';
   int _pageIndex = 0;
-  ImeComposition _composition =
-      ImeComposition.empty(ImeMode.japaneseRomaji);
+  ImeComposition _composition = ImeComposition.empty(ImeMode.japaneseRomaji);
 
   @override
   ImeMode get mode => ImeMode.japaneseRomaji;

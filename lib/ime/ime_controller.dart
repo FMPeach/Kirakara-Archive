@@ -16,14 +16,14 @@ class ImeController extends ChangeNotifier {
     required SearchQueryController searchQueryController,
     Map<ImeMode, ImeEngine>? engines,
   })  : _searchQueryController = searchQueryController,
-        _engines = engines ??
-            {
-              ImeMode.english: EnglishImeEngine(),
-              ImeMode.numeric: NumericImeEngine(),
-              ImeMode.pinyin: RimeImeEngine(),
-              ImeMode.japaneseRomaji: MozcImeEngine(),
-              ImeMode.handwriting: ZinniaHandwritingEngine(),
-            } {
+        _engines = {
+          ImeMode.english: EnglishImeEngine(),
+          ImeMode.numeric: NumericImeEngine(),
+          ImeMode.pinyin: RimeImeEngine(),
+          ImeMode.japaneseRomaji: MozcImeEngine(),
+          ImeMode.handwriting: ZinniaHandwritingEngine(),
+          ...?engines,
+        } {
     _activeEngine = _engines[ImeMode.english]!;
     _composition = ImeComposition.empty(ImeMode.english);
   }

@@ -1,4 +1,4 @@
-import 'dart:ffi';
+import 'package:flutter/services.dart';
 
 import '../handwriting_stroke.dart';
 import 'ime_native_bridge.dart';
@@ -50,56 +50,107 @@ class UnavailableNativeHandwritingBridge implements NativeHandwritingBridge {
 
 class ZinniaNativeBridgeProbe {
   const ZinniaNativeBridgeProbe({
-    this.libraryName = 'kirakara_zinnia.dll',
+    this.channel = const MethodChannel('kirakara/ime'),
   });
 
-  final String libraryName;
+  final MethodChannel channel;
 
   NativeHandwritingBridge probe() {
-    try {
-      final library = DynamicLibrary.open(libraryName);
-      return ZinniaNativeBridge(library: library, libraryName: libraryName);
-    } on Object catch (error) {
-      return UnavailableNativeHandwritingBridge(
-        engineName: 'zinnia',
-        reason: 'Unable to load $libraryName: $error',
-      );
-    }
+    return ZinniaNativeBridge(channel: channel);
   }
 }
 
 class ZinniaNativeBridge implements NativeHandwritingBridge {
   const ZinniaNativeBridge({
-    required this.library,
-    required this.libraryName,
+    required this.channel,
   });
 
-  final DynamicLibrary library;
-  final String libraryName;
+  final MethodChannel channel;
 
   @override
   String get engineName => 'zinnia';
 
   @override
-  bool get isAvailable => false;
+  bool get isAvailable => true;
 
   @override
-  String? get unavailableReason {
-    return '$libraryName loaded, but Kirakara Zinnia ABI bindings are not '
-        'linked in this Flutter prototype yet';
+  String? get unavailableReason => null;
+
+  @override
+  Future<void> activateSession(String sessionId) async {
+    final result = await _invokeMap('zinnia.activate', {
+      'sessionId': sessionId,
+    });
+    _throwIfNativeError(result);
   }
 
   @override
-  Future<void> activateSession(String sessionId) async {}
-
-  @override
-  Future<void> deactivateSession(String sessionId) async {}
+  Future<void> deactivateSession(String sessionId) async {
+    await channel.invokeMethod<bool>('zinnia.deactivate', {
+      'sessionId': sessionId,
+    });
+  }
 
   @override
   Future<List<NativeImeCandidate>> recognize({
     required String sessionId,
     required List<ImeStroke> strokes,
   }) async {
-    throw StateError(unavailableReason ?? 'Zinnia bridge is unavailable');
+    final result = await _invokeMap('zinnia.recognize', {
+      'sessionId': sessionId,
+      'strokes': _serializeStrokes(strokes),
+      'nbest': 10,
+    });
+    _throwIfNativeError(result);
+    return _candidatesFromNativeMap(result);
+  }
+
+  Future<Map<Object?, Object?>> _invokeMap(
+    String method,
+    Map<String, Object?> arguments,
+  ) async {
+    final result = await channel.invokeMethod<Object?>(method, arguments);
+    if (result is Map<Object?, Object?>) {
+      return result;
+    }
+    throw StateError('Unexpected Zinnia bridge response for $method: $result');
+  }
+
+  void _throwIfNativeError(Map<Object?, Object?> result) {
+    if (result['ok'] == false) {
+      throw StateError(
+        (result['error'] as String?) ?? 'Unknown Zinnia bridge error',
+      );
+    }
+  }
+
+  List<List<Map<String, double>>> _serializeStrokes(List<ImeStroke> strokes) {
+    return [
+      for (final stroke in strokes)
+        [
+          for (final point in stroke) {'x': point.x, 'y': point.y},
+        ],
+    ];
+  }
+
+  List<NativeImeCandidate> _candidatesFromNativeMap(
+    Map<Object?, Object?> result,
+  ) {
+    final candidates = <NativeImeCandidate>[];
+    final candidatesRaw = result['candidates'];
+    if (candidatesRaw is List<Object?>) {
+      for (final item in candidatesRaw) {
+        if (item is Map<Object?, Object?>) {
+          candidates.add(
+            NativeImeCandidate(
+              text: (item['text'] as String?) ?? '',
+              annotation: item['annotation'] as String?,
+              score: item['score'] as double?,
+            ),
+          );
+        }
+      }
+    }
+    return candidates;
   }
 }

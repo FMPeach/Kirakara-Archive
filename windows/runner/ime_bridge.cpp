@@ -4,15 +4,19 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
+#include <zinnia.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -156,6 +160,19 @@ int IntArg(const EncodableMap& map, const char* key, int fallback = 0) {
   }
   if (const auto value64 = std::get_if<int64_t>(&it->second)) {
     return static_cast<int>(*value64);
+  }
+  return fallback;
+}
+
+double DoubleValue(const EncodableValue& value, double fallback = 0.0) {
+  if (const auto number = std::get_if<double>(&value)) {
+    return *number;
+  }
+  if (const auto number = std::get_if<int>(&value)) {
+    return static_cast<double>(*number);
+  }
+  if (const auto number = std::get_if<int64_t>(&value)) {
+    return static_cast<double>(*number);
   }
   return fallback;
 }
@@ -490,7 +507,283 @@ class RimeRuntime {
   RimeCandidateListEndFn candidate_list_end_ = nullptr;
 };
 
+struct StrokePoint {
+  double x = 0.0;
+  double y = 0.0;
+};
+
+struct ZinniaCandidate {
+  std::string text;
+  std::string annotation;
+  double score = 0.0;
+};
+
+class ZinniaRuntime {
+ public:
+  ZinniaRuntime() = default;
+
+  bool EnsureLoaded(std::string* error) {
+    if (loaded_) {
+      return true;
+    }
+
+    runtime_dir_ =
+        std::filesystem::path(ExeDir()) / L"ime" / L"zinnia" / L"windows";
+    const auto model_dir = runtime_dir_ / L"models";
+    const auto ja_model = model_dir / L"handwriting-ja.model";
+    const auto zh_model = model_dir / L"handwriting-zh_CN.model";
+
+    recognizer_ja_.reset(zinnia::Recognizer::create());
+    recognizer_zh_.reset(zinnia::Recognizer::create());
+    if (!recognizer_ja_ || !recognizer_zh_) {
+      if (error) {
+        *error = "Unable to create Zinnia recognizers";
+      }
+      return false;
+    }
+
+    const auto ja_model_utf8 = WideToUtf8(ja_model.wstring());
+    const auto zh_model_utf8 = WideToUtf8(zh_model.wstring());
+    if (!recognizer_ja_->open(ja_model_utf8.c_str())) {
+      if (error) {
+        *error = "Unable to open bundled Zinnia Japanese model: " +
+                 std::string(recognizer_ja_->what());
+      }
+      return false;
+    }
+    if (!recognizer_zh_->open(zh_model_utf8.c_str())) {
+      if (error) {
+        *error = "Unable to open bundled Zinnia Chinese model: " +
+                 std::string(recognizer_zh_->what());
+      }
+      return false;
+    }
+
+    loaded_ = true;
+    return true;
+  }
+
+  EncodableValue Activate() {
+    std::string error;
+    if (!EnsureLoaded(&error)) {
+      return ErrorValue(error);
+    }
+    return EncodableValue(EncodableMap{
+        {EncodableValue("ok"), EncodableValue(true)},
+        {EncodableValue("engine"), EncodableValue("zinnia")},
+        {EncodableValue("runtimeDir"),
+         EncodableValue(WideToUtf8(runtime_dir_.wstring()))},
+    });
+  }
+
+  EncodableValue Recognize(const EncodableMap& args) {
+    std::string error;
+    if (!EnsureLoaded(&error)) {
+      return ErrorValue(error);
+    }
+
+    const auto strokes = ParseStrokes(args);
+    const int nbest = IntArg(args, "nbest", 10);
+    if (strokes.empty()) {
+      return CandidateValue({});
+    }
+    return RecognizeStrokes(strokes, nbest);
+  }
+
+  EncodableValue RecognizeStrokes(
+      const std::vector<std::vector<StrokePoint>>& strokes,
+      int nbest) {
+    std::string error;
+    if (!EnsureLoaded(&error)) {
+      return ErrorValue(error);
+    }
+
+    std::unique_ptr<zinnia::Character> character(zinnia::Character::create());
+    if (!character) {
+      return ErrorValue("Unable to create Zinnia character");
+    }
+    BuildCharacter(strokes, character.get());
+
+    std::vector<ZinniaCandidate> candidates;
+    AppendCandidates(recognizer_ja_.get(), *character, "手写 · 日本語", nbest,
+                     &candidates);
+    AppendCandidates(recognizer_zh_.get(), *character, "手写 · 中文", nbest,
+                     &candidates);
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const ZinniaCandidate& left, const ZinniaCandidate& right) {
+                return left.score > right.score;
+              });
+    if (candidates.size() > static_cast<size_t>(nbest)) {
+      candidates.resize(static_cast<size_t>(nbest));
+    }
+    return CandidateValue(candidates);
+  }
+
+  bool IsErrorValue(const EncodableValue& value) const { return IsError(value); }
+
+ private:
+  static std::vector<std::vector<StrokePoint>> ParseStrokes(
+      const EncodableMap& args) {
+    std::vector<std::vector<StrokePoint>> strokes;
+    const auto it = args.find(EncodableValue("strokes"));
+    if (it == args.end()) {
+      return strokes;
+    }
+    const auto* stroke_list = std::get_if<EncodableList>(&it->second);
+    if (!stroke_list) {
+      return strokes;
+    }
+    for (const auto& stroke_value : *stroke_list) {
+      const auto* point_list = std::get_if<EncodableList>(&stroke_value);
+      if (!point_list) {
+        continue;
+      }
+      std::vector<StrokePoint> stroke;
+      for (const auto& point_value : *point_list) {
+        const auto* point_map = std::get_if<EncodableMap>(&point_value);
+        if (!point_map) {
+          continue;
+        }
+        const auto x_it = point_map->find(EncodableValue("x"));
+        const auto y_it = point_map->find(EncodableValue("y"));
+        if (x_it == point_map->end() || y_it == point_map->end()) {
+          continue;
+        }
+        stroke.push_back(StrokePoint{
+            DoubleValue(x_it->second),
+            DoubleValue(y_it->second),
+        });
+      }
+      if (!stroke.empty()) {
+        strokes.push_back(std::move(stroke));
+      }
+    }
+    return strokes;
+  }
+
+  static void BuildCharacter(
+      const std::vector<std::vector<StrokePoint>>& strokes,
+      zinnia::Character* character) {
+    double min_x = std::numeric_limits<double>::max();
+    double min_y = std::numeric_limits<double>::max();
+    double max_x = std::numeric_limits<double>::lowest();
+    double max_y = std::numeric_limits<double>::lowest();
+    for (const auto& stroke : strokes) {
+      for (const auto& point : stroke) {
+        min_x = std::min(min_x, point.x);
+        min_y = std::min(min_y, point.y);
+        max_x = std::max(max_x, point.x);
+        max_y = std::max(max_y, point.y);
+      }
+    }
+
+    constexpr double kCanvas = 1000.0;
+    constexpr double kMargin = 50.0;
+    const double raw_width = std::max(1.0, max_x - min_x);
+    const double raw_height = std::max(1.0, max_y - min_y);
+    const double scale = (kCanvas - kMargin * 2.0) /
+                         std::max(raw_width, raw_height);
+    const double x_offset = (kCanvas - raw_width * scale) / 2.0;
+    const double y_offset = (kCanvas - raw_height * scale) / 2.0;
+
+    character->clear();
+    character->set_width(static_cast<size_t>(kCanvas));
+    character->set_height(static_cast<size_t>(kCanvas));
+    for (size_t stroke_index = 0; stroke_index < strokes.size();
+         ++stroke_index) {
+      for (const auto& point : strokes[stroke_index]) {
+        const auto x = ClampCanvas((point.x - min_x) * scale + x_offset);
+        const auto y = ClampCanvas((point.y - min_y) * scale + y_offset);
+        character->add(stroke_index, x, y);
+      }
+    }
+  }
+
+  static int ClampCanvas(double value) {
+    const auto rounded = static_cast<int>(std::lround(value));
+    return std::clamp(rounded, 0, 1000);
+  }
+
+  static void AppendCandidates(zinnia::Recognizer* recognizer,
+                               const zinnia::Character& character,
+                               const std::string& annotation,
+                               int nbest,
+                               std::vector<ZinniaCandidate>* candidates) {
+    std::unique_ptr<zinnia::Result> result(
+        recognizer->classify(character, static_cast<size_t>(nbest)));
+    if (!result) {
+      return;
+    }
+    for (size_t index = 0; index < result->size(); ++index) {
+      const char* value = result->value(index);
+      if (!value || value[0] == '\0') {
+        continue;
+      }
+      const std::string text(value);
+      if (HasCandidate(*candidates, text)) {
+        continue;
+      }
+      candidates->push_back(ZinniaCandidate{
+          text,
+          annotation,
+          static_cast<double>(result->score(index)),
+      });
+    }
+  }
+
+  static bool HasCandidate(const std::vector<ZinniaCandidate>& candidates,
+                           const std::string& text) {
+    return std::any_of(
+        candidates.begin(), candidates.end(),
+        [&text](const ZinniaCandidate& candidate) {
+          return candidate.text == text;
+        });
+  }
+
+  static EncodableValue CandidateValue(
+      const std::vector<ZinniaCandidate>& candidates) {
+    EncodableList encoded_candidates;
+    for (const auto& candidate : candidates) {
+      encoded_candidates.push_back(EncodableValue(EncodableMap{
+          {EncodableValue("text"), EncodableValue(candidate.text)},
+          {EncodableValue("annotation"), EncodableValue(candidate.annotation)},
+          {EncodableValue("score"), EncodableValue(candidate.score)},
+      }));
+    }
+    return EncodableValue(EncodableMap{
+        {EncodableValue("ok"), EncodableValue(true)},
+        {EncodableValue("candidates"), EncodableValue(encoded_candidates)},
+    });
+  }
+
+  static EncodableValue ErrorValue(const std::string& message) {
+    return EncodableValue(EncodableMap{
+        {EncodableValue("ok"), EncodableValue(false)},
+        {EncodableValue("error"), EncodableValue(message)},
+    });
+  }
+
+  static bool IsError(const EncodableValue& value) {
+    if (const auto map = std::get_if<EncodableMap>(&value)) {
+      const auto it = map->find(EncodableValue("ok"));
+      if (it != map->end()) {
+        if (const auto ok = std::get_if<bool>(&it->second)) {
+          return !*ok;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool loaded_ = false;
+  std::filesystem::path runtime_dir_;
+  std::unique_ptr<zinnia::Recognizer> recognizer_ja_;
+  std::unique_ptr<zinnia::Recognizer> recognizer_zh_;
+};
+
 std::unique_ptr<RimeRuntime> g_rime;
+std::unique_ptr<ZinniaRuntime> g_zinnia;
 
 std::vector<std::string> CandidateTexts(const EncodableValue& value) {
   std::vector<std::string> texts;
@@ -541,14 +834,39 @@ const EncodableMap* ArgsMap(const MethodCall& call) {
 
 void HandleMethodCall(const MethodCall& call,
                       std::unique_ptr<MethodResult> result) {
-  if (!g_rime) {
-    g_rime = std::make_unique<RimeRuntime>();
-  }
-
   const auto* args = ArgsMap(call);
   if (!args) {
     result->Error("bad_args", "Expected map arguments");
     return;
+  }
+
+  if (call.method_name().rfind("zinnia.", 0) == 0) {
+    if (!g_zinnia) {
+      g_zinnia = std::make_unique<ZinniaRuntime>();
+    }
+    if (call.method_name() == "zinnia.activate") {
+      result->Success(g_zinnia->Activate());
+      return;
+    }
+    if (call.method_name() == "zinnia.deactivate") {
+      result->Success(EncodableValue(true));
+      return;
+    }
+    if (call.method_name() == "zinnia.recognize") {
+      result->Success(g_zinnia->Recognize(*args));
+      return;
+    }
+    if (call.method_name() == "zinnia.clear") {
+      result->Success(EncodableValue(EncodableMap{
+          {EncodableValue("ok"), EncodableValue(true)},
+          {EncodableValue("candidates"), EncodableValue(EncodableList{})},
+      }));
+      return;
+    }
+  }
+
+  if (!g_rime) {
+    g_rime = std::make_unique<RimeRuntime>();
   }
 
   const auto session_id = StringArg(*args, "sessionId", "kirakara-rime");
@@ -598,14 +916,34 @@ bool RunImeBridgeSelfTest(const std::wstring& output_path) {
   const auto cao = runtime.Compose("probe", "cao", 0, 8);
   const auto cao_candidates = CandidateTexts(cao);
 
-  bool ok = false;
   const bool has_cao = std::find(cao_candidates.begin(), cao_candidates.end(),
                                  "\xE8\x8D\x89") != cao_candidates.end() ||
                        std::find(cao_candidates.begin(), cao_candidates.end(),
                                  "\xE6\x93\x8D") != cao_candidates.end() ||
                        std::find(cao_candidates.begin(), cao_candidates.end(),
                                  "\xE6\x9B\xB9") != cao_candidates.end();
-  ok = has_cao;
+
+  ZinniaRuntime zinnia_runtime;
+  const auto zinnia_activate = zinnia_runtime.Activate();
+  const std::vector<std::vector<StrokePoint>> sample_strokes = {
+      {{51, 29}, {117, 41}},
+      {{99, 65}, {219, 77}},
+      {{27, 131}, {261, 131}},
+      {{129, 17}, {57, 203}},
+      {{111, 71}, {219, 173}},
+      {{81, 161}, {93, 281}},
+      {{99, 167}, {207, 167}, {189, 245}},
+      {{99, 227}, {189, 227}},
+      {{111, 257}, {189, 245}},
+  };
+  const auto zinnia = zinnia_runtime.RecognizeStrokes(sample_strokes, 8);
+  const auto zinnia_candidates = CandidateTexts(zinnia);
+
+  const bool rime_ok = has_cao && !runtime.IsErrorValue(activate);
+  const bool zinnia_ok = !zinnia_runtime.IsErrorValue(zinnia_activate) &&
+                         !zinnia_runtime.IsErrorValue(zinnia) &&
+                         !zinnia_candidates.empty();
+  const bool ok = rime_ok && zinnia_ok;
 
   std::ofstream output(output_path, std::ios::binary);
   if (!output) {
@@ -613,9 +951,18 @@ bool RunImeBridgeSelfTest(const std::wstring& output_path) {
   }
   output << "{";
   output << "\"ok\":" << (ok ? "true" : "false") << ",";
+  output << "\"rime\":{";
+  output << "\"ok\":" << (rime_ok ? "true" : "false") << ",";
   output << "\"cao\":" << CandidateJsonArray(cao_candidates) << ",";
   output << "\"activated\":"
          << (runtime.IsErrorValue(activate) ? "false" : "true");
+  output << "},";
+  output << "\"zinnia\":{";
+  output << "\"ok\":" << (zinnia_ok ? "true" : "false") << ",";
+  output << "\"sample\":" << CandidateJsonArray(zinnia_candidates) << ",";
+  output << "\"activated\":"
+         << (zinnia_runtime.IsErrorValue(zinnia_activate) ? "false" : "true");
+  output << "}";
   output << "}";
   return ok;
 }

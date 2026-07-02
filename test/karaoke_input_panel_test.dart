@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kirakara_app/ime/engines/zinnia_handwriting_engine.dart';
 import 'package:kirakara_app/ime/ime_controller.dart';
 import 'package:kirakara_app/ime/ime_mode.dart';
+import 'package:kirakara_app/ime/native/zinnia_native_bridge.dart';
 import 'package:kirakara_app/ime/search_query_controller.dart';
 import 'package:kirakara_app/ui/theme/kirakara_theme.dart';
 import 'package:kirakara_app/ui/widgets/handwriting_pad.dart';
@@ -16,7 +18,17 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final search = SearchQueryController();
-    final ime = ImeController(searchQueryController: search);
+    final ime = ImeController(
+      searchQueryController: search,
+      engines: {
+        ImeMode.handwriting: ZinniaHandwritingEngine(
+          bridge: const UnavailableNativeHandwritingBridge(
+            engineName: 'zinnia',
+            reason: 'widget test',
+          ),
+        ),
+      },
+    );
     final focusNode = FocusNode(debugLabel: 'test-search');
     addTearDown(ime.dispose);
     addTearDown(search.dispose);
@@ -66,7 +78,17 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final search = SearchQueryController();
-    final ime = ImeController(searchQueryController: search);
+    final ime = ImeController(
+      searchQueryController: search,
+      engines: {
+        ImeMode.handwriting: ZinniaHandwritingEngine(
+          bridge: const UnavailableNativeHandwritingBridge(
+            engineName: 'zinnia',
+            reason: 'widget test',
+          ),
+        ),
+      },
+    );
     final focusNode = FocusNode(debugLabel: 'test-handwriting-search');
     addTearDown(ime.dispose);
     addTearDown(search.dispose);

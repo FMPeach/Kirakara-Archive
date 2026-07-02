@@ -1,6 +1,27 @@
 cmake_minimum_required(VERSION 3.14)
 project(runner LANGUAGES CXX)
 
+set(KIRAKARA_ZINNIA_SOURCE_DIR
+  "${CMAKE_SOURCE_DIR}/../third_party/ime/zinnia/windows/source")
+
+add_library(kirakara_zinnia STATIC
+  "${KIRAKARA_ZINNIA_SOURCE_DIR}/character.cpp"
+  "${KIRAKARA_ZINNIA_SOURCE_DIR}/feature.cpp"
+  "${KIRAKARA_ZINNIA_SOURCE_DIR}/recognizer.cpp"
+  "${KIRAKARA_ZINNIA_SOURCE_DIR}/sexp.cpp"
+)
+target_compile_features(kirakara_zinnia PUBLIC cxx_std_17)
+target_compile_definitions(kirakara_zinnia PUBLIC
+  "ZINNIA_STATIC_LIBRARY"
+  "HAVE_CONFIG_H"
+  "HAVE_WINDOWS_H"
+  "NOMINMAX"
+)
+target_compile_options(kirakara_zinnia PRIVATE /W0 /utf-8)
+target_include_directories(kirakara_zinnia PUBLIC
+  "${KIRAKARA_ZINNIA_SOURCE_DIR}"
+)
+
 # Define the application target. To change its name, change BINARY_NAME in the
 # top-level CMakeLists.txt, not the value here, or `flutter run` will no longer
 # work.
@@ -36,6 +57,7 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE kirakara_zinnia)
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
