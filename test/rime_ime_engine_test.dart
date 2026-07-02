@@ -5,7 +5,12 @@ import 'package:kirakara_app/ime/native/ime_native_bridge.dart';
 void main() {
   test('Rime engine falls back to mock pinyin when native bridge is unavailable',
       () async {
-    final engine = RimeImeEngine();
+    final engine = RimeImeEngine(
+      bridge: const UnavailableNativeImeBridge(
+        engineName: 'rime',
+        reason: 'test unavailable bridge',
+      ),
+    );
 
     expect(engine.isNativeAvailable, isFalse);
     await engine.inputKey('L');

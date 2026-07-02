@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include "flutter_window.h"
+#include "ime_bridge.h"
 #include "utils.h"
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
@@ -21,6 +22,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();
+
+  if (command_line_arguments.size() >= 2 &&
+      command_line_arguments[0] == "--kirakara-ime-probe") {
+    const std::wstring output_path =
+        std::wstring(command_line_arguments[1].begin(),
+                     command_line_arguments[1].end());
+    const bool ok = RunImeBridgeSelfTest(output_path);
+    ::CoUninitialize();
+    return ok ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 

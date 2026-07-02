@@ -1,53 +1,52 @@
-import 'dart:ffi';
+import 'package:flutter/services.dart';
 
 import 'ime_native_bridge.dart';
 
 class RimeNativeBridgeProbe {
   const RimeNativeBridgeProbe({
-    this.libraryName = 'kirakara_rime.dll',
+    this.channel = const MethodChannel('kirakara/ime'),
   });
 
-  final String libraryName;
+  final MethodChannel channel;
 
   NativeImeBridge probe() {
-    try {
-      final library = DynamicLibrary.open(libraryName);
-      return RimeNativeBridge(library: library, libraryName: libraryName);
-    } on Object catch (error) {
-      return UnavailableNativeImeBridge(
-        engineName: 'rime',
-        reason: 'Unable to load $libraryName: $error',
-      );
-    }
+    return RimeNativeBridge(channel: channel);
   }
 }
 
 class RimeNativeBridge implements NativeImeBridge {
   const RimeNativeBridge({
-    required this.library,
-    required this.libraryName,
+    required this.channel,
+    this.schema = 'luna_pinyin_simp',
   });
 
-  final DynamicLibrary library;
-  final String libraryName;
+  final MethodChannel channel;
+  final String schema;
 
   @override
   String get engineName => 'rime';
 
   @override
-  bool get isAvailable => false;
+  bool get isAvailable => true;
 
   @override
-  String? get unavailableReason {
-    return '$libraryName loaded, but Kirakara Rime ABI bindings are not linked '
-        'in this Flutter prototype yet';
+  String? get unavailableReason => null;
+
+  @override
+  Future<void> activateSession(String sessionId) async {
+    final result = await _invokeMap('rime.activate', {
+      'sessionId': sessionId,
+      'schema': schema,
+    });
+    _throwIfNativeError(result);
   }
 
   @override
-  Future<void> activateSession(String sessionId) async {}
-
-  @override
-  Future<void> deactivateSession(String sessionId) async {}
+  Future<void> deactivateSession(String sessionId) async {
+    await channel.invokeMethod<bool>('rime.deactivate', {
+      'sessionId': sessionId,
+    });
+  }
 
   @override
   Future<NativeImeResult> compose({
@@ -55,11 +54,68 @@ class RimeNativeBridge implements NativeImeBridge {
     required String rawInput,
     required int pageIndex,
   }) async {
-    throw StateError(unavailableReason ?? 'Rime bridge is unavailable');
+    final result = await _invokeMap('rime.compose', {
+      'sessionId': sessionId,
+      'rawInput': rawInput,
+      'pageIndex': pageIndex,
+      'pageSize': 8,
+    });
+    _throwIfNativeError(result);
+    return _fromNativeMap(result);
   }
 
   @override
   Future<NativeImeResult> clear(String sessionId) async {
-    throw StateError(unavailableReason ?? 'Rime bridge is unavailable');
+    final result = await _invokeMap('rime.clear', {
+      'sessionId': sessionId,
+    });
+    _throwIfNativeError(result);
+    return _fromNativeMap(result);
+  }
+
+  Future<Map<Object?, Object?>> _invokeMap(
+    String method,
+    Map<String, Object?> arguments,
+  ) async {
+    final result = await channel.invokeMethod<Object?>(method, arguments);
+    if (result is Map<Object?, Object?>) {
+      return result;
+    }
+    throw StateError('Unexpected Rime bridge response for $method: $result');
+  }
+
+  void _throwIfNativeError(Map<Object?, Object?> result) {
+    if (result['ok'] == false) {
+      throw StateError(
+        (result['error'] as String?) ?? 'Unknown Rime bridge error',
+      );
+    }
+  }
+
+  NativeImeResult _fromNativeMap(Map<Object?, Object?> result) {
+    final rawInput = (result['rawInput'] as String?) ?? '';
+    final preedit = (result['preedit'] as String?) ?? rawInput;
+    final candidatesRaw = result['candidates'];
+    final candidates = <NativeImeCandidate>[];
+    if (candidatesRaw is List<Object?>) {
+      for (final item in candidatesRaw) {
+        if (item is Map<Object?, Object?>) {
+          candidates.add(
+            NativeImeCandidate(
+              text: (item['text'] as String?) ?? '',
+              annotation: item['annotation'] as String?,
+            ),
+          );
+        }
+      }
+    }
+    return NativeImeResult(
+      rawInput: rawInput,
+      preedit: preedit,
+      candidates: candidates,
+      pageIndex: (result['pageIndex'] as int?) ?? 0,
+      hasPreviousPage: (result['hasPreviousPage'] as bool?) ?? false,
+      hasNextPage: (result['hasNextPage'] as bool?) ?? false,
+    );
   }
 }

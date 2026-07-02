@@ -1,0 +1,621 @@
+#include "ime_bridge.h"
+
+#include <flutter/encodable_value.h>
+#include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
+#include <windows.h>
+
+#include <algorithm>
+#include <cstdlib>
+#include <filesystem>
+#include <memory>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace {
+
+using flutter::EncodableList;
+using flutter::EncodableMap;
+using flutter::EncodableValue;
+using MethodCall = flutter::MethodCall<EncodableValue>;
+using MethodResult = flutter::MethodResult<EncodableValue>;
+
+using Bool = int;
+using RimeSessionId = uintptr_t;
+
+struct RimeTraits {
+  int data_size;
+  const char* shared_data_dir;
+  const char* user_data_dir;
+  const char* distribution_name;
+  const char* distribution_code_name;
+  const char* distribution_version;
+  const char* app_name;
+  const char** modules;
+  int min_log_level;
+  const char* log_dir;
+  const char* prebuilt_data_dir;
+  const char* staging_dir;
+};
+
+struct RimeComposition {
+  int length;
+  int cursor_pos;
+  int sel_start;
+  int sel_end;
+  char* preedit;
+};
+
+struct RimeCandidate {
+  char* text;
+  char* comment;
+  void* reserved;
+};
+
+struct RimeMenu {
+  int page_size;
+  int page_no;
+  Bool is_last_page;
+  int highlighted_candidate_index;
+  int num_candidates;
+  RimeCandidate* candidates;
+  char* select_keys;
+};
+
+struct RimeContext {
+  int data_size;
+  RimeComposition composition;
+  RimeMenu menu;
+  char* commit_text_preview;
+  char** select_labels;
+};
+
+struct RimeCandidateListIterator {
+  void* ptr;
+  int index;
+  RimeCandidate candidate;
+};
+
+using RimeSetupFn = void (*)(RimeTraits*);
+using RimeInitializeFn = void (*)(RimeTraits*);
+using RimeFinalizeFn = void (*)();
+using RimeCreateSessionFn = RimeSessionId (*)();
+using RimeDestroySessionFn = Bool (*)(RimeSessionId);
+using RimeSelectSchemaFn = Bool (*)(RimeSessionId, const char*);
+using RimeSetInputFn = Bool (*)(RimeSessionId, const char*);
+using RimeClearCompositionFn = void (*)(RimeSessionId);
+using RimeGetContextFn = Bool (*)(RimeSessionId, RimeContext*);
+using RimeFreeContextFn = Bool (*)(RimeContext*);
+using RimeCandidateListBeginFn =
+    Bool (*)(RimeSessionId, RimeCandidateListIterator*);
+using RimeCandidateListNextFn = Bool (*)(RimeCandidateListIterator*);
+using RimeCandidateListEndFn = void (*)(RimeCandidateListIterator*);
+
+std::string WideToUtf8(const std::wstring& value) {
+  if (value.empty()) {
+    return "";
+  }
+  const int size = WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, nullptr,
+                                       0, nullptr, nullptr);
+  if (size <= 0) {
+    return "";
+  }
+  std::string result(static_cast<size_t>(size - 1), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, result.data(), size,
+                      nullptr, nullptr);
+  return result;
+}
+
+std::wstring ExeDir() {
+  std::wstring buffer(MAX_PATH, L'\0');
+  DWORD length = GetModuleFileNameW(nullptr, buffer.data(),
+                                    static_cast<DWORD>(buffer.size()));
+  while (length == buffer.size()) {
+    buffer.resize(buffer.size() * 2);
+    length = GetModuleFileNameW(nullptr, buffer.data(),
+                                static_cast<DWORD>(buffer.size()));
+  }
+  buffer.resize(length);
+  return std::filesystem::path(buffer).parent_path().wstring();
+}
+
+std::wstring AppDataDir() {
+  wchar_t* app_data = nullptr;
+  size_t len = 0;
+  if (_wdupenv_s(&app_data, &len, L"APPDATA") != 0 || !app_data) {
+    return ExeDir();
+  }
+  std::wstring result(app_data);
+  free(app_data);
+  return result;
+}
+
+std::string StringArg(const EncodableMap& map,
+                      const char* key,
+                      const std::string& fallback = "") {
+  const auto it = map.find(EncodableValue(key));
+  if (it == map.end()) {
+    return fallback;
+  }
+  if (const auto value = std::get_if<std::string>(&it->second)) {
+    return *value;
+  }
+  return fallback;
+}
+
+int IntArg(const EncodableMap& map, const char* key, int fallback = 0) {
+  const auto it = map.find(EncodableValue(key));
+  if (it == map.end()) {
+    return fallback;
+  }
+  if (const auto value = std::get_if<int>(&it->second)) {
+    return *value;
+  }
+  if (const auto value64 = std::get_if<int64_t>(&it->second)) {
+    return static_cast<int>(*value64);
+  }
+  return fallback;
+}
+
+std::string LastErrorText(const std::string& prefix) {
+  std::ostringstream stream;
+  stream << prefix << " (GetLastError=" << GetLastError() << ")";
+  return stream.str();
+}
+
+std::string EscapeJson(const std::string& value) {
+  std::ostringstream stream;
+  for (const char ch : value) {
+    switch (ch) {
+      case '\\':
+        stream << "\\\\";
+        break;
+      case '"':
+        stream << "\\\"";
+        break;
+      case '\n':
+        stream << "\\n";
+        break;
+      case '\r':
+        stream << "\\r";
+        break;
+      case '\t':
+        stream << "\\t";
+        break;
+      default:
+        stream << ch;
+        break;
+    }
+  }
+  return stream.str();
+}
+
+class RimeRuntime {
+ public:
+  RimeRuntime() = default;
+  ~RimeRuntime() { Shutdown(); }
+
+  bool EnsureLoaded(std::string* error) {
+    if (loaded_) {
+      return true;
+    }
+
+    runtime_dir_ =
+        std::filesystem::path(ExeDir()) / L"ime" / L"rime" / L"windows";
+    const auto dll_path = runtime_dir_ / L"rime.dll";
+    library_ = LoadLibraryW(dll_path.c_str());
+    if (!library_) {
+      if (error) {
+        *error = LastErrorText("Unable to load bundled Rime runtime: " +
+                               WideToUtf8(dll_path.wstring()));
+      }
+      return false;
+    }
+
+    setup_ = Symbol<RimeSetupFn>("RimeSetup");
+    initialize_ = Symbol<RimeInitializeFn>("RimeInitialize");
+    finalize_ = Symbol<RimeFinalizeFn>("RimeFinalize");
+    create_session_ = Symbol<RimeCreateSessionFn>("RimeCreateSession");
+    destroy_session_ = Symbol<RimeDestroySessionFn>("RimeDestroySession");
+    select_schema_ = Symbol<RimeSelectSchemaFn>("RimeSelectSchema");
+    set_input_ = Symbol<RimeSetInputFn>("RimeSetInput");
+    clear_composition_ =
+        Symbol<RimeClearCompositionFn>("RimeClearComposition");
+    get_context_ = Symbol<RimeGetContextFn>("RimeGetContext");
+    free_context_ = Symbol<RimeFreeContextFn>("RimeFreeContext");
+    candidate_list_begin_ =
+        Symbol<RimeCandidateListBeginFn>("RimeCandidateListBegin");
+    candidate_list_next_ =
+        Symbol<RimeCandidateListNextFn>("RimeCandidateListNext");
+    candidate_list_end_ = Symbol<RimeCandidateListEndFn>("RimeCandidateListEnd");
+
+    if (!setup_ || !initialize_ || !finalize_ || !create_session_ ||
+        !destroy_session_ || !select_schema_ || !set_input_ ||
+        !clear_composition_ || !get_context_ || !free_context_ ||
+        !candidate_list_begin_ || !candidate_list_next_ ||
+        !candidate_list_end_) {
+      if (error) {
+        *error = "Bundled rime.dll is missing required C API exports";
+      }
+      return false;
+    }
+
+    user_dir_ = std::filesystem::path(AppDataDir()) / L"Kirakara" / L"Rime";
+    std::filesystem::create_directories(user_dir_);
+    std::filesystem::create_directories(user_dir_ / L"build");
+
+    shared_dir_utf8_ = WideToUtf8((runtime_dir_ / L"data").wstring());
+    user_dir_utf8_ = WideToUtf8(user_dir_.wstring());
+    prebuilt_dir_utf8_ = WideToUtf8((runtime_dir_ / L"build").wstring());
+    staging_dir_utf8_ = WideToUtf8((user_dir_ / L"build").wstring());
+    log_dir_utf8_ = WideToUtf8(user_dir_.wstring());
+
+    RimeTraits traits = {};
+    traits.data_size = sizeof(RimeTraits) - sizeof(traits.data_size);
+    traits.shared_data_dir = shared_dir_utf8_.c_str();
+    traits.user_data_dir = user_dir_utf8_.c_str();
+    traits.distribution_name = "Kirakara";
+    traits.distribution_code_name = "kirakara";
+    traits.distribution_version = "0.1";
+    traits.app_name = "rime.kirakara";
+    traits.min_log_level = 2;
+    traits.log_dir = log_dir_utf8_.c_str();
+    traits.prebuilt_data_dir = prebuilt_dir_utf8_.c_str();
+    traits.staging_dir = staging_dir_utf8_.c_str();
+
+    setup_(&traits);
+    initialize_(&traits);
+    loaded_ = true;
+    return true;
+  }
+
+  EncodableValue Activate(const std::string& session_key,
+                          const std::string& schema_id) {
+    std::string error;
+    if (!EnsureLoaded(&error)) {
+      return ErrorValue(error);
+    }
+
+    auto& session = sessions_[session_key];
+    if (session == 0) {
+      session = create_session_();
+    }
+    if (session == 0) {
+      return ErrorValue("RimeCreateSession returned 0");
+    }
+    if (!select_schema_(session, schema_id.c_str())) {
+      return ErrorValue("RimeSelectSchema failed: " + schema_id);
+    }
+    return EncodableValue(EncodableMap{
+        {EncodableValue("ok"), EncodableValue(true)},
+        {EncodableValue("engine"), EncodableValue("rime")},
+        {EncodableValue("schema"), EncodableValue(schema_id)},
+        {EncodableValue("runtimeDir"), EncodableValue(WideToUtf8(runtime_dir_.wstring()))},
+    });
+  }
+
+  EncodableValue Compose(const std::string& session_key,
+                         const std::string& raw_input,
+                         int page_index,
+                         int page_size) {
+    const auto activated = Activate(session_key, "luna_pinyin_simp");
+    if (IsError(activated)) {
+      return activated;
+    }
+
+    const auto session = sessions_[session_key];
+    clear_composition_(session);
+    if (!raw_input.empty() && !set_input_(session, raw_input.c_str())) {
+      return ErrorValue("RimeSetInput failed: " + raw_input);
+    }
+
+    RimeContext context = {};
+    context.data_size = sizeof(RimeContext) - sizeof(context.data_size);
+    std::string preedit = raw_input;
+    bool is_last_page = true;
+    if (get_context_(session, &context)) {
+      if (context.composition.preedit) {
+        preedit = context.composition.preedit;
+      }
+      is_last_page = context.menu.is_last_page != 0;
+      free_context_(&context);
+    }
+
+    EncodableList candidates;
+    RimeCandidateListIterator iterator = {};
+    const int start = page_index * page_size;
+    const int end = start + page_size;
+    int index = 0;
+    bool has_next = false;
+    if (candidate_list_begin_(session, &iterator)) {
+      do {
+        if (index >= start && index < end) {
+          const std::string text = iterator.candidate.text
+                                       ? std::string(iterator.candidate.text)
+                                       : std::string();
+          if (text.empty()) {
+            index += 1;
+            continue;
+          }
+          if (!HasCandidate(candidates, text)) {
+            candidates.push_back(EncodableValue(EncodableMap{
+                {EncodableValue("text"), EncodableValue(text)},
+                {EncodableValue("annotation"),
+                 EncodableValue(iterator.candidate.comment
+                                    ? std::string(iterator.candidate.comment)
+                                    : std::string())},
+            }));
+          }
+        } else if (index >= end) {
+          has_next = true;
+          break;
+        }
+        index += 1;
+      } while (candidate_list_next_(&iterator));
+      candidate_list_end_(&iterator);
+    }
+
+    return EncodableValue(EncodableMap{
+        {EncodableValue("ok"), EncodableValue(true)},
+        {EncodableValue("rawInput"), EncodableValue(raw_input)},
+        {EncodableValue("preedit"), EncodableValue(preedit)},
+        {EncodableValue("pageIndex"), EncodableValue(page_index)},
+        {EncodableValue("hasPreviousPage"), EncodableValue(page_index > 0)},
+        {EncodableValue("hasNextPage"),
+         EncodableValue(has_next || !is_last_page)},
+        {EncodableValue("candidates"), EncodableValue(candidates)},
+    });
+  }
+
+  EncodableValue Clear(const std::string& session_key) {
+    std::string error;
+    if (!EnsureLoaded(&error)) {
+      return ErrorValue(error);
+    }
+    const auto it = sessions_.find(session_key);
+    if (it != sessions_.end() && it->second != 0) {
+      clear_composition_(it->second);
+    }
+    return EncodableValue(EncodableMap{
+        {EncodableValue("ok"), EncodableValue(true)},
+        {EncodableValue("rawInput"), EncodableValue("")},
+        {EncodableValue("preedit"), EncodableValue("")},
+        {EncodableValue("pageIndex"), EncodableValue(0)},
+        {EncodableValue("hasPreviousPage"), EncodableValue(false)},
+        {EncodableValue("hasNextPage"), EncodableValue(false)},
+        {EncodableValue("candidates"), EncodableValue(EncodableList{})},
+    });
+  }
+
+  bool IsErrorValue(const EncodableValue& value) const { return IsError(value); }
+
+  void Deactivate(const std::string& session_key) {
+    const auto it = sessions_.find(session_key);
+    if (it == sessions_.end()) {
+      return;
+    }
+    if (destroy_session_ && it->second != 0) {
+      destroy_session_(it->second);
+    }
+    sessions_.erase(it);
+  }
+
+ private:
+  static bool HasCandidate(const EncodableList& candidates,
+                           const std::string& text) {
+    for (const auto& value : candidates) {
+      const auto* map = std::get_if<EncodableMap>(&value);
+      if (!map) {
+        continue;
+      }
+      const auto it = map->find(EncodableValue("text"));
+      if (it == map->end()) {
+        continue;
+      }
+      const auto* existing = std::get_if<std::string>(&it->second);
+      if (existing && *existing == text) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  template <typename T>
+  T Symbol(const char* name) {
+    return reinterpret_cast<T>(GetProcAddress(library_, name));
+  }
+
+  static EncodableValue ErrorValue(const std::string& message) {
+    return EncodableValue(EncodableMap{
+        {EncodableValue("ok"), EncodableValue(false)},
+        {EncodableValue("error"), EncodableValue(message)},
+    });
+  }
+
+  static bool IsError(const EncodableValue& value) {
+    if (const auto map = std::get_if<EncodableMap>(&value)) {
+      const auto it = map->find(EncodableValue("ok"));
+      if (it != map->end()) {
+        if (const auto ok = std::get_if<bool>(&it->second)) {
+          return !*ok;
+        }
+      }
+    }
+    return false;
+  }
+
+  void Shutdown() {
+    for (const auto& item : sessions_) {
+      if (destroy_session_ && item.second != 0) {
+        destroy_session_(item.second);
+      }
+    }
+    sessions_.clear();
+    if (loaded_ && finalize_) {
+      finalize_();
+    }
+    if (library_) {
+      FreeLibrary(library_);
+      library_ = nullptr;
+    }
+    loaded_ = false;
+  }
+
+  bool loaded_ = false;
+  HMODULE library_ = nullptr;
+  std::filesystem::path runtime_dir_;
+  std::filesystem::path user_dir_;
+  std::string shared_dir_utf8_;
+  std::string user_dir_utf8_;
+  std::string prebuilt_dir_utf8_;
+  std::string staging_dir_utf8_;
+  std::string log_dir_utf8_;
+  std::unordered_map<std::string, RimeSessionId> sessions_;
+
+  RimeSetupFn setup_ = nullptr;
+  RimeInitializeFn initialize_ = nullptr;
+  RimeFinalizeFn finalize_ = nullptr;
+  RimeCreateSessionFn create_session_ = nullptr;
+  RimeDestroySessionFn destroy_session_ = nullptr;
+  RimeSelectSchemaFn select_schema_ = nullptr;
+  RimeSetInputFn set_input_ = nullptr;
+  RimeClearCompositionFn clear_composition_ = nullptr;
+  RimeGetContextFn get_context_ = nullptr;
+  RimeFreeContextFn free_context_ = nullptr;
+  RimeCandidateListBeginFn candidate_list_begin_ = nullptr;
+  RimeCandidateListNextFn candidate_list_next_ = nullptr;
+  RimeCandidateListEndFn candidate_list_end_ = nullptr;
+};
+
+std::unique_ptr<RimeRuntime> g_rime;
+
+std::vector<std::string> CandidateTexts(const EncodableValue& value) {
+  std::vector<std::string> texts;
+  const auto* map = std::get_if<EncodableMap>(&value);
+  if (!map) {
+    return texts;
+  }
+  const auto it = map->find(EncodableValue("candidates"));
+  if (it == map->end()) {
+    return texts;
+  }
+  const auto* list = std::get_if<EncodableList>(&it->second);
+  if (!list) {
+    return texts;
+  }
+  for (const auto& item : *list) {
+    const auto* candidate = std::get_if<EncodableMap>(&item);
+    if (!candidate) {
+      continue;
+    }
+    const auto text_it = candidate->find(EncodableValue("text"));
+    if (text_it == candidate->end()) {
+      continue;
+    }
+    if (const auto* text = std::get_if<std::string>(&text_it->second)) {
+      texts.push_back(*text);
+    }
+  }
+  return texts;
+}
+
+std::string CandidateJsonArray(const std::vector<std::string>& candidates) {
+  std::ostringstream stream;
+  stream << "[";
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    if (i > 0) {
+      stream << ",";
+    }
+    stream << "\"" << EscapeJson(candidates[i]) << "\"";
+  }
+  stream << "]";
+  return stream.str();
+}
+
+const EncodableMap* ArgsMap(const MethodCall& call) {
+  return std::get_if<EncodableMap>(call.arguments());
+}
+
+void HandleMethodCall(const MethodCall& call,
+                      std::unique_ptr<MethodResult> result) {
+  if (!g_rime) {
+    g_rime = std::make_unique<RimeRuntime>();
+  }
+
+  const auto* args = ArgsMap(call);
+  if (!args) {
+    result->Error("bad_args", "Expected map arguments");
+    return;
+  }
+
+  const auto session_id = StringArg(*args, "sessionId", "kirakara-rime");
+  if (call.method_name() == "rime.activate") {
+    const auto schema = StringArg(*args, "schema", "luna_pinyin_simp");
+    result->Success(g_rime->Activate(session_id, schema));
+    return;
+  }
+  if (call.method_name() == "rime.deactivate") {
+    g_rime->Deactivate(session_id);
+    result->Success(EncodableValue(true));
+    return;
+  }
+  if (call.method_name() == "rime.compose") {
+    const auto raw_input = StringArg(*args, "rawInput");
+    const auto page_index = IntArg(*args, "pageIndex", 0);
+    const auto page_size = IntArg(*args, "pageSize", 8);
+    result->Success(
+        g_rime->Compose(session_id, raw_input, page_index, page_size));
+    return;
+  }
+  if (call.method_name() == "rime.clear") {
+    result->Success(g_rime->Clear(session_id));
+    return;
+  }
+
+  result->NotImplemented();
+}
+
+}  // namespace
+
+void RegisterImeBridge(flutter::BinaryMessenger* messenger) {
+  auto channel = std::make_unique<flutter::MethodChannel<EncodableValue>>(
+      messenger, "kirakara/ime",
+      &flutter::StandardMethodCodec::GetInstance());
+  channel->SetMethodCallHandler(
+      [](const MethodCall& call, std::unique_ptr<MethodResult> result) {
+        HandleMethodCall(call, std::move(result));
+      });
+  static std::unique_ptr<flutter::MethodChannel<EncodableValue>> ime_channel;
+  ime_channel = std::move(channel);
+}
+
+bool RunImeBridgeSelfTest(const std::wstring& output_path) {
+  RimeRuntime runtime;
+  const auto activate = runtime.Activate("probe", "luna_pinyin_simp");
+  const auto cao = runtime.Compose("probe", "cao", 0, 8);
+  const auto cao_candidates = CandidateTexts(cao);
+
+  bool ok = false;
+  const bool has_cao = std::find(cao_candidates.begin(), cao_candidates.end(),
+                                 "\xE8\x8D\x89") != cao_candidates.end() ||
+                       std::find(cao_candidates.begin(), cao_candidates.end(),
+                                 "\xE6\x93\x8D") != cao_candidates.end() ||
+                       std::find(cao_candidates.begin(), cao_candidates.end(),
+                                 "\xE6\x9B\xB9") != cao_candidates.end();
+  ok = has_cao;
+
+  std::ofstream output(output_path, std::ios::binary);
+  if (!output) {
+    return false;
+  }
+  output << "{";
+  output << "\"ok\":" << (ok ? "true" : "false") << ",";
+  output << "\"cao\":" << CandidateJsonArray(cao_candidates) << ",";
+  output << "\"activated\":"
+         << (runtime.IsErrorValue(activate) ? "false" : "true");
+  output << "}";
+  return ok;
+}
