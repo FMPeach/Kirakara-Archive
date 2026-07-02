@@ -13,6 +13,7 @@ class MockHandwritingImeEngine implements HandwritingImeEngine {
   ];
 
   String _rawInput = '';
+  int _strokeCount = 0;
   ImeComposition _composition = ImeComposition.empty(ImeMode.handwriting);
 
   @override
@@ -60,6 +61,7 @@ class MockHandwritingImeEngine implements HandwritingImeEngine {
   @override
   Future<ImeComposition> clear() async {
     _rawInput = '';
+    _strokeCount = 0;
     _composition = ImeComposition.empty(mode);
     return _composition;
   }
@@ -90,7 +92,8 @@ class MockHandwritingImeEngine implements HandwritingImeEngine {
 
   @override
   Future<ImeComposition> beginStroke(double x, double y) async {
-    _rawInput = 'stroke';
+    _strokeCount += 1;
+    _rawInput = '$_strokeCount 笔';
     _composition = ImeComposition(
       mode: mode,
       rawInput: _rawInput,
@@ -112,6 +115,10 @@ class MockHandwritingImeEngine implements HandwritingImeEngine {
 
   @override
   Future<ImeComposition> recognize() async {
+    if (_strokeCount == 0) {
+      _composition = ImeComposition.empty(mode);
+      return _composition;
+    }
     _composition = ImeComposition(
       mode: mode,
       rawInput: _rawInput,

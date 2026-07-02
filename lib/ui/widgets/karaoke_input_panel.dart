@@ -4,6 +4,7 @@ import '../../ime/ime_controller.dart';
 import '../../ime/ime_mode.dart';
 import '../theme/kirakara_theme.dart';
 import 'candidate_bar.dart';
+import 'handwriting_pad.dart';
 import 'touch_keyboard_layout.dart';
 
 class KaraokeInputPanel extends StatelessWidget {
@@ -167,7 +168,18 @@ class KaraokeInputPanel extends StatelessWidget {
                 );
               },
             ),
-            TouchKeyboardLayout(keys: _letters, onKey: _handleKey),
+            AnimatedBuilder(
+              animation: imeController,
+              builder: (context, _) {
+                if (imeController.mode == ImeMode.handwriting) {
+                  return HandwritingPad(
+                    onRecognize: imeController.recognizeHandwritingStrokes,
+                    onClear: imeController.clearComposition,
+                  );
+                }
+                return TouchKeyboardLayout(keys: _letters, onKey: _handleKey);
+              },
+            ),
             const SizedBox(height: 16),
             Container(
               width: double.infinity,

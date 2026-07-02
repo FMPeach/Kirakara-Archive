@@ -23,22 +23,25 @@ class CandidateBar extends StatelessWidget {
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: KiraColors.line)),
       ),
-      child: Row(
-        children: [
-          if (preedit.isNotEmpty) ...[
-            _PreeditChip(text: preedit),
-            const SizedBox(width: 8),
-          ],
-          for (var index = 0; index < candidates.length; index++)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: _CandidateChip(
-                index: index,
-                candidate: candidates[index],
-                onTap: () => onCandidateSelected(index),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            if (preedit.isNotEmpty) ...[
+              _PreeditChip(text: preedit),
+              const SizedBox(width: 8),
+            ],
+            for (var index = 0; index < candidates.length; index++)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: _CandidateChip(
+                  index: index,
+                  candidate: candidates[index],
+                  onTap: () => onCandidateSelected(index),
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -1,9 +1,10 @@
 import 'package:flutter/foundation.dart';
 
 import 'engines/english_ime_engine.dart';
-import 'engines/mock_handwriting_ime_engine.dart';
 import 'engines/mozc_ime_engine.dart';
 import 'engines/rime_ime_engine.dart';
+import 'engines/zinnia_handwriting_engine.dart';
+import 'handwriting_stroke.dart';
 import 'ime_composition.dart';
 import 'ime_engine.dart';
 import 'ime_mode.dart';
@@ -19,7 +20,7 @@ class ImeController extends ChangeNotifier {
               ImeMode.english: EnglishImeEngine(),
               ImeMode.pinyin: RimeImeEngine(),
               ImeMode.japaneseRomaji: MozcImeEngine(),
-              ImeMode.handwriting: MockHandwritingImeEngine(),
+              ImeMode.handwriting: ZinniaHandwritingEngine(),
             } {
     _activeEngine = _engines[ImeMode.english]!;
     _composition = ImeComposition.empty(ImeMode.english);
@@ -90,6 +91,11 @@ class ImeController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> clearComposition() async {
+    _composition = await _activeEngine.clear();
+    notifyListeners();
+  }
+
   Future<void> space() async {
     if (mode == ImeMode.english || _composition.rawInput.isEmpty) {
       _searchQueryController.appendText(' ');
@@ -127,6 +133,28 @@ class ImeController extends ChangeNotifier {
     final result = await _activeEngine.commitRaw();
     _searchQueryController.appendText(result.text);
     _composition = result.composition;
+    notifyListeners();
+  }
+
+  Future<void> recognizeHandwritingStrokes(List<ImeStroke> strokes) async {
+    if (_activeEngine is! HandwritingImeEngine) {
+      return;
+    }
+    final handwritingEngine = _activeEngine as HandwritingImeEngine;
+    _composition = await handwritingEngine.clear();
+    for (final stroke in strokes) {
+      if (stroke.isEmpty) {
+        continue;
+      }
+      final first = stroke.first;
+      _composition = await handwritingEngine.beginStroke(first.x, first.y);
+      for (final point in stroke.skip(1)) {
+        _composition =
+            await handwritingEngine.appendStrokePoint(point.x, point.y);
+      }
+      _composition = await handwritingEngine.endStroke();
+    }
+    _composition = await handwritingEngine.recognize();
     notifyListeners();
   }
 }
