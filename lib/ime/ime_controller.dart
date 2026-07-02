@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'engines/english_ime_engine.dart';
 import 'engines/mozc_ime_engine.dart';
+import 'engines/numeric_ime_engine.dart';
 import 'engines/rime_ime_engine.dart';
 import 'engines/zinnia_handwriting_engine.dart';
 import 'handwriting_stroke.dart';
@@ -18,6 +19,7 @@ class ImeController extends ChangeNotifier {
         _engines = engines ??
             {
               ImeMode.english: EnglishImeEngine(),
+              ImeMode.numeric: NumericImeEngine(),
               ImeMode.pinyin: RimeImeEngine(),
               ImeMode.japaneseRomaji: MozcImeEngine(),
               ImeMode.handwriting: ZinniaHandwritingEngine(),
@@ -65,7 +67,7 @@ class ImeController extends ChangeNotifier {
     if (key.isEmpty) {
       return;
     }
-    if (mode == ImeMode.english) {
+    if (mode == ImeMode.english || mode == ImeMode.numeric) {
       _composition = await _activeEngine.inputKey(key);
       final result = await _activeEngine.commitRaw();
       _searchQueryController.appendText(result.text);
@@ -97,7 +99,9 @@ class ImeController extends ChangeNotifier {
   }
 
   Future<void> space() async {
-    if (mode == ImeMode.english || _composition.rawInput.isEmpty) {
+    if (mode == ImeMode.english ||
+        mode == ImeMode.numeric ||
+        _composition.rawInput.isEmpty) {
       _searchQueryController.appendText(' ');
       notifyListeners();
       return;

@@ -33,6 +33,18 @@ void main() {
     await ime.handleKeyboardKey('清空');
     expect(search.text, isEmpty);
 
+    await ime.setMode(ImeMode.numeric);
+    for (final key in ['1', '0', '0', '7']) {
+      await ime.handleKeyboardKey(key);
+    }
+    expect(search.text, '1007');
+    expect(ime.composition.rawInput, isEmpty);
+
+    await ime.handleKeyboardKey('退格');
+    expect(search.text, '100');
+    await ime.handleKeyboardKey('清空');
+    expect(search.text, isEmpty);
+
     await ime.setMode(ImeMode.japaneseRomaji);
     for (final key in ['Z', 'A', 'N', 'K', 'O', 'K', 'U']) {
       await ime.handleKeyboardKey(key);

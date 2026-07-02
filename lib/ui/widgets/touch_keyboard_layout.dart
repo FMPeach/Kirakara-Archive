@@ -7,18 +7,20 @@ class TouchKeyboardLayout extends StatelessWidget {
     super.key,
     required this.keys,
     required this.onKey,
+    this.crossAxisCount = 6,
   });
 
   final List<String> keys;
   final ValueChanged<String> onKey;
+  final int crossAxisCount;
 
   @override
   Widget build(BuildContext context) {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 6,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: crossAxisCount,
         crossAxisSpacing: 8,
         mainAxisSpacing: 8,
         childAspectRatio: 1,

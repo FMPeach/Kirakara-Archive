@@ -61,6 +61,20 @@ class KaraokeInputPanel extends StatelessWidget {
     '空格',
     '搜索',
   ];
+  static const _dialKeys = [
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
+    '退格',
+    '0',
+    '搜索',
+  ];
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
@@ -175,6 +189,18 @@ class KaraokeInputPanel extends StatelessWidget {
                   return HandwritingPad(
                     onRecognize: imeController.recognizeHandwritingStrokes,
                     onClear: imeController.clearComposition,
+                  );
+                }
+                if (imeController.mode == ImeMode.numeric) {
+                  return Center(
+                    child: SizedBox(
+                      width: 276,
+                      child: TouchKeyboardLayout(
+                        keys: _dialKeys,
+                        crossAxisCount: 3,
+                        onKey: _handleKey,
+                      ),
+                    ),
                   );
                 }
                 return TouchKeyboardLayout(keys: _letters, onKey: _handleKey);
