@@ -12,6 +12,7 @@ class KaraokeInputPanel extends StatelessWidget {
     required this.activeTab,
     required this.placeholder,
     required this.controller,
+    required this.searchFocusNode,
     required this.imeController,
     required this.onTab,
     required this.onSearch,
@@ -21,6 +22,7 @@ class KaraokeInputPanel extends StatelessWidget {
   final String activeTab;
   final String placeholder;
   final TextEditingController controller;
+  final FocusNode searchFocusNode;
   final ImeController imeController;
   final List<String> tabs;
   final ValueChanged<String> onTab;
@@ -121,6 +123,8 @@ class KaraokeInputPanel extends StatelessWidget {
               height: 60,
               child: TextField(
                 controller: controller,
+                focusNode: searchFocusNode,
+                onSubmitted: (_) => onSearch(),
                 decoration: InputDecoration(
                   hintText: placeholder,
                   hintStyle: const TextStyle(
@@ -208,6 +212,7 @@ class KaraokeInputPanel extends StatelessWidget {
   }
 
   void _handleKey(String key) {
+    searchFocusNode.unfocus();
     if (key == '搜索') {
       imeController.commitRaw().then((_) => onSearch());
       return;

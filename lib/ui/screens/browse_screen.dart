@@ -43,6 +43,7 @@ class BrowseScreen extends StatefulWidget {
 class _BrowseScreenState extends State<BrowseScreen> {
   late final SearchQueryController _searchQueryController;
   late final ImeController _imeController;
+  final FocusNode _searchFocusNode = FocusNode(debugLabel: 'browse-search');
 
   late BrowseMode _mode;
   String _songQuery = '';
@@ -86,6 +87,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
     _searchQueryController.removeListener(_handleSearchControllerChanged);
     _imeController.dispose();
     _searchQueryController.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -139,6 +141,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
             activeTab: '歌名',
             placeholder: '搜索歌名、歌手、编号',
             controller: _searchQueryController.textController,
+            searchFocusNode: _searchFocusNode,
             imeController: _imeController,
             onTab: _switchSearchTab,
             onSearch: _handleSearchSubmit,
@@ -188,6 +191,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
             activeTab: '歌手',
             placeholder: '搜索歌手、角色、社团或声库',
             controller: _searchQueryController.textController,
+            searchFocusNode: _searchFocusNode,
             imeController: _imeController,
             onTab: _switchSearchTab,
             onSearch: _handleSearchSubmit,
@@ -244,6 +248,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
             tabs: const ['歌手内'],
             placeholder: '在 ${artist.name} 的歌曲中搜索',
             controller: _searchQueryController.textController,
+            searchFocusNode: _searchFocusNode,
             imeController: _imeController,
             onTab: _switchSearchTab,
             onSearch: _handleSearchSubmit,
@@ -295,6 +300,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
             activeTab: '分类',
             placeholder: '在当前分类中搜索歌曲、歌手、编号',
             controller: _searchQueryController.textController,
+            searchFocusNode: _searchFocusNode,
             imeController: _imeController,
             onTab: _switchSearchTab,
             onSearch: _handleSearchSubmit,
@@ -318,6 +324,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
             tabs: const ['外链'],
             placeholder: '搜索已解析的外链歌曲',
             controller: _searchQueryController.textController,
+            searchFocusNode: _searchFocusNode,
             imeController: _imeController,
             onTab: _switchSearchTab,
             onSearch: _handleSearchSubmit,
@@ -376,6 +383,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
             tabs: const ['排行'],
             placeholder: '在排行榜中搜索歌曲',
             controller: _searchQueryController.textController,
+            searchFocusNode: _searchFocusNode,
             imeController: _imeController,
             onTab: _switchSearchTab,
             onSearch: _handleSearchSubmit,
