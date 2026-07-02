@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'engines/english_ime_engine.dart';
 import 'engines/mock_handwriting_ime_engine.dart';
-import 'engines/mock_japanese_ime_engine.dart';
+import 'engines/mozc_ime_engine.dart';
 import 'engines/rime_ime_engine.dart';
 import 'ime_composition.dart';
 import 'ime_engine.dart';
@@ -18,7 +18,7 @@ class ImeController extends ChangeNotifier {
             {
               ImeMode.english: EnglishImeEngine(),
               ImeMode.pinyin: RimeImeEngine(),
-              ImeMode.japaneseRomaji: MockJapaneseImeEngine(),
+              ImeMode.japaneseRomaji: MozcImeEngine(),
               ImeMode.handwriting: MockHandwritingImeEngine(),
             } {
     _activeEngine = _engines[ImeMode.english]!;
