@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../domain/song.dart';
-import '../../ime/ime_controller.dart';
-import '../../ime/search_query_controller.dart';
 import '../../services/search_service.dart';
 import '../theme/kirakara_theme.dart';
-import '../widgets/karaoke_input_panel.dart';
 
 enum BrowseMode {
   songs,
@@ -41,9 +38,7 @@ class BrowseScreen extends StatefulWidget {
 }
 
 class _BrowseScreenState extends State<BrowseScreen> {
-  late final SearchQueryController _searchQueryController;
-  late final ImeController _imeController;
-  final FocusNode _searchFocusNode = FocusNode(debugLabel: 'browse-search');
+  final TextEditingController _searchController = TextEditingController();
 
   late BrowseMode _mode;
   String _songQuery = '';
@@ -54,6 +49,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
   String _categoryQuery = '';
   String _activeCategory = '热门';
   String _activeRanking = '热门榜';
+  String _imeMode = '英文';
   ArtistSummary? _activeArtist;
 
   @override
@@ -61,11 +57,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
     super.initState();
     _mode = widget.initialMode;
     _songQuery = widget.initialQuery;
-    _searchQueryController = SearchQueryController(text: _songQuery);
-    _searchQueryController.addListener(_handleSearchControllerChanged);
-    _imeController = ImeController(
-      searchQueryController: _searchQueryController,
-    );
     _syncSearchController();
   }
 
@@ -84,10 +75,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
 
   @override
   void dispose() {
-    _searchQueryController.removeListener(_handleSearchControllerChanged);
-    _imeController.dispose();
-    _searchQueryController.dispose();
-    _searchFocusNode.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -137,14 +125,15 @@ class _BrowseScreenState extends State<BrowseScreen> {
         const SizedBox(width: 22),
         SizedBox(
           width: 488,
-          child: KaraokeInputPanel(
+          child: _InputPanel(
             activeTab: '歌名',
             placeholder: '搜索歌名、歌手、编号',
-            controller: _searchQueryController.textController,
-            searchFocusNode: _searchFocusNode,
-            imeController: _imeController,
+            controller: _searchController,
+            imeMode: _imeMode,
+            onChanged: _handleSearchChanged,
             onTab: _switchSearchTab,
-            onSearch: _handleSearchSubmit,
+            onKey: _handleKey,
+            onImeMode: (mode) => setState(() => _imeMode = mode),
           ),
         ),
       ],
@@ -187,14 +176,15 @@ class _BrowseScreenState extends State<BrowseScreen> {
         const SizedBox(width: 22),
         SizedBox(
           width: 488,
-          child: KaraokeInputPanel(
+          child: _InputPanel(
             activeTab: '歌手',
             placeholder: '搜索歌手、角色、社团或声库',
-            controller: _searchQueryController.textController,
-            searchFocusNode: _searchFocusNode,
-            imeController: _imeController,
+            controller: _searchController,
+            imeMode: _imeMode,
+            onChanged: _handleSearchChanged,
             onTab: _switchSearchTab,
-            onSearch: _handleSearchSubmit,
+            onKey: _handleKey,
+            onImeMode: (mode) => setState(() => _imeMode = mode),
           ),
         ),
       ],
@@ -216,7 +206,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
           child: _ArtistDetailRail(
             artist: artist,
             songCount: total,
-            searchController: _searchQueryController.textController,
+            searchController: _searchController,
             onBack: () {
               setState(() {
                 _mode = BrowseMode.artists;
@@ -243,15 +233,16 @@ class _BrowseScreenState extends State<BrowseScreen> {
         const SizedBox(width: 22),
         SizedBox(
           width: 488,
-          child: KaraokeInputPanel(
+          child: _InputPanel(
             activeTab: '歌手内',
             tabs: const ['歌手内'],
             placeholder: '在 ${artist.name} 的歌曲中搜索',
-            controller: _searchQueryController.textController,
-            searchFocusNode: _searchFocusNode,
-            imeController: _imeController,
+            controller: _searchController,
+            imeMode: _imeMode,
+            onChanged: _handleSearchChanged,
             onTab: _switchSearchTab,
-            onSearch: _handleSearchSubmit,
+            onKey: _handleKey,
+            onImeMode: (mode) => setState(() => _imeMode = mode),
           ),
         ),
       ],
@@ -296,14 +287,15 @@ class _BrowseScreenState extends State<BrowseScreen> {
         const SizedBox(width: 22),
         SizedBox(
           width: 488,
-          child: KaraokeInputPanel(
+          child: _InputPanel(
             activeTab: '分类',
             placeholder: '在当前分类中搜索歌曲、歌手、编号',
-            controller: _searchQueryController.textController,
-            searchFocusNode: _searchFocusNode,
-            imeController: _imeController,
+            controller: _searchController,
+            imeMode: _imeMode,
+            onChanged: _handleSearchChanged,
             onTab: _switchSearchTab,
-            onSearch: _handleSearchSubmit,
+            onKey: _handleKey,
+            onImeMode: (mode) => setState(() => _imeMode = mode),
           ),
         ),
       ],
@@ -319,15 +311,16 @@ class _BrowseScreenState extends State<BrowseScreen> {
         const SizedBox(width: 22),
         SizedBox(
           width: 488,
-          child: KaraokeInputPanel(
+          child: _InputPanel(
             activeTab: '外链',
             tabs: const ['外链'],
             placeholder: '搜索已解析的外链歌曲',
-            controller: _searchQueryController.textController,
-            searchFocusNode: _searchFocusNode,
-            imeController: _imeController,
+            controller: _searchController,
+            imeMode: _imeMode,
+            onChanged: _handleSearchChanged,
             onTab: _switchSearchTab,
-            onSearch: _handleSearchSubmit,
+            onKey: _handleKey,
+            onImeMode: (mode) => setState(() => _imeMode = mode),
           ),
         ),
       ],
@@ -378,15 +371,16 @@ class _BrowseScreenState extends State<BrowseScreen> {
         const SizedBox(width: 22),
         SizedBox(
           width: 488,
-          child: KaraokeInputPanel(
+          child: _InputPanel(
             activeTab: '排行',
             tabs: const ['排行'],
             placeholder: '在排行榜中搜索歌曲',
-            controller: _searchQueryController.textController,
-            searchFocusNode: _searchFocusNode,
-            imeController: _imeController,
+            controller: _searchController,
+            imeMode: _imeMode,
+            onChanged: _handleSearchChanged,
             onTab: _switchSearchTab,
-            onSearch: _handleSearchSubmit,
+            onKey: _handleKey,
+            onImeMode: (mode) => setState(() => _imeMode = mode),
           ),
         ),
       ],
@@ -449,15 +443,24 @@ class _BrowseScreenState extends State<BrowseScreen> {
     widget.onAnnouncement('搜索范围：$scope');
   }
 
-  void _handleSearchControllerChanged() {
-    if (!mounted) {
+  void _handleKey(String key) {
+    if (key == '搜索') {
+      widget.onAnnouncement('搜索：${_searchController.text}');
       return;
     }
-    _handleSearchChanged(_searchQueryController.text);
-  }
 
-  void _handleSearchSubmit() {
-    widget.onAnnouncement('搜索：${_searchQueryController.text}');
+    final current = _searchController.text;
+    final next = switch (key) {
+      '退格' => current.isEmpty ? current : current.substring(0, current.length - 1),
+      '清空' => '',
+      '空格' => '$current ',
+      _ => '$current$key',
+    };
+    _searchController.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: next.length),
+    );
+    _handleSearchChanged(next);
   }
 
   String get _modeTitle {
@@ -500,7 +503,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
 
   void _syncSearchController() {
     final value = _currentQuery();
-    _searchQueryController.setText(value);
+    _searchController.value = TextEditingValue(
+      text: value,
+      selection: TextSelection.collapsed(offset: value.length),
+    );
   }
 }
 
@@ -1515,6 +1521,266 @@ class _CompactSearchField extends StatelessWidget {
           color: KiraColors.cream,
           fontSize: 16,
           fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _InputPanel extends StatelessWidget {
+  const _InputPanel({
+    required this.activeTab,
+    required this.placeholder,
+    required this.controller,
+    required this.imeMode,
+    required this.onChanged,
+    required this.onTab,
+    required this.onKey,
+    required this.onImeMode,
+    this.tabs = const ['歌名', '歌手', '分类'],
+  });
+
+  final String activeTab;
+  final String placeholder;
+  final TextEditingController controller;
+  final String imeMode;
+  final List<String> tabs;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<String> onTab;
+  final ValueChanged<String> onKey;
+  final ValueChanged<String> onImeMode;
+
+  static const _letters = [
+    'A',
+    'B',
+    'C',
+    'D',
+    'E',
+    'F',
+    'G',
+    'H',
+    'I',
+    'J',
+    'K',
+    'L',
+    'M',
+    'N',
+    'O',
+    'P',
+    'Q',
+    'R',
+    'S',
+    'T',
+    'U',
+    'V',
+    'W',
+    'X',
+    'Y',
+    'Z',
+    '退格',
+    '清空',
+    '空格',
+    '搜索',
+  ];
+  static const _imeModes = ['英文', '拼音', '日语罗马音', '手写'];
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: _panelDecoration(),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(5),
+              decoration: BoxDecoration(
+                color: const Color(0x0EFFFFFF),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0x14FFFFFF)),
+              ),
+              child: Row(
+                children: [
+                  for (final tab in tabs)
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        child: Material(
+                          color: activeTab == tab
+                              ? KiraColors.red
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                          child: InkWell(
+                            onTap: () => onTab(tab),
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              height: 50,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: activeTab == tab
+                                      ? const Color(0x38FFFFFF)
+                                      : Colors.transparent,
+                                ),
+                              ),
+                              child: Text(
+                                tab,
+                                style: TextStyle(
+                                  color: activeTab == tab
+                                      ? Colors.white
+                                      : const Color(0xC7FFFFFF),
+                                  fontSize: 19,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              height: 60,
+              child: TextField(
+                controller: controller,
+                onChanged: onChanged,
+                decoration: InputDecoration(
+                  hintText: placeholder,
+                  hintStyle: const TextStyle(
+                    color: Color(0x8effffff),
+                    fontWeight: FontWeight.w700,
+                  ),
+                  prefixIcon: const Icon(Icons.search, color: Color(0xccffffff)),
+                  filled: true,
+                  fillColor: const Color(0x18ffffff),
+                  contentPadding: EdgeInsets.zero,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: KiraColors.line),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: KiraColors.line),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: KiraColors.lineStrong),
+                  ),
+                ),
+                style: const TextStyle(
+                  color: KiraColors.cream,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const Spacer(),
+            Container(
+              height: 52,
+              alignment: Alignment.centerLeft,
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: KiraColors.line)),
+              ),
+            ),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 6,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+                childAspectRatio: 1,
+              ),
+              itemCount: _letters.length,
+              itemBuilder: (context, index) {
+                final key = _letters[index];
+                final action = key.length > 1;
+                return _KeyboardKey(
+                  label: key,
+                  action: action,
+                  onTap: () => onKey(key),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.only(top: 12),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: KiraColors.line)),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  for (final mode in _imeModes) ...[
+                    TextButton(
+                      onPressed: () => onImeMode(mode),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        foregroundColor: imeMode == mode
+                            ? KiraColors.amber
+                            : KiraColors.muted,
+                      ),
+                      child: Text(
+                        mode,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    if (mode != _imeModes.last) const SizedBox(width: 4),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _KeyboardKey extends StatelessWidget {
+  const _KeyboardKey({
+    required this.label,
+    required this.action,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool action;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: KiraColors.surface2,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0x1affffff)),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: action ? KiraColors.amber : KiraColors.cream,
+                fontSize: action ? 15 : 17,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
         ),
       ),
     );

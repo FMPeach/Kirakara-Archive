@@ -47,10 +47,8 @@ typedef _GetHeight = int Function(ShowHostHandle);
 // ── KirakaraShowFFI ───────────────────────────────────────────────
 
 class KirakaraShowFFI {
-  KirakaraShowFFI({String? dllPath}) {
-    final path = dllPath ??
-        _defaultDllPath();
-    _dylib = DynamicLibrary.open(path);
+  KirakaraShowFFI({String? dllPath})
+      : _dylib = DynamicLibrary.open(dllPath ?? _defaultDllPath()) {
     _bind();
   }
 
