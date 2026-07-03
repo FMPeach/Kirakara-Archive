@@ -8,10 +8,12 @@ class HandwritingPad extends StatefulWidget {
     super.key,
     required this.onRecognize,
     required this.onClear,
+    required this.clearRevision,
   });
 
   final Future<void> Function(List<ImeStroke> strokes) onRecognize;
   final Future<void> Function() onClear;
+  final int clearRevision;
 
   @override
   State<HandwritingPad> createState() => _HandwritingPadState();
@@ -20,6 +22,15 @@ class HandwritingPad extends StatefulWidget {
 class _HandwritingPadState extends State<HandwritingPad> {
   final List<ImeStroke> _strokes = [];
   ImeStroke? _activeStroke;
+
+  @override
+  void didUpdateWidget(covariant HandwritingPad oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.clearRevision != widget.clearRevision) {
+      _strokes.clear();
+      _activeStroke = null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +67,7 @@ class _HandwritingPadState extends State<HandwritingPad> {
                     }
                     _activeStroke = null;
                   });
+                  _recognize();
                 },
                 child: CustomPaint(
                   painter: _HandwritingPainter(
@@ -83,12 +95,6 @@ class _HandwritingPadState extends State<HandwritingPad> {
                     label: '清空',
                     onTap: _clear,
                   ),
-                  const Spacer(),
-                  _PadAction(
-                    label: '识别',
-                    emphasized: true,
-                    onTap: _recognize,
-                  ),
                 ],
               ),
             ),
@@ -108,7 +114,11 @@ class _HandwritingPadState extends State<HandwritingPad> {
         _strokes.removeLast();
       }
     });
-    widget.onClear();
+    if (_strokes.isEmpty) {
+      widget.onClear();
+      return;
+    }
+    _recognize();
   }
 
   void _clear() {
@@ -120,6 +130,10 @@ class _HandwritingPadState extends State<HandwritingPad> {
   }
 
   void _recognize() {
+    if (_strokes.isEmpty) {
+      widget.onClear();
+      return;
+    }
     widget.onRecognize(List.unmodifiable(_strokes));
   }
 }
@@ -128,12 +142,10 @@ class _PadAction extends StatelessWidget {
   const _PadAction({
     required this.label,
     required this.onTap,
-    this.emphasized = false,
   });
 
   final String label;
   final VoidCallback onTap;
-  final bool emphasized;
 
   @override
   Widget build(BuildContext context) {
@@ -144,8 +156,8 @@ class _PadAction extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
         child: Text(
           label,
-          style: TextStyle(
-            color: emphasized ? KiraColors.amber : KiraColors.muted,
+          style: const TextStyle(
+            color: KiraColors.muted,
             fontSize: 16,
             fontWeight: FontWeight.w700,
           ),
@@ -187,7 +199,10 @@ class _HandwritingPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke;
 
-    for (final stroke in [...strokes, if (activeStroke != null) activeStroke!]) {
+    for (final stroke in [
+      ...strokes,
+      if (activeStroke != null) activeStroke!
+    ]) {
       if (stroke.length < 2) {
         continue;
       }

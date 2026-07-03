@@ -33,9 +33,11 @@ class ImeController extends ChangeNotifier {
 
   late ImeEngine _activeEngine;
   late ImeComposition _composition;
+  int _handwritingClearRevision = 0;
 
   ImeMode get mode => _activeEngine.mode;
   ImeComposition get composition => _composition;
+  int get handwritingClearRevision => _handwritingClearRevision;
 
   Future<void> setMode(ImeMode mode) async {
     if (_activeEngine.mode == mode) {
@@ -45,6 +47,9 @@ class ImeController extends ChangeNotifier {
     _activeEngine = _engines[mode]!;
     await _activeEngine.activate();
     _composition = await _activeEngine.clear();
+    if (mode == ImeMode.handwriting) {
+      _handwritingClearRevision += 1;
+    }
     notifyListeners();
   }
 
@@ -90,11 +95,13 @@ class ImeController extends ChangeNotifier {
   Future<void> clearAll() async {
     _composition = await _activeEngine.clear();
     _searchQueryController.clear();
+    _clearHandwritingPadIfActive();
     notifyListeners();
   }
 
   Future<void> clearComposition() async {
     _composition = await _activeEngine.clear();
+    _clearHandwritingPadIfActive();
     notifyListeners();
   }
 
@@ -124,9 +131,13 @@ class ImeController extends ChangeNotifier {
   }
 
   Future<void> commitCandidate(int index) async {
+    final shouldClearHandwritingPad = mode == ImeMode.handwriting;
     final result = await _activeEngine.commitCandidate(index);
     _searchQueryController.appendText(result.text);
     _composition = result.composition;
+    if (shouldClearHandwritingPad) {
+      _handwritingClearRevision += 1;
+    }
     notifyListeners();
   }
 
@@ -134,9 +145,13 @@ class ImeController extends ChangeNotifier {
     if (_composition.rawInput.isEmpty) {
       return;
     }
+    final shouldClearHandwritingPad = mode == ImeMode.handwriting;
     final result = await _activeEngine.commitRaw();
     _searchQueryController.appendText(result.text);
     _composition = result.composition;
+    if (shouldClearHandwritingPad) {
+      _handwritingClearRevision += 1;
+    }
     notifyListeners();
   }
 
@@ -160,5 +175,11 @@ class ImeController extends ChangeNotifier {
     }
     _composition = await handwritingEngine.recognize();
     notifyListeners();
+  }
+
+  void _clearHandwritingPadIfActive() {
+    if (mode == ImeMode.handwriting) {
+      _handwritingClearRevision += 1;
+    }
   }
 }

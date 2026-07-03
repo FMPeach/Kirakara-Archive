@@ -104,11 +104,15 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 
 set(KIRAKARA_IME_RUNTIME_DIR "${CMAKE_SOURCE_DIR}/../third_party/ime")
 if(EXISTS "${KIRAKARA_IME_RUNTIME_DIR}")
+  install(CODE "
+    file(REMOVE_RECURSE \"${CMAKE_INSTALL_PREFIX}/ime\")
+    " COMPONENT Runtime)
   install(DIRECTORY "${KIRAKARA_IME_RUNTIME_DIR}/"
     DESTINATION "${CMAKE_INSTALL_PREFIX}/ime"
     COMPONENT Runtime
     PATTERN "_sources" EXCLUDE
-    PATTERN "source" EXCLUDE)
+    PATTERN "source" EXCLUDE
+    PATTERN "*.lib" EXCLUDE)
 endif()
 
 # Install the AOT library on non-Debug builds only.

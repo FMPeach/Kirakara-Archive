@@ -9,7 +9,7 @@ Windows packaging:
 
 ```text
 windows runner
-  -> statically links kirakara_zinnia
+  -> links third_party/ime/zinnia/windows/runtime/kirakara_zinnia.lib
   -> installs ime/zinnia/windows/models/handwriting-ja.model
   -> installs ime/zinnia/windows/models/handwriting-zh_CN.model
 ```
@@ -29,9 +29,14 @@ normalizes them into a 1000x1000 Zinnia character, classifies against Japanese
 and Chinese models, deduplicates candidates, sorts by score, and returns
 `NativeImeCandidate` maps to Flutter.
 
-The UI owns drawing, clear, undo, and recognize actions. The native bridge only
-receives stroke points and returns candidates, so candidate commit stays shared
-with Rime and Mozc.
+The UI owns drawing, clear, undo, and candidate commit. Each completed stroke
+triggers recognition with the current stroke set, so candidates update
+incrementally while the user writes. Selecting a candidate commits that
+character, clears the handwriting canvas, and prepares the pad for the next
+character.
+
+The native bridge only receives stroke points and returns candidates, so
+candidate commit stays shared with Rime and Mozc.
 
 The bridge does not query the catalog, inspect page results, or return song
 metadata. Handwriting only produces input candidates; local search consumes the

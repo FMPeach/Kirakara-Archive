@@ -4,10 +4,10 @@
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
-#include <zinnia.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
@@ -29,6 +29,35 @@ using MethodResult = flutter::MethodResult<EncodableValue>;
 
 using Bool = int;
 using RimeSessionId = uintptr_t;
+
+struct zinnia_character_t;
+struct zinnia_recognizer_t;
+struct zinnia_result_t;
+
+extern "C" {
+zinnia_character_t* zinnia_character_new();
+void zinnia_character_destroy(zinnia_character_t* character);
+void zinnia_character_clear(zinnia_character_t* character);
+void zinnia_character_set_width(zinnia_character_t* character, size_t width);
+void zinnia_character_set_height(zinnia_character_t* character, size_t height);
+int zinnia_character_add(zinnia_character_t* character, size_t id, int x,
+                         int y);
+
+zinnia_recognizer_t* zinnia_recognizer_new();
+void zinnia_recognizer_destroy(zinnia_recognizer_t* recognizer);
+int zinnia_recognizer_open(zinnia_recognizer_t* recognizer,
+                           const char* filename);
+const char* zinnia_recognizer_strerror(zinnia_recognizer_t* recognizer);
+zinnia_result_t* zinnia_recognizer_classify(
+    zinnia_recognizer_t* recognizer,
+    const zinnia_character_t* character,
+    size_t nbest);
+
+const char* zinnia_result_value(zinnia_result_t* result, size_t index);
+float zinnia_result_score(zinnia_result_t* result, size_t index);
+size_t zinnia_result_size(zinnia_result_t* result);
+void zinnia_result_destroy(zinnia_result_t* result);
+}
 
 struct RimeTraits {
   int data_size;
@@ -521,6 +550,7 @@ struct ZinniaCandidate {
 class ZinniaRuntime {
  public:
   ZinniaRuntime() = default;
+  ~ZinniaRuntime() { DestroyRecognizers(); }
 
   bool EnsureLoaded(std::string* error) {
     if (loaded_) {
@@ -533,29 +563,32 @@ class ZinniaRuntime {
     const auto ja_model = model_dir / L"handwriting-ja.model";
     const auto zh_model = model_dir / L"handwriting-zh_CN.model";
 
-    recognizer_ja_.reset(zinnia::Recognizer::create());
-    recognizer_zh_.reset(zinnia::Recognizer::create());
+    recognizer_ja_ = zinnia_recognizer_new();
+    recognizer_zh_ = zinnia_recognizer_new();
     if (!recognizer_ja_ || !recognizer_zh_) {
       if (error) {
         *error = "Unable to create Zinnia recognizers";
       }
+      DestroyRecognizers();
       return false;
     }
 
     const auto ja_model_utf8 = WideToUtf8(ja_model.wstring());
     const auto zh_model_utf8 = WideToUtf8(zh_model.wstring());
-    if (!recognizer_ja_->open(ja_model_utf8.c_str())) {
+    if (!zinnia_recognizer_open(recognizer_ja_, ja_model_utf8.c_str())) {
       if (error) {
         *error = "Unable to open bundled Zinnia Japanese model: " +
-                 std::string(recognizer_ja_->what());
+                 RecognizerError(recognizer_ja_);
       }
+      DestroyRecognizers();
       return false;
     }
-    if (!recognizer_zh_->open(zh_model_utf8.c_str())) {
+    if (!zinnia_recognizer_open(recognizer_zh_, zh_model_utf8.c_str())) {
       if (error) {
         *error = "Unable to open bundled Zinnia Chinese model: " +
-                 std::string(recognizer_zh_->what());
+                 RecognizerError(recognizer_zh_);
       }
+      DestroyRecognizers();
       return false;
     }
 
@@ -598,16 +631,17 @@ class ZinniaRuntime {
       return ErrorValue(error);
     }
 
-    std::unique_ptr<zinnia::Character> character(zinnia::Character::create());
+    std::unique_ptr<zinnia_character_t, decltype(&zinnia_character_destroy)>
+        character(zinnia_character_new(), zinnia_character_destroy);
     if (!character) {
       return ErrorValue("Unable to create Zinnia character");
     }
     BuildCharacter(strokes, character.get());
 
     std::vector<ZinniaCandidate> candidates;
-    AppendCandidates(recognizer_ja_.get(), *character, "手写 · 日本語", nbest,
+    AppendCandidates(recognizer_ja_, character.get(), "手写 · 日本語", nbest,
                      &candidates);
-    AppendCandidates(recognizer_zh_.get(), *character, "手写 · 中文", nbest,
+    AppendCandidates(recognizer_zh_, character.get(), "手写 · 中文", nbest,
                      &candidates);
 
     std::sort(candidates.begin(), candidates.end(),
@@ -664,7 +698,7 @@ class ZinniaRuntime {
 
   static void BuildCharacter(
       const std::vector<std::vector<StrokePoint>>& strokes,
-      zinnia::Character* character) {
+      zinnia_character_t* character) {
     double min_x = std::numeric_limits<double>::max();
     double min_y = std::numeric_limits<double>::max();
     double max_x = std::numeric_limits<double>::lowest();
@@ -687,15 +721,15 @@ class ZinniaRuntime {
     const double x_offset = (kCanvas - raw_width * scale) / 2.0;
     const double y_offset = (kCanvas - raw_height * scale) / 2.0;
 
-    character->clear();
-    character->set_width(static_cast<size_t>(kCanvas));
-    character->set_height(static_cast<size_t>(kCanvas));
+    zinnia_character_clear(character);
+    zinnia_character_set_width(character, static_cast<size_t>(kCanvas));
+    zinnia_character_set_height(character, static_cast<size_t>(kCanvas));
     for (size_t stroke_index = 0; stroke_index < strokes.size();
          ++stroke_index) {
       for (const auto& point : strokes[stroke_index]) {
         const auto x = ClampCanvas((point.x - min_x) * scale + x_offset);
         const auto y = ClampCanvas((point.y - min_y) * scale + y_offset);
-        character->add(stroke_index, x, y);
+        zinnia_character_add(character, stroke_index, x, y);
       }
     }
   }
@@ -705,18 +739,21 @@ class ZinniaRuntime {
     return std::clamp(rounded, 0, 1000);
   }
 
-  static void AppendCandidates(zinnia::Recognizer* recognizer,
-                               const zinnia::Character& character,
+  static void AppendCandidates(zinnia_recognizer_t* recognizer,
+                               const zinnia_character_t* character,
                                const std::string& annotation,
                                int nbest,
                                std::vector<ZinniaCandidate>* candidates) {
-    std::unique_ptr<zinnia::Result> result(
-        recognizer->classify(character, static_cast<size_t>(nbest)));
+    std::unique_ptr<zinnia_result_t, decltype(&zinnia_result_destroy)> result(
+        zinnia_recognizer_classify(
+            recognizer, character, static_cast<size_t>(nbest)),
+        zinnia_result_destroy);
     if (!result) {
       return;
     }
-    for (size_t index = 0; index < result->size(); ++index) {
-      const char* value = result->value(index);
+    for (size_t index = 0; index < zinnia_result_size(result.get());
+         ++index) {
+      const char* value = zinnia_result_value(result.get(), index);
       if (!value || value[0] == '\0') {
         continue;
       }
@@ -727,9 +764,27 @@ class ZinniaRuntime {
       candidates->push_back(ZinniaCandidate{
           text,
           annotation,
-          static_cast<double>(result->score(index)),
+          static_cast<double>(zinnia_result_score(result.get(), index)),
       });
     }
+  }
+
+  void DestroyRecognizers() {
+    if (recognizer_ja_) {
+      zinnia_recognizer_destroy(recognizer_ja_);
+      recognizer_ja_ = nullptr;
+    }
+    if (recognizer_zh_) {
+      zinnia_recognizer_destroy(recognizer_zh_);
+      recognizer_zh_ = nullptr;
+    }
+    loaded_ = false;
+  }
+
+  static std::string RecognizerError(zinnia_recognizer_t* recognizer) {
+    const char* error = recognizer ? zinnia_recognizer_strerror(recognizer)
+                                   : nullptr;
+    return error ? std::string(error) : std::string("unknown error");
   }
 
   static bool HasCandidate(const std::vector<ZinniaCandidate>& candidates,
@@ -778,8 +833,8 @@ class ZinniaRuntime {
 
   bool loaded_ = false;
   std::filesystem::path runtime_dir_;
-  std::unique_ptr<zinnia::Recognizer> recognizer_ja_;
-  std::unique_ptr<zinnia::Recognizer> recognizer_zh_;
+  zinnia_recognizer_t* recognizer_ja_ = nullptr;
+  zinnia_recognizer_t* recognizer_zh_ = nullptr;
 };
 
 std::unique_ptr<RimeRuntime> g_rime;

@@ -62,10 +62,12 @@ Verified inputs:
 Rebuild notes:
 
 1. Use the clean Mozc source tree at `D:\Kirakara-Mozc-src\src`.
-2. Copy `third_party/ime/mozc/windows/source/kirakara_mozc_bridge.cc` into
-   `src/session/kirakara_mozc_bridge.cc`.
-3. Append the target from `third_party/ime/mozc/windows/source/BUILD.bazel` to
-   `src/session/BUILD.bazel`. Mozc's private target visibility requires the
+2. Copy
+   `D:\Kirakara-ThirdParty-IME-Sources\kirakara-bridge-sources\mozc\windows\source\kirakara_mozc_bridge.cc`
+   into `src/session/kirakara_mozc_bridge.cc`.
+3. Append the target from
+   `D:\Kirakara-ThirdParty-IME-Sources\kirakara-bridge-sources\mozc\windows\source\BUILD.bazel`
+   to `src/session/BUILD.bazel`. Mozc's private target visibility requires the
    bridge to live in the upstream `//session` package.
 4. Build with Bazel 9.0.2 and Mozc's Windows deps:
 

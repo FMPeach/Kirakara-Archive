@@ -146,7 +146,8 @@ class KaraokeInputPanel extends StatelessWidget {
                     color: Color(0x8effffff),
                     fontWeight: FontWeight.w700,
                   ),
-                  prefixIcon: const Icon(Icons.search, color: Color(0xccffffff)),
+                  prefixIcon:
+                      const Icon(Icons.search, color: Color(0xccffffff)),
                   filled: true,
                   fillColor: const Color(0x18ffffff),
                   contentPadding: EdgeInsets.zero,
@@ -189,6 +190,7 @@ class KaraokeInputPanel extends StatelessWidget {
                   return HandwritingPad(
                     onRecognize: imeController.recognizeHandwritingStrokes,
                     onClear: imeController.clearComposition,
+                    clearRevision: imeController.handwritingClearRevision,
                   );
                 }
                 if (imeController.mode == ImeMode.numeric) {

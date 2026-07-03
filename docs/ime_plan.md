@@ -624,7 +624,7 @@ lib/
 4. 点击候选写入搜索 query。
 5. 让歌名、歌手、分类页全部走这个面板。
 
-这个闭环已经允许真实引擎替换 mock。当前 Windows 版 Rime 和 Zinnia 已走真实 App 自带 runtime；Mozc 等待 native runtime 可重复构建后再切换。
+这个闭环已经允许真实引擎替换 mock。当前 Windows 版 Rime、Mozc 和 Zinnia 都已走真实 App 自带 runtime；mock 只作为开发兜底。
 
 ## 参考
 

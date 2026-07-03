@@ -1,25 +1,11 @@
 cmake_minimum_required(VERSION 3.14)
 project(runner LANGUAGES CXX)
 
-set(KIRAKARA_ZINNIA_SOURCE_DIR
-  "${CMAKE_SOURCE_DIR}/../third_party/ime/zinnia/windows/source")
-
-add_library(kirakara_zinnia STATIC
-  "${KIRAKARA_ZINNIA_SOURCE_DIR}/character.cpp"
-  "${KIRAKARA_ZINNIA_SOURCE_DIR}/feature.cpp"
-  "${KIRAKARA_ZINNIA_SOURCE_DIR}/recognizer.cpp"
-  "${KIRAKARA_ZINNIA_SOURCE_DIR}/sexp.cpp"
-)
-target_compile_features(kirakara_zinnia PUBLIC cxx_std_17)
-target_compile_definitions(kirakara_zinnia PUBLIC
-  "ZINNIA_STATIC_LIBRARY"
-  "HAVE_CONFIG_H"
-  "HAVE_WINDOWS_H"
-  "NOMINMAX"
-)
-target_compile_options(kirakara_zinnia PRIVATE /W0 /utf-8)
-target_include_directories(kirakara_zinnia PUBLIC
-  "${KIRAKARA_ZINNIA_SOURCE_DIR}"
+set(KIRAKARA_ZINNIA_LIB
+  "${CMAKE_SOURCE_DIR}/../third_party/ime/zinnia/windows/runtime/kirakara_zinnia.lib")
+add_library(kirakara_zinnia STATIC IMPORTED GLOBAL)
+set_target_properties(kirakara_zinnia PROPERTIES
+  IMPORTED_LOCATION "${KIRAKARA_ZINNIA_LIB}"
 )
 
 # Define the application target. To change its name, change BINARY_NAME in the
