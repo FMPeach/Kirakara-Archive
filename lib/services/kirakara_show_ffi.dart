@@ -161,16 +161,17 @@ class KirakaraShowFFI {
 
   static String _defaultDllPath() {
     if (Platform.isWindows) {
-      // Try the build output directory first
       final exeDir = Directory(Platform.resolvedExecutable).parent;
-      final buildPath = '${exeDir.path}\\show_host.dll';
-      if (File(buildPath).existsSync()) return buildPath;
 
-      // Fallback: look in the kirakara-show build directory
+      // 1. Next to the Flutter exe (debug/release build output)
+      final exePath = '${exeDir.path}\\libshow_host.dll';
+      if (File(exePath).existsSync()) return exePath;
+
+      // 2. Fallback: kirakara-show build directory
       const showPath = r'D:\仓库\Kirakara Show\build\bin\libshow_host.dll';
       if (File(showPath).existsSync()) return showPath;
 
-      // Last resort: just the filename (relies on PATH)
+      // 3. Last resort: PATH
       return 'libshow_host.dll';
     }
     throw UnsupportedError('KirakaraShowFFI is only supported on Windows');
