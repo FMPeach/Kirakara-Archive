@@ -1,132 +1,120 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:flutter/foundation.dart';
 
 import '../domain/media_asset.dart';
 import '../domain/song.dart';
+import 'kirakara_show_ffi.dart';
 import 'playback_service.dart';
 
-class KirakaraShowService {
+class KirakaraShowService extends ChangeNotifier {
   KirakaraShowService({
     required PlaybackService playbackService,
-    this.executablePath =
-        r'D:\仓库\Kirakara Show\build\bin\kirakara_video_demo.exe',
-    this.workingDirectory = r'D:\仓库\Kirakara Show',
   }) : _playbackService = playbackService;
 
   final PlaybackService _playbackService;
-  final String executablePath;
-  final String workingDirectory;
-
-  Process? _process;
-  String? _runningItemId;
-  String? _launchingItemId;
+  KirakaraShowFFI? _ffi;
+  String? _loadedItemId;
   bool _started = false;
 
+  /// The latest frame as RGBA8 pixels. null when no frame is ready.
+  Uint8List? get latestFrame => _latestFrame;
+  Uint8List? _latestFrame;
+
+  /// Call this once after the engine DLL is available.
   void start() {
     if (_started) return;
     _started = true;
+    try {
+      _ffi = KirakaraShowFFI();
+    } catch (e) {
+      debugPrint('KirakaraShowService: failed to load engine DLL: $e');
+      return;
+    }
     _playbackService.addListener(_syncWithPlayback);
     _syncWithPlayback();
+    _startFramePoller();
   }
 
+  @override
   Future<void> dispose() async {
     if (_started) {
       _playbackService.removeListener(_syncWithPlayback);
+      _framePoller?.cancel();
       _started = false;
     }
-    await stop();
+    _ffi?.dispose();
+    _ffi = null;
+    super.dispose();
   }
 
-  Future<void> stop({bool preserveLaunching = false}) async {
-    final process = _process;
-    _process = null;
-    _runningItemId = null;
-    if (!preserveLaunching) {
-      _launchingItemId = null;
-    }
-    if (process == null) return;
-    process.kill();
-    try {
-      await process.exitCode.timeout(const Duration(seconds: 1));
-    } on TimeoutException {
-      if (Platform.isWindows) {
-        await Process.run('taskkill', [
-          '/PID',
-          process.pid.toString(),
-          '/T',
-          '/F',
-        ]);
-        try {
-          await process.exitCode.timeout(const Duration(seconds: 2));
-        } on TimeoutException {
-          // Continue launching the next stage rather than freezing controller
-          // playback if Windows still refuses to tear the demo window down.
-        }
-      }
-    }
-  }
+  // ── Playback sync ──────────────────────────────────────────────
 
   void _syncWithPlayback() {
+    final ffi = _ffi;
+    if (ffi == null) return;
+
     final state = _playbackService.state;
     final item = state.currentItem;
-    if (item == null || !state.isPlaying) {
+
+    if (item == null) {
+      ffi.stop();
+      _loadedItemId = null;
       return;
     }
 
-    if (_runningItemId == item.id && _process != null) {
-      return;
-    }
-    if (_launchingItemId == item.id) {
-      return;
+    // Load new media if different from current
+    if (_loadedItemId != item.id) {
+      final videoPath = _pathFor(item.song, MediaAssetType.video);
+      final lyricPath = item.song.lyricProject.cachedPath ??
+          _pathFor(item.song, MediaAssetType.lyric);
+      if (videoPath == null || lyricPath == null) return;
+      if (!File(videoPath).existsSync() || !File(lyricPath).existsSync()) {
+        return;
+      }
+
+      ffi.load(videoPath, lyricPath);
+      _loadedItemId = item.id;
     }
 
-    unawaited(_launch(item.id, item.song));
-  }
-
-  Future<void> _launch(String itemId, Song song) async {
-    _launchingItemId = itemId;
-    final videoPath = _pathFor(song, MediaAssetType.video);
-    final lyricPath =
-        song.lyricProject.cachedPath ?? _pathFor(song, MediaAssetType.lyric);
-    if (videoPath == null || lyricPath == null) {
-      _clearLaunching(itemId);
-      return;
-    }
-    if (!File(executablePath).existsSync() ||
-        !File(videoPath).existsSync() ||
-        !File(lyricPath).existsSync()) {
-      _clearLaunching(itemId);
-      return;
-    }
-
-    try {
-      await stop(preserveLaunching: true);
-      _launchingItemId = itemId;
-      final process = await Process.start(
-        executablePath,
-        [videoPath, lyricPath],
-        workingDirectory:
-            Directory(workingDirectory).existsSync() ? workingDirectory : null,
-        mode: ProcessStartMode.normal,
-      );
-      _process = process;
-      _runningItemId = itemId;
-      unawaited(process.exitCode.then((_) {
-        if (identical(_process, process)) {
-          _process = null;
-          _runningItemId = null;
-        }
-      }));
-    } finally {
-      _clearLaunching(itemId);
+    // Sync play/pause
+    if (state.isPlaying) {
+      ffi.play();
+    } else {
+      ffi.pause();
     }
   }
 
-  void _clearLaunching(String itemId) {
-    if (_launchingItemId == itemId) {
-      _launchingItemId = null;
-    }
+  // ── Frame polling ──────────────────────────────────────────────
+
+  Timer? _framePoller;
+
+  void _startFramePoller() {
+    _framePoller = Timer.periodic(
+      const Duration(milliseconds: 16), // ~60 fps
+      (_) => _pollFrame(),
+    );
   }
+
+  void _pollFrame() {
+    final ffi = _ffi;
+    if (ffi == null) return;
+    final frame = ffi.readFrame();
+    if (frame != null) {
+      _latestFrame = frame;
+      notifyListeners();
+    }
+
+    // Sync position back to PlaybackService
+    final pos = ffi.position;
+    final dur = ffi.duration;
+    // Position sync will be added when PlaybackService supports it
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────
 
   String? _pathFor(Song song, MediaAssetType type) {
     for (final asset in song.assets) {
