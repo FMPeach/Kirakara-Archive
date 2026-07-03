@@ -20,6 +20,10 @@ class KirakaraShowService extends ChangeNotifier {
   String? _loadedItemId;
   bool _started = false;
 
+  /// The engine's render surface dimensions.
+  int get engineWidth => _ffi?.width ?? 0;
+  int get engineHeight => _ffi?.height ?? 0;
+
   /// The latest frame as RGBA8 pixels. null when no frame is ready.
   Uint8List? get latestFrame => _latestFrame;
   Uint8List? _latestFrame;

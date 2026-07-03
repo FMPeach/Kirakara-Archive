@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../engine/mock_stage_renderer.dart';
+import '../engine/kirakara_stage_renderer.dart';
+import '../engine/stage_renderer.dart';
 import '../services/cast_service.dart';
 import '../services/catalog_client.dart';
 import '../services/display_manager.dart';
@@ -30,7 +31,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
   late final LanServer lanServer;
   late final KirakaraShowService kirakaraShowService;
   late final MockCatalogClient catalogClient;
-  late final MockStageRenderer stageRenderer;
+  late final StageRenderer stageRenderer;
 
   @override
   void initState() {
@@ -56,7 +57,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
       searchService: searchService,
     );
     catalogClient = const MockCatalogClient();
-    stageRenderer = const MockStageRenderer();
+    stageRenderer = KirakaraStageRenderer(showService: kirakaraShowService);
   }
 
   @override
