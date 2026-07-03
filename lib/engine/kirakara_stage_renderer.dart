@@ -71,20 +71,12 @@ class _KirakaraStageWidgetState extends State<_KirakaraStageWidget> {
     final width = widget.showService.engineWidth.clamp(1, 8192);
     final height = widget.showService.engineHeight.clamp(1, 8192);
 
-    // decodeImageFromPixels expects RGBA byte order.
-    // The engine outputs BGRA. Swap B↔R channels for correct display.
-    final rgba = Uint8List.fromList(frame);
-    for (int i = 0; i < rgba.length; i += 4) {
-      final b = rgba[i];
-      rgba[i] = rgba[i + 2];
-      rgba[i + 2] = b;
-    }
-
+    // Engine outputs BGRA → decode as bgra8888 directly, no channel swap needed
     ui.decodeImageFromPixels(
-      rgba,
+      frame,
       width,
       height,
-      ui.PixelFormat.rgba8888,
+      ui.PixelFormat.bgra8888,
       (image) {
         if (!mounted) {
           image.dispose();
@@ -103,9 +95,12 @@ class _KirakaraStageWidgetState extends State<_KirakaraStageWidget> {
   Widget build(BuildContext context) {
     final img = _image;
     if (img != null) {
-      return RawImage(
-        image: img,
-        fit: BoxFit.contain,
+      return SizedBox.expand(
+        child: RawImage(
+          image: img,
+          fit: BoxFit.fill,
+          filterQuality: FilterQuality.low,
+        ),
       );
     }
 
