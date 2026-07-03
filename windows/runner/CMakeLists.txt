@@ -1,11 +1,16 @@
 cmake_minimum_required(VERSION 3.14)
 project(runner LANGUAGES CXX)
 
-set(KIRAKARA_ZINNIA_LIB
-  "${CMAKE_SOURCE_DIR}/../third_party/ime/zinnia/windows/runtime/kirakara_zinnia.lib")
+set(KIRAKARA_ZINNIA_RUNTIME_DIR
+  "${CMAKE_SOURCE_DIR}/../third_party/ime/zinnia/windows/runtime")
 add_library(kirakara_zinnia STATIC IMPORTED GLOBAL)
 set_target_properties(kirakara_zinnia PROPERTIES
-  IMPORTED_LOCATION "${KIRAKARA_ZINNIA_LIB}"
+  IMPORTED_CONFIGURATIONS "DEBUG;PROFILE;RELEASE;RELWITHDEBINFO;MINSIZEREL"
+  IMPORTED_LOCATION_DEBUG "${KIRAKARA_ZINNIA_RUNTIME_DIR}/debug/kirakara_zinnia.lib"
+  IMPORTED_LOCATION_PROFILE "${KIRAKARA_ZINNIA_RUNTIME_DIR}/release/kirakara_zinnia.lib"
+  IMPORTED_LOCATION_RELEASE "${KIRAKARA_ZINNIA_RUNTIME_DIR}/release/kirakara_zinnia.lib"
+  IMPORTED_LOCATION_RELWITHDEBINFO "${KIRAKARA_ZINNIA_RUNTIME_DIR}/release/kirakara_zinnia.lib"
+  IMPORTED_LOCATION_MINSIZEREL "${KIRAKARA_ZINNIA_RUNTIME_DIR}/release/kirakara_zinnia.lib"
 )
 
 # Define the application target. To change its name, change BINARY_NAME in the
