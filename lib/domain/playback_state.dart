@@ -29,7 +29,7 @@ class PlaybackState {
       volume: 72,
       key: -3,
       audioTrackMode: AudioTrackMode.vocal,
-      position: const Duration(seconds: 51),
+      position: Duration.zero,
       currentItem: currentItem,
       upNext: upNext,
     );

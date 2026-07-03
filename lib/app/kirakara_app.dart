@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../engine/mock_stage_renderer.dart';
 import '../services/cast_service.dart';
 import '../services/catalog_client.dart';
 import '../services/display_manager.dart';
+import '../services/kirakara_show_service.dart';
 import '../services/lan_server.dart';
 import '../services/playback_service.dart';
 import '../services/queue_service.dart';
@@ -25,6 +28,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
   late final DisplayManager displayManager;
   late final CastService castService;
   late final LanServer lanServer;
+  late final KirakaraShowService kirakaraShowService;
   late final MockCatalogClient catalogClient;
   late final MockStageRenderer stageRenderer;
 
@@ -42,6 +46,9 @@ class _KirakaraAppState extends State<KirakaraApp> {
       initialItem: first,
     );
     playbackService.refreshUpNext();
+    kirakaraShowService = KirakaraShowService(
+      playbackService: playbackService,
+    )..start();
     displayManager = DisplayManager()..detectDisplays();
     castService = CastService();
     lanServer = LanServer(
@@ -54,6 +61,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
 
   @override
   void dispose() {
+    unawaited(kirakaraShowService.dispose());
     playbackService.disposeService();
     lanServer.stop();
     super.dispose();

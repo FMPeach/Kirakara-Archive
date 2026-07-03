@@ -112,6 +112,13 @@ const _artistJay = Artist(id: 'artist-jay', name: '周杰伦');
 const _artistGem = Artist(id: 'artist-gem', name: '邓紫棋');
 const _artistTaylor = Artist(id: 'artist-taylor', name: 'Taylor Swift');
 const _artistSuisei = Artist(id: 'artist-suisei', name: '星街すいせい');
+const _artistNanatsukaze = Artist(id: 'artist-nanatsukaze', name: 'ナナツカゼ');
+const _artistIkariVocaloid = Artist(
+  id: 'artist-ikari-vocaloid',
+  name: 'カンザキイオリ; Noz.; 初音ミク; 鏡音リン',
+);
+
+const _localMediaRoot = r'D:\Kirakara-App-ascii\media\library';
 
 const List<ArtistSummary> _artistSummaries = [
   ArtistSummary(
@@ -191,6 +198,20 @@ const List<ArtistSummary> _artistSummaries = [
     group: 'Vtuber / 虚拟主播',
     note: '虚拟主播',
   ),
+  ArtistSummary(
+    id: 'artist-nanatsukaze',
+    name: 'ナナツカゼ',
+    type: '歌手',
+    group: '日本歌手/组合',
+    note: '本地 KRL / 实机测试',
+  ),
+  ArtistSummary(
+    id: 'artist-ikari-vocaloid',
+    name: 'カンザキイオリ; Noz.; 初音ミク; 鏡音リン',
+    type: '创作者',
+    group: 'VOCALOID 声库',
+    note: 'VOCALOID / 本地 KRL',
+  ),
 ];
 
 const List<CategorySummary> _categorySummaries = [
@@ -200,9 +221,53 @@ const List<CategorySummary> _categorySummaries = [
   CategorySummary(name: '东方', note: '东方同人与社团作品'),
   CategorySummary(name: '经典', note: '年代曲与包厢常备曲'),
   CategorySummary(name: '角色歌', note: '角色名义演唱曲目'),
+  CategorySummary(name: '本地实机', note: '本机媒体文件与 KiraKara-Show 测试'),
 ];
 
 final List<Song> _mockSongs = [
+  Song(
+    id: 'song-local-nanatsukaze',
+    title: '七ツ風',
+    artist: _artistNanatsukaze,
+    duration: const Duration(minutes: 4, seconds: 37),
+    category: '本地实机',
+    code: '20001',
+    tags: const [
+      'ナナツカゼ',
+      '七ツ風',
+      '七风',
+      'Nanatsukaze',
+      '日文',
+      'KRL',
+      '本地',
+    ],
+    coverColor: 0xff14bfd0,
+    assets: _localAssets('song-local-nanatsukaze', 'nanatsukaze'),
+    lyricProject: _localLyric('song-local-nanatsukaze', 'nanatsukaze'),
+  ),
+  Song(
+    id: 'song-local-ikari',
+    title: '怒り[VOCALOID ver.] (feat. Noz.)',
+    artist: _artistIkariVocaloid,
+    duration: const Duration(minutes: 3, seconds: 58),
+    category: 'VOCALOID',
+    code: '20002',
+    tags: const [
+      '怒り',
+      '愤怒',
+      'ikari',
+      'VOCALOID',
+      '初音ミク',
+      '鏡音リン',
+      'Noz',
+      'カンザキイオリ',
+      'KRL',
+      '本地',
+    ],
+    coverColor: 0xffe95895,
+    assets: _localAssets('song-local-ikari', 'ikari'),
+    lyricProject: _localLyric('song-local-ikari', 'ikari'),
+  ),
   Song(
     id: 'song-001',
     title: '痛みに慣れてるフリしていた',
@@ -376,11 +441,61 @@ List<MediaAsset> _mockAssets(String songId) {
   ];
 }
 
+List<MediaAsset> _localAssets(String songId, String mediaDir) {
+  final base = '$_localMediaRoot\\$mediaDir';
+  return [
+    _fileAsset(
+      id: '$songId-video',
+      type: MediaAssetType.video,
+      path: '$base\\background.mp4',
+    ),
+    _fileAsset(
+      id: '$songId-vocal',
+      type: MediaAssetType.vocal,
+      path: '$base\\vocal.wav',
+    ),
+    _fileAsset(
+      id: '$songId-accompaniment',
+      type: MediaAssetType.accompaniment,
+      path: '$base\\accompaniment.wav',
+    ),
+    _fileAsset(
+      id: '$songId-lyric',
+      type: MediaAssetType.lyric,
+      path: '$base\\lyrics.krl',
+    ),
+  ];
+}
+
+MediaAsset _fileAsset({
+  required String id,
+  required MediaAssetType type,
+  required String path,
+}) {
+  return MediaAsset(
+    id: id,
+    type: type,
+    uri: Uri.file(path),
+    cachedPath: path,
+  );
+}
+
 LyricProject _mockLyric(String songId) {
   return LyricProject(
     id: '$songId-krl',
     songId: songId,
     krlUri: Uri.parse('kirakara://mock/krl/$songId.krl'),
     version: 1,
+  );
+}
+
+LyricProject _localLyric(String songId, String mediaDir) {
+  final path = '$_localMediaRoot\\$mediaDir\\lyrics.krl';
+  return LyricProject(
+    id: '$songId-krl',
+    songId: songId,
+    krlUri: Uri.file(path),
+    version: 1,
+    cachedPath: path,
   );
 }

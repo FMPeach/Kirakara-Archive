@@ -122,6 +122,8 @@ using RimeSetInputFn = Bool (*)(RimeSessionId, const char*);
 using RimeClearCompositionFn = void (*)(RimeSessionId);
 using RimeGetContextFn = Bool (*)(RimeSessionId, RimeContext*);
 using RimeFreeContextFn = Bool (*)(RimeContext*);
+using RimeStartMaintenanceFn = Bool (*)(Bool);
+using RimeJoinMaintenanceThreadFn = void (*)();
 using RimeCandidateListBeginFn =
     Bool (*)(RimeSessionId, RimeCandidateListIterator*);
 using RimeCandidateListNextFn = Bool (*)(RimeCandidateListIterator*);
@@ -272,6 +274,10 @@ class RimeRuntime {
         Symbol<RimeClearCompositionFn>("RimeClearComposition");
     get_context_ = Symbol<RimeGetContextFn>("RimeGetContext");
     free_context_ = Symbol<RimeFreeContextFn>("RimeFreeContext");
+    start_maintenance_ =
+        Symbol<RimeStartMaintenanceFn>("RimeStartMaintenance");
+    join_maintenance_thread_ =
+        Symbol<RimeJoinMaintenanceThreadFn>("RimeJoinMaintenanceThread");
     candidate_list_begin_ =
         Symbol<RimeCandidateListBeginFn>("RimeCandidateListBegin");
     candidate_list_next_ =
@@ -281,8 +287,8 @@ class RimeRuntime {
     if (!setup_ || !initialize_ || !finalize_ || !create_session_ ||
         !destroy_session_ || !select_schema_ || !set_input_ ||
         !clear_composition_ || !get_context_ || !free_context_ ||
-        !candidate_list_begin_ || !candidate_list_next_ ||
-        !candidate_list_end_) {
+        !start_maintenance_ || !join_maintenance_thread_ ||
+        !candidate_list_begin_ || !candidate_list_next_ || !candidate_list_end_) {
       if (error) {
         *error = "Bundled rime.dll is missing required C API exports";
       }
@@ -313,7 +319,10 @@ class RimeRuntime {
     traits.staging_dir = staging_dir_utf8_.c_str();
 
     setup_(&traits);
-    initialize_(&traits);
+    initialize_(nullptr);
+    if (start_maintenance_(1)) {
+      join_maintenance_thread_();
+    }
     loaded_ = true;
     return true;
   }
@@ -377,7 +386,7 @@ class RimeRuntime {
     int index = 0;
     bool has_next = false;
     if (candidate_list_begin_(session, &iterator)) {
-      do {
+      while (candidate_list_next_(&iterator)) {
         if (index >= start && index < end) {
           const std::string text = iterator.candidate.text
                                        ? std::string(iterator.candidate.text)
@@ -400,7 +409,7 @@ class RimeRuntime {
           break;
         }
         index += 1;
-      } while (candidate_list_next_(&iterator));
+      }
       candidate_list_end_(&iterator);
     }
 
@@ -531,6 +540,8 @@ class RimeRuntime {
   RimeClearCompositionFn clear_composition_ = nullptr;
   RimeGetContextFn get_context_ = nullptr;
   RimeFreeContextFn free_context_ = nullptr;
+  RimeStartMaintenanceFn start_maintenance_ = nullptr;
+  RimeJoinMaintenanceThreadFn join_maintenance_thread_ = nullptr;
   RimeCandidateListBeginFn candidate_list_begin_ = nullptr;
   RimeCandidateListNextFn candidate_list_next_ = nullptr;
   RimeCandidateListEndFn candidate_list_end_ = nullptr;
@@ -970,6 +981,8 @@ bool RunImeBridgeSelfTest(const std::wstring& output_path) {
   const auto activate = runtime.Activate("probe", "luna_pinyin_simp");
   const auto cao = runtime.Compose("probe", "cao", 0, 8);
   const auto cao_candidates = CandidateTexts(cao);
+  const auto qilixiang = runtime.Compose("probe", "qilixiang", 0, 8);
+  const auto qilixiang_candidates = CandidateTexts(qilixiang);
 
   const bool has_cao = std::find(cao_candidates.begin(), cao_candidates.end(),
                                  "\xE8\x8D\x89") != cao_candidates.end() ||
@@ -1009,6 +1022,8 @@ bool RunImeBridgeSelfTest(const std::wstring& output_path) {
   output << "\"rime\":{";
   output << "\"ok\":" << (rime_ok ? "true" : "false") << ",";
   output << "\"cao\":" << CandidateJsonArray(cao_candidates) << ",";
+  output << "\"qilixiang\":" << CandidateJsonArray(qilixiang_candidates)
+         << ",";
   output << "\"activated\":"
          << (runtime.IsErrorValue(activate) ? "false" : "true");
   output << "},";
