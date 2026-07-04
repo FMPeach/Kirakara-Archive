@@ -26,7 +26,7 @@ class DisplayManager extends ChangeNotifier {
 
   List<DisplayInfo> _displays;
   DisplayMode _mode = DisplayMode.singleScreen;
-  bool _stagePreviewVisible = true;
+  bool _stagePreviewVisible = false;
 
   List<DisplayInfo> get displays => List.unmodifiable(_displays);
   DisplayMode get mode => _mode;

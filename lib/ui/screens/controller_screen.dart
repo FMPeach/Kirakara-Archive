@@ -5,6 +5,7 @@ import '../../domain/song.dart';
 import '../../engine/stage_renderer.dart';
 import '../../services/cast_service.dart';
 import '../../services/display_manager.dart';
+import '../../services/kirakara_show_service.dart';
 import '../../services/lan_server.dart';
 import '../../services/playback_service.dart';
 import '../../services/queue_service.dart';
@@ -23,6 +24,7 @@ class ControllerScreen extends StatefulWidget {
     required this.queueService,
     required this.playbackService,
     required this.displayManager,
+    required this.kirakaraShowService,
     required this.castService,
     required this.lanServer,
     required this.stageRenderer,
@@ -32,6 +34,7 @@ class ControllerScreen extends StatefulWidget {
   final QueueService queueService;
   final PlaybackService playbackService;
   final DisplayManager displayManager;
+  final KirakaraShowService kirakaraShowService;
   final CastService castService;
   final LanServer lanServer;
   final StageRenderer stageRenderer;
@@ -123,7 +126,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
                                   child: _LeftPane(
                                     playbackService: widget.playbackService,
                                     stageRenderer: widget.stageRenderer,
-                                    onQr: _showQrDialog,
                                   ),
                                 ),
                                 const SizedBox(width: 22),
@@ -211,8 +213,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
     };
 
     if (mode == null) {
-      showDialog<void>(
-        context: context,
+      _showDialogAboveNativePreview<void>(
         builder: (context) {
           return _KiraDialog(
             title: title,
@@ -254,11 +255,11 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 
   void _showQueueDialog() {
-    showDialog<void>(
-      context: context,
+    _showDialogAboveNativePreview<void>(
       builder: (context) {
         return AnimatedBuilder(
-          animation: Listenable.merge([widget.queueService, widget.playbackService]),
+          animation:
+              Listenable.merge([widget.queueService, widget.playbackService]),
           builder: (context, _) {
             final currentItem = widget.playbackService.state.currentItem;
             final queueItems = widget.queueService.items;
@@ -318,7 +319,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
                                 return _QueueItemRow(
                                   index: index + 1,
                                   song: item.song,
-                                  subtitle: '${item.song.artist.name} · ${item.song.category}',
+                                  subtitle:
+                                      '${item.song.artist.name} · ${item.song.category}',
                                   isCurrent: false,
                                   onBump: () {
                                     widget.queueService.bumpItemToNext(item.id);
@@ -343,8 +345,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 
   void _showQrDialog() {
-    showDialog<void>(
-      context: context,
+    _showDialogAboveNativePreview<void>(
       builder: (context) {
         return _KiraDialog(
           title: '手机点歌',
@@ -380,13 +381,14 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 
   void _showDisplayDialog() {
-    showDialog<void>(
-      context: context,
+    _showDialogAboveNativePreview<void>(
       builder: (context) {
         return AnimatedBuilder(
           animation:
               Listenable.merge([widget.displayManager, widget.castService]),
           builder: (context, _) {
+            final stageWindowOpen =
+                widget.displayManager.mode == DisplayMode.previewWindow;
             return _KiraDialog(
               title: '显示与投屏',
               width: 540,
@@ -410,12 +412,22 @@ class _ControllerScreenState extends State<ControllerScreen> {
                     children: [
                       Expanded(
                         child: FilledButton.icon(
-                          onPressed: () {
-                            widget.displayManager
-                                .openStageWindow(preview: true);
+                          onPressed: () async {
+                            if (stageWindowOpen) {
+                              await widget.displayManager.closeStageWindow();
+                              widget.kirakaraShowService
+                                  .setStageWindowVisible(false);
+                            } else {
+                              await widget.displayManager
+                                  .openStageWindow(preview: true);
+                              widget.kirakaraShowService
+                                  .setStageWindowVisible(true);
+                            }
                           },
                           icon: const Icon(Icons.screenshot_monitor),
-                          label: const Text('单窗口预览'),
+                          label: Text(
+                            stageWindowOpen ? '关闭舞台窗口' : '打开舞台窗口',
+                          ),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -448,8 +460,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 
   void _showMasterDialog() {
-    showDialog<void>(
-      context: context,
+    _showDialogAboveNativePreview<void>(
       builder: (context) {
         return const _KiraDialog(
           title: '主控',
@@ -465,6 +476,19 @@ class _ControllerScreenState extends State<ControllerScreen> {
         );
       },
     );
+  }
+
+  Future<T?> _showDialogAboveNativePreview<T>({
+    required WidgetBuilder builder,
+  }) {
+    final showService = widget.kirakaraShowService;
+    showService.setControllerPreviewSuppressed(true);
+    return showDialog<T>(
+      context: context,
+      builder: builder,
+    ).whenComplete(() {
+      showService.setControllerPreviewSuppressed(false);
+    });
   }
 
   static String _displayModeLabel(DisplayMode mode) {
@@ -677,12 +701,10 @@ class _LeftPane extends StatelessWidget {
   const _LeftPane({
     required this.playbackService,
     required this.stageRenderer,
-    required this.onQr,
   });
 
   final PlaybackService playbackService;
   final StageRenderer stageRenderer;
-  final VoidCallback onQr;
 
   @override
   Widget build(BuildContext context) {
@@ -727,18 +749,6 @@ class _LeftPane extends StatelessWidget {
                           StageScreen(
                             playbackService: playbackService,
                             stageRenderer: stageRenderer,
-                          ),
-                          Positioned(
-                            right: 22,
-                            top: 90,
-                            child: InkWell(
-                              onTap: onQr,
-                              borderRadius: BorderRadius.circular(10),
-                              child: const MockQrCode(
-                                caption: '手机点歌',
-                                size: 145,
-                              ),
-                            ),
                           ),
                           if (!state.isPlaying)
                             Center(

@@ -79,6 +79,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
         queueService: queueService,
         playbackService: playbackService,
         displayManager: displayManager,
+        kirakaraShowService: kirakaraShowService,
         castService: castService,
         lanServer: lanServer,
         stageRenderer: stageRenderer,
