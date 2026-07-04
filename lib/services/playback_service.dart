@@ -45,12 +45,6 @@ class PlaybackService extends ChangeNotifier {
     final diffMs = (_state.position - safePosition).inMilliseconds.abs();
     if (diffMs < 250) return false;
 
-    final songDuration = _state.currentSong!.duration;
-    if (safePosition >= songDuration) {
-      next();
-      return true;
-    }
-
     _setState(_state.copyWith(position: safePosition));
     return true;
   }

@@ -19,13 +19,19 @@ class KirakaraShowService extends ChangeNotifier {
   String? _loadedItemId;
   AudioTrackMode? _loadedAudioTrackMode;
   bool? _lastPlaying;
+  String? _lastCompletedItemId;
+  bool _sawEngineProgressForItem = false;
   bool _started = false;
   bool _applyingEnginePosition = false;
   bool _controllerPreviewSuppressed = false;
+  Duration _enginePosition = Duration.zero;
+  Duration _engineDuration = Duration.zero;
 
   /// The engine's render surface dimensions.
   int get engineWidth => _ffi?.width ?? 0;
   int get engineHeight => _ffi?.height ?? 0;
+  Duration get enginePosition => _enginePosition;
+  Duration get engineDuration => _engineDuration;
   bool get controllerPreviewSuppressed => _controllerPreviewSuppressed;
 
   /// Call this once after the engine DLL is available.
@@ -70,6 +76,10 @@ class KirakaraShowService extends ChangeNotifier {
       _loadedItemId = null;
       _loadedAudioTrackMode = null;
       _lastPlaying = null;
+      _lastCompletedItemId = null;
+      _sawEngineProgressForItem = false;
+      _enginePosition = Duration.zero;
+      _engineDuration = Duration.zero;
       return;
     }
 
@@ -98,6 +108,10 @@ class KirakaraShowService extends ChangeNotifier {
           ? AudioTrackMode.accompaniment
           : AudioTrackMode.vocal;
       _lastPlaying = null;
+      _lastCompletedItemId = null;
+      _sawEngineProgressForItem = false;
+      _enginePosition = Duration.zero;
+      _engineDuration = Duration.zero;
     }
 
     if (_loadedAudioTrackMode != state.audioTrackMode) {
@@ -133,6 +147,33 @@ class KirakaraShowService extends ChangeNotifier {
     if (ffi == null) return;
 
     final pos = ffi.position;
+    final duration = ffi.duration;
+    final engineState = ffi.state;
+    if (pos.isFinite && pos >= 0) {
+      _enginePosition = Duration(milliseconds: (pos * 1000).round());
+    }
+    if (duration.isFinite && duration > 0) {
+      _engineDuration = Duration(milliseconds: (duration * 1000).round());
+    }
+
+    final state = _playbackService.state;
+    final itemId = state.currentItem?.id;
+    if (state.isPlaying &&
+        itemId != null &&
+        itemId == _loadedItemId &&
+        (engineState == 1 ||
+            _enginePosition > const Duration(milliseconds: 1000))) {
+      _sawEngineProgressForItem = true;
+    }
+    if (_shouldAdvanceAfterEngineEnd(
+      state: state,
+      itemId: itemId,
+      engineState: engineState,
+    )) {
+      _advanceAfterEngineEnd(itemId!);
+      return;
+    }
+
     if (pos.isFinite) {
       final beforeItemId = _playbackService.state.currentItem?.id;
       _applyingEnginePosition = true;
@@ -227,5 +268,35 @@ class KirakaraShowService extends ChangeNotifier {
 
   int _trackIndex(AudioTrackMode mode) {
     return mode == AudioTrackMode.accompaniment ? 1 : 0;
+  }
+
+  bool _shouldAdvanceAfterEngineEnd({
+    required PlaybackState state,
+    required String? itemId,
+    required int engineState,
+  }) {
+    if (!state.isPlaying || itemId == null || itemId != _loadedItemId) {
+      return false;
+    }
+    if (_lastCompletedItemId == itemId) return false;
+
+    const stopped = 3;
+    if (engineState == stopped && _sawEngineProgressForItem) return true;
+
+    if (_engineDuration <= Duration.zero) return false;
+    if (_enginePosition < const Duration(seconds: 1)) return false;
+    return _enginePosition + const Duration(milliseconds: 450) >=
+        _engineDuration;
+  }
+
+  void _advanceAfterEngineEnd(String itemId) {
+    _lastCompletedItemId = itemId;
+    _applyingEnginePosition = true;
+    try {
+      _playbackService.next();
+    } finally {
+      _applyingEnginePosition = false;
+    }
+    _syncWithPlayback();
   }
 }
