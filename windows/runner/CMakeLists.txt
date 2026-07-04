@@ -23,6 +23,7 @@ add_executable(${BINARY_NAME} WIN32
   "ime_bridge.cpp"
   "main.cpp"
   "utils.cpp"
+  "window_bridge.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
   "Runner.rc"
@@ -53,3 +54,11 @@ target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
+
+if(EXISTS "${KIRAKARA_SHOW_HOST_DLL}")
+  add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${KIRAKARA_SHOW_HOST_DLL}"
+      "$<TARGET_FILE_DIR:${BINARY_NAME}>/libshow_host.dll"
+    COMMENT "Copying Kirakara Show host DLL")
+endif()

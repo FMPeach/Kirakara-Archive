@@ -229,7 +229,7 @@ final List<Song> _mockSongs = [
     id: 'song-local-nanatsukaze',
     title: '七ツ風',
     artist: _artistNanatsukaze,
-    duration: const Duration(minutes: 4, seconds: 37),
+    duration: const Duration(minutes: 4, seconds: 14, milliseconds: 333),
     category: '本地实机',
     code: '20001',
     tags: const [
@@ -249,7 +249,7 @@ final List<Song> _mockSongs = [
     id: 'song-local-ikari',
     title: '怒り[VOCALOID ver.] (feat. Noz.)',
     artist: _artistIkariVocaloid,
-    duration: const Duration(minutes: 3, seconds: 58),
+    duration: const Duration(minutes: 3, seconds: 41, milliseconds: 772),
     category: 'VOCALOID',
     code: '20002',
     tags: const [

@@ -49,6 +49,9 @@ endfunction()
 set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
 
+set(KIRAKARA_SHOW_HOST_DLL "D:/仓库/Kirakara Show/build/bin/libshow_host.dll"
+  CACHE FILEPATH "Path to the Kirakara Show host DLL")
+
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
@@ -83,6 +86,12 @@ install(FILES "${FLUTTER_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
 
 if(PLUGIN_BUNDLED_LIBRARIES)
   install(FILES "${PLUGIN_BUNDLED_LIBRARIES}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+endif()
+
+if(EXISTS "${KIRAKARA_SHOW_HOST_DLL}")
+  install(FILES "${KIRAKARA_SHOW_HOST_DLL}"
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()

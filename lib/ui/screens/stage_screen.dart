@@ -23,7 +23,7 @@ class StageScreen extends StatelessWidget {
         final song = playbackService.state.currentSong;
         return ColoredBox(
           color: Colors.black,
-          child: Center(
+          child: SizedBox.expand(
             child: stageRenderer.buildStage(
               playbackState: playbackService.state,
               mediaFrame: MediaFrame(

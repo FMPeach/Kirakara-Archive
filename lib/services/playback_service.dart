@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 
 import '../domain/playback_state.dart';
@@ -11,19 +9,14 @@ class PlaybackService extends ChangeNotifier {
     required QueueService queueService,
     QueueItem? initialItem,
   })  : _queueService = queueService,
-        _state = PlaybackState.initial(currentItem: initialItem) {
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
-  }
+        _state = PlaybackState.initial(currentItem: initialItem);
 
   final QueueService _queueService;
-  late final Timer _ticker;
   PlaybackState _state;
 
   PlaybackState get state => _state;
 
-  void disposeService() {
-    _ticker.cancel();
-  }
+  void disposeService() {}
 
   void play() {
     _setState(_state.copyWith(mode: PlaybackMode.playing));
@@ -44,6 +37,22 @@ class PlaybackService extends ChangeNotifier {
         mode: PlaybackMode.playing,
       ),
     );
+  }
+
+  bool syncEnginePosition(Duration position) {
+    if (_state.currentSong == null) return false;
+    final safePosition = position < Duration.zero ? Duration.zero : position;
+    final diffMs = (_state.position - safePosition).inMilliseconds.abs();
+    if (diffMs < 250) return false;
+
+    final songDuration = _state.currentSong!.duration;
+    if (safePosition >= songDuration) {
+      next();
+      return true;
+    }
+
+    _setState(_state.copyWith(position: safePosition));
+    return true;
   }
 
   void next() {
@@ -106,21 +115,6 @@ class PlaybackService extends ChangeNotifier {
 
   void refreshUpNext() {
     _setState(_state.copyWith(upNext: _peekNextQueueItem()));
-  }
-
-  void _tick() {
-    if (!_state.isPlaying || _state.currentSong == null) {
-      return;
-    }
-
-    final songDuration = _state.currentSong!.duration;
-    final nextPosition = _state.position + const Duration(seconds: 1);
-    if (nextPosition >= songDuration) {
-      next();
-      return;
-    }
-
-    _setState(_state.copyWith(position: nextPosition));
   }
 
   void _setState(PlaybackState nextState) {

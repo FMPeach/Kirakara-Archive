@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 
 import '../domain/media_asset.dart';
+import '../domain/playback_state.dart';
 import '../domain/song.dart';
 import 'kirakara_show_ffi.dart';
 import 'playback_service.dart';
@@ -18,15 +17,16 @@ class KirakaraShowService extends ChangeNotifier {
   final PlaybackService _playbackService;
   KirakaraShowFFI? _ffi;
   String? _loadedItemId;
+  AudioTrackMode? _loadedAudioTrackMode;
+  bool? _lastPlaying;
   bool _started = false;
+  bool _applyingEnginePosition = false;
+  bool _controllerPreviewSuppressed = false;
 
   /// The engine's render surface dimensions.
   int get engineWidth => _ffi?.width ?? 0;
   int get engineHeight => _ffi?.height ?? 0;
-
-  /// The latest frame as RGBA8 pixels. null when no frame is ready.
-  Uint8List? get latestFrame => _latestFrame;
-  Uint8List? _latestFrame;
+  bool get controllerPreviewSuppressed => _controllerPreviewSuppressed;
 
   /// Call this once after the engine DLL is available.
   void start() {
@@ -58,6 +58,7 @@ class KirakaraShowService extends ChangeNotifier {
   // ── Playback sync ──────────────────────────────────────────────
 
   void _syncWithPlayback() {
+    if (_applyingEnginePosition) return;
     final ffi = _ffi;
     if (ffi == null) return;
 
@@ -67,6 +68,8 @@ class KirakaraShowService extends ChangeNotifier {
     if (item == null) {
       ffi.stop();
       _loadedItemId = null;
+      _loadedAudioTrackMode = null;
+      _lastPlaying = null;
       return;
     }
 
@@ -79,17 +82,39 @@ class KirakaraShowService extends ChangeNotifier {
       if (!File(videoPath).existsSync() || !File(lyricPath).existsSync()) {
         return;
       }
+      final vocalPath = _existingPathFor(item.song, MediaAssetType.vocal);
+      final accompanimentPath =
+          _existingPathFor(item.song, MediaAssetType.accompaniment);
 
-      ffi.load(videoPath, lyricPath);
+      final loaded = ffi.load(
+        videoPath,
+        lyricPath,
+        vocalPath: vocalPath,
+        accompanimentPath: accompanimentPath,
+      );
+      if (!loaded) return;
       _loadedItemId = item.id;
+      _loadedAudioTrackMode = vocalPath == null && accompanimentPath != null
+          ? AudioTrackMode.accompaniment
+          : AudioTrackMode.vocal;
+      _lastPlaying = null;
+    }
+
+    if (_loadedAudioTrackMode != state.audioTrackMode) {
+      final changed = ffi.setAudioTrack(_trackIndex(state.audioTrackMode));
+      if (changed) {
+        _loadedAudioTrackMode = state.audioTrackMode;
+      }
     }
 
     // Sync play/pause
+    if (_lastPlaying == state.isPlaying) return;
     if (state.isPlaying) {
       ffi.play();
     } else {
       ffi.pause();
     }
+    _lastPlaying = state.isPlaying;
   }
 
   // ── Frame polling ──────────────────────────────────────────────
@@ -98,7 +123,7 @@ class KirakaraShowService extends ChangeNotifier {
 
   void _startFramePoller() {
     _framePoller = Timer.periodic(
-      const Duration(milliseconds: 16), // ~60 fps
+      const Duration(milliseconds: 33),
       (_) => _pollFrame(),
     );
   }
@@ -106,16 +131,77 @@ class KirakaraShowService extends ChangeNotifier {
   void _pollFrame() {
     final ffi = _ffi;
     if (ffi == null) return;
-    final frame = ffi.readFrame();
-    if (frame != null) {
-      _latestFrame = frame;
-      notifyListeners();
-    }
 
-    // Sync position back to PlaybackService
     final pos = ffi.position;
-    final dur = ffi.duration;
-    // Position sync will be added when PlaybackService supports it
+    if (pos.isFinite) {
+      final beforeItemId = _playbackService.state.currentItem?.id;
+      _applyingEnginePosition = true;
+      final bool changed;
+      try {
+        changed = _playbackService.syncEnginePosition(
+          Duration(milliseconds: (pos * 1000).round()),
+        );
+      } finally {
+        _applyingEnginePosition = false;
+      }
+      final afterItemId = _playbackService.state.currentItem?.id;
+      if (changed && beforeItemId != afterItemId) {
+        _syncWithPlayback();
+      }
+    }
+  }
+
+  void setStageWindowVisible(bool visible) {
+    _ffi?.setStageVisible(visible);
+  }
+
+  void setControllerPreviewRect({
+    required int parentHwnd,
+    required int x,
+    required int y,
+    required int width,
+    required int height,
+  }) {
+    _ffi?.setControllerPreviewRect(
+      parentHwnd: parentHwnd,
+      x: x,
+      y: y,
+      width: width,
+      height: height,
+    );
+  }
+
+  void hideControllerPreview() {
+    _ffi?.hideControllerPreview();
+  }
+
+  void setControllerPreviewSuppressed(bool suppressed) {
+    if (_controllerPreviewSuppressed == suppressed) return;
+    _controllerPreviewSuppressed = suppressed;
+    if (suppressed) {
+      _ffi?.setControllerQrRect(
+        visible: false,
+        x: 0,
+        y: 0,
+        size: 0,
+      );
+      _ffi?.hideControllerPreview();
+    }
+    notifyListeners();
+  }
+
+  void setControllerQrRect({
+    required bool visible,
+    required int x,
+    required int y,
+    required int size,
+  }) {
+    _ffi?.setControllerQrRect(
+      visible: visible,
+      x: x,
+      y: y,
+      size: size,
+    );
   }
 
   // ── Helpers ────────────────────────────────────────────────────
@@ -131,5 +217,15 @@ class KirakaraShowService extends ChangeNotifier {
       }
     }
     return null;
+  }
+
+  String? _existingPathFor(Song song, MediaAssetType type) {
+    final path = _pathFor(song, type);
+    if (path == null || !File(path).existsSync()) return null;
+    return path;
+  }
+
+  int _trackIndex(AudioTrackMode mode) {
+    return mode == AudioTrackMode.accompaniment ? 1 : 0;
   }
 }
