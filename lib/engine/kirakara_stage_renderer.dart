@@ -72,7 +72,8 @@ class _NativePreviewRect {
 }
 
 class _KirakaraNativeStageWidgetState
-    extends State<_KirakaraNativeStageWidget> {
+    extends State<_KirakaraNativeStageWidget>
+    with WidgetsBindingObserver {
   int? _parentHwnd;
   _NativePreviewRect? _lastRect;
   _NativePreviewRect? _lastQrRect;
@@ -81,8 +82,17 @@ class _KirakaraNativeStageWidgetState
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.showService.addListener(_handleShowServiceChanged);
     _loadWindowHandle();
+  }
+
+  @override
+  void didChangeMetrics() {
+    // Window resized → Flutter layout may have changed.
+    // We can't rely on AnimatedBuilder to propagate because it
+    // only rebuilds when playbackService fires (not on resize).
+    _scheduleSync();
   }
 
   @override
@@ -103,6 +113,7 @@ class _KirakaraNativeStageWidgetState
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.showService.removeListener(_handleShowServiceChanged);
     widget.showService.hideControllerPreview();
     super.dispose();
