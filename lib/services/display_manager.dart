@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import 'native_window_service.dart';
+
 enum DisplayMode {
   singleScreen,
   dualScreen,
@@ -11,18 +13,68 @@ class DisplayInfo {
     required this.id,
     required this.name,
     required this.isPrimary,
+    required this.left,
+    required this.top,
+    required this.width,
+    required this.height,
   });
 
   final String id;
   final String name;
   final bool isPrimary;
+  final int left;
+  final int top;
+  final int width;
+  final int height;
+
+  bool get isValidStageTarget => width > 0 && height > 0;
+
+  String get sizeLabel => '${width}x$height';
+
+  static DisplayInfo primaryFallback() {
+    return const DisplayInfo(
+      id: 'primary',
+      name: '主控屏',
+      isPrimary: true,
+      left: 0,
+      top: 0,
+      width: 1920,
+      height: 1080,
+    );
+  }
+
+  static DisplayInfo fromNativeMap(Map<String, Object?> map, int index) {
+    int readInt(String key, int fallback) {
+      final value = map[key];
+      if (value is int) return value;
+      if (value is num) return value.round();
+      return fallback;
+    }
+
+    final rawId = map['id']?.toString();
+    final rawName = map['name']?.toString();
+    final isPrimary = map['isPrimary'] == true;
+    return DisplayInfo(
+      id: rawId == null || rawId.isEmpty ? 'display-$index' : rawId,
+      name: rawName == null || rawName.isEmpty
+          ? (isPrimary ? '主控屏' : '舞台屏 $index')
+          : rawName,
+      isPrimary: isPrimary,
+      left: readInt('left', 0),
+      top: readInt('top', 0),
+      width: readInt('width', 0),
+      height: readInt('height', 0),
+    );
+  }
 }
 
 class DisplayManager extends ChangeNotifier {
-  DisplayManager()
-      : _displays = const [
-          DisplayInfo(id: 'primary', name: '主控屏', isPrimary: true),
-        ];
+  DisplayManager({
+    NativeWindowService nativeWindowService = const NativeWindowService(),
+  })  : _nativeWindowService = nativeWindowService,
+        _displays = [DisplayInfo.primaryFallback()];
+
+  final NativeWindowService _nativeWindowService;
 
   List<DisplayInfo> _displays;
   DisplayMode _mode = DisplayMode.singleScreen;
@@ -32,13 +84,28 @@ class DisplayManager extends ChangeNotifier {
   DisplayMode get mode => _mode;
   bool get hasPhysicalStageDisplay => _displays.length > 1;
   bool get stagePreviewVisible => _stagePreviewVisible;
+  DisplayInfo get controllerDisplay => _displays.firstWhere(
+        (display) => display.isPrimary,
+        orElse: () => _displays.first,
+      );
+  DisplayInfo? get stageDisplay {
+    for (final display in _displays) {
+      if (!display.isPrimary && display.isValidStageTarget) return display;
+    }
+    return null;
+  }
 
   Future<void> detectDisplays() async {
-    // Replace with native display enumeration on Windows/Android later.
-    _displays = const [
-      DisplayInfo(id: 'primary', name: '主控屏', isPrimary: true),
-    ];
-    _mode = hasPhysicalStageDisplay ? DisplayMode.dualScreen : _mode;
+    final nativeDisplays = await _nativeWindowService.getDisplays();
+    final displays = <DisplayInfo>[];
+    for (var i = 0; i < nativeDisplays.length; i++) {
+      final display = DisplayInfo.fromNativeMap(nativeDisplays[i], i + 1);
+      if (display.isValidStageTarget) displays.add(display);
+    }
+    _displays = displays.isEmpty ? [DisplayInfo.primaryFallback()] : displays;
+    if (_mode == DisplayMode.dualScreen && !hasPhysicalStageDisplay) {
+      _mode = DisplayMode.singleScreen;
+    }
     notifyListeners();
   }
 

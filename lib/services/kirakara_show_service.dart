@@ -200,6 +200,20 @@ class KirakaraShowService extends ChangeNotifier {
     _ffi?.setStageVisible(visible);
   }
 
+  void setStageWindowRect({
+    required int x,
+    required int y,
+    required int width,
+    required int height,
+  }) {
+    _ffi?.setStageWindowRect(
+      x: x,
+      y: y,
+      width: width,
+      height: height,
+    );
+  }
+
   void setControllerPreviewRect({
     required int parentHwnd,
     required int x,
@@ -224,12 +238,6 @@ class KirakaraShowService extends ChangeNotifier {
     if (_controllerPreviewSuppressed == suppressed) return;
     _controllerPreviewSuppressed = suppressed;
     if (suppressed) {
-      _ffi?.setControllerQrRect(
-        visible: false,
-        x: 0,
-        y: 0,
-        size: 0,
-      );
       _ffi?.hideControllerPreview();
     }
     notifyListeners();

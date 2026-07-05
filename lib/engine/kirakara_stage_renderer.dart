@@ -104,12 +104,6 @@ class _KirakaraNativeStageWidgetState
   @override
   void dispose() {
     widget.showService.removeListener(_handleShowServiceChanged);
-    widget.showService.setControllerQrRect(
-      visible: false,
-      x: 0,
-      y: 0,
-      size: 0,
-    );
     widget.showService.hideControllerPreview();
     super.dispose();
   }
@@ -137,13 +131,6 @@ class _KirakaraNativeStageWidgetState
   void _syncNativePreviewRect() {
     if (widget.showService.controllerPreviewSuppressed) {
       _lastRect = null;
-      _lastQrRect = null;
-      widget.showService.setControllerQrRect(
-        visible: false,
-        x: 0,
-        y: 0,
-        size: 0,
-      );
       widget.showService.hideControllerPreview();
       return;
     }

@@ -4,10 +4,21 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kirakara_app/domain/media_asset.dart';
 import 'package:kirakara_app/domain/playback_state.dart';
+import 'package:kirakara_app/services/display_manager.dart';
 import 'package:kirakara_app/services/lan_server.dart';
+import 'package:kirakara_app/services/native_window_service.dart';
 import 'package:kirakara_app/services/playback_service.dart';
 import 'package:kirakara_app/services/queue_service.dart';
 import 'package:kirakara_app/services/search_service.dart';
+
+class _FakeNativeWindowService extends NativeWindowService {
+  const _FakeNativeWindowService(this.displays);
+
+  final List<Map<String, Object?>> displays;
+
+  @override
+  Future<List<Map<String, Object?>>> getDisplays() async => displays;
+}
 
 void main() {
   test('queue and playback services keep room state locally', () {
@@ -84,5 +95,37 @@ void main() {
 
     expect(song['id'], 'song-local-agony');
     expect(song.containsKey('durationSeconds'), isFalse);
+  });
+
+  test('display manager selects the first non-primary display as stage', () async {
+    final displayManager = DisplayManager(
+      nativeWindowService: const _FakeNativeWindowService([
+        {
+          'id': r'\\.\DISPLAY1',
+          'name': '主显示器',
+          'isPrimary': true,
+          'left': 0,
+          'top': 0,
+          'width': 1920,
+          'height': 1080,
+        },
+        {
+          'id': r'\\.\DISPLAY2',
+          'name': '虚拟舞台屏',
+          'isPrimary': false,
+          'left': 1920,
+          'top': 0,
+          'width': 1920,
+          'height': 1080,
+        },
+      ]),
+    );
+
+    await displayManager.detectDisplays();
+
+    expect(displayManager.hasPhysicalStageDisplay, isTrue);
+    expect(displayManager.stageDisplay?.id, r'\\.\DISPLAY2');
+    expect(displayManager.stageDisplay?.left, 1920);
+    expect(displayManager.stageDisplay?.sizeLabel, '1920x1080');
   });
 }

@@ -379,11 +379,14 @@ class _ControllerScreenState extends State<ControllerScreen> {
           animation:
               Listenable.merge([widget.displayManager, widget.castService]),
           builder: (context, _) {
-            final stageWindowOpen =
+            final isDualStage =
+                widget.displayManager.mode == DisplayMode.dualScreen;
+            final isPreviewStage =
                 widget.displayManager.mode == DisplayMode.previewWindow;
+            final stageDisplay = widget.displayManager.stageDisplay;
             return _KiraDialog(
               title: '投屏与舞台输出',
-              width: 540,
+              width: 620,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -391,6 +394,13 @@ class _ControllerScreenState extends State<ControllerScreen> {
                     icon: Icons.monitor,
                     label: '舞台输出',
                     value: _displayModeLabel(widget.displayManager.mode),
+                  ),
+                  _StatusLine(
+                    icon: Icons.desktop_windows,
+                    label: '显示器',
+                    value: stageDisplay == null
+                        ? '未检测到第二屏'
+                        : '${stageDisplay.name} · ${stageDisplay.sizeLabel}',
                   ),
                   _StatusLine(
                     icon: Icons.cast,
@@ -404,22 +414,41 @@ class _ControllerScreenState extends State<ControllerScreen> {
                     children: [
                       Expanded(
                         child: FilledButton.icon(
-                          onPressed: () async {
-                            if (stageWindowOpen) {
-                              await widget.displayManager.closeStageWindow();
-                              widget.kirakaraShowService
-                                  .setStageWindowVisible(false);
-                            } else {
-                              await widget.displayManager
-                                  .openStageWindow(preview: true);
-                              widget.kirakaraShowService
-                                  .setStageWindowVisible(true);
-                            }
-                          },
-                          icon: const Icon(Icons.screenshot_monitor),
-                          label: Text(
-                            stageWindowOpen ? '关闭舞台窗口' : '打开舞台窗口',
+                          onPressed: stageDisplay == null && !isDualStage
+                              ? null
+                              : () => isDualStage
+                                  ? _closeStageOutput()
+                                  : _openPhysicalStageOutput(),
+                          icon: Icon(
+                            isDualStage
+                                ? Icons.close_fullscreen
+                                : Icons.connected_tv,
                           ),
+                          label: Text(
+                            isDualStage ? '关闭第二屏' : '打开第二屏',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: () => isPreviewStage
+                              ? _closeStageOutput()
+                              : _openDebugStageWindow(),
+                          icon: const Icon(Icons.screenshot_monitor),
+                          label: Text(isPreviewStage ? '关闭调试窗' : '调试窗口'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: widget.displayManager.detectDisplays,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('刷新显示器'),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -449,6 +478,38 @@ class _ControllerScreenState extends State<ControllerScreen> {
         );
       },
     );
+  }
+
+  Future<void> _openPhysicalStageOutput() async {
+    final display = widget.displayManager.stageDisplay;
+    if (display == null) return;
+    widget.kirakaraShowService.setStageWindowRect(
+      x: display.left,
+      y: display.top,
+      width: display.width,
+      height: display.height,
+    );
+    await widget.displayManager.openStageWindow(preview: false);
+    widget.kirakaraShowService.setStageWindowVisible(true);
+  }
+
+  Future<void> _openDebugStageWindow() async {
+    final display = widget.displayManager.controllerDisplay;
+    const width = 960;
+    const height = 540;
+    widget.kirakaraShowService.setStageWindowRect(
+      x: display.left + 80,
+      y: display.top + 80,
+      width: width,
+      height: height,
+    );
+    await widget.displayManager.openStageWindow(preview: true);
+    widget.kirakaraShowService.setStageWindowVisible(true);
+  }
+
+  Future<void> _closeStageOutput() async {
+    await widget.displayManager.closeStageWindow();
+    widget.kirakaraShowService.setStageWindowVisible(false);
   }
 
   void _showSettingsDialog() {

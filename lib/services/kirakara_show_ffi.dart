@@ -23,6 +23,13 @@ typedef SeekNative = Void Function(ShowHostHandle, Double);
 typedef SetVolumeNative = Void Function(ShowHostHandle, Int32);
 typedef SetAudioTrackNative = Bool Function(ShowHostHandle, Int32);
 typedef SetStageVisibleNative = Void Function(ShowHostHandle, Bool);
+typedef SetStageWindowRectNative = Void Function(
+  ShowHostHandle,
+  Int32,
+  Int32,
+  Uint32,
+  Uint32,
+);
 typedef SetControllerPreviewRectNative = Void Function(
   ShowHostHandle,
   Uint64,
@@ -64,6 +71,13 @@ typedef _Seek = void Function(ShowHostHandle, double);
 typedef _SetVolume = void Function(ShowHostHandle, int);
 typedef _SetAudioTrack = bool Function(ShowHostHandle, int);
 typedef _SetStageVisible = void Function(ShowHostHandle, bool);
+typedef _SetStageWindowRect = void Function(
+  ShowHostHandle,
+  int,
+  int,
+  int,
+  int,
+);
 typedef _SetControllerPreviewRect = void Function(
   ShowHostHandle,
   int,
@@ -108,6 +122,7 @@ class KirakaraShowFFI {
   late final _SetVolume _setVolume;
   late final _SetAudioTrack _setAudioTrack;
   late final _SetStageVisible _setStageVisible;
+  late final _SetStageWindowRect _setStageWindowRect;
   late final _SetControllerPreviewRect _setControllerPreviewRect;
   late final _HideControllerPreview _hideControllerPreview;
   late final _SetControllerQrRect _setControllerQrRect;
@@ -142,6 +157,8 @@ class KirakaraShowFFI {
         _dylib.lookupFunction<SetStageVisibleNative, _SetStageVisible>(
       'show_host_set_stage_visible',
     );
+    _setStageWindowRect = _dylib.lookupFunction<SetStageWindowRectNative,
+        _SetStageWindowRect>('show_host_set_stage_window_rect');
     _setControllerPreviewRect = _dylib.lookupFunction<
         SetControllerPreviewRectNative,
         _SetControllerPreviewRect>('show_host_set_controller_preview_rect');
@@ -199,6 +216,15 @@ class KirakaraShowFFI {
   void setVolume(int volumePercent) => _setVolume(_handle, volumePercent);
   bool setAudioTrack(int track) => _setAudioTrack(_handle, track);
   void setStageVisible(bool visible) => _setStageVisible(_handle, visible);
+  void setStageWindowRect({
+    required int x,
+    required int y,
+    required int width,
+    required int height,
+  }) {
+    _setStageWindowRect(_handle, x, y, width, height);
+  }
+
   void setControllerPreviewRect({
     required int parentHwnd,
     required int x,
