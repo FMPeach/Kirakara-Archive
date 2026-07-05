@@ -121,6 +121,8 @@ class KirakaraShowService extends ChangeNotifier {
       }
     }
 
+    _syncRequestedPosition(ffi, state);
+
     // Sync play/pause
     if (_lastPlaying == state.isPlaying) return;
     if (state.isPlaying) {
@@ -268,6 +270,29 @@ class KirakaraShowService extends ChangeNotifier {
 
   int _trackIndex(AudioTrackMode mode) {
     return mode == AudioTrackMode.accompaniment ? 1 : 0;
+  }
+
+  void _syncRequestedPosition(
+    KirakaraShowFFI ffi,
+    PlaybackState state,
+  ) {
+    if (state.currentSong == null) return;
+
+    final rawPosition = ffi.position;
+    if (!rawPosition.isFinite || rawPosition < 0) return;
+
+    final enginePosition = Duration(
+      milliseconds: (rawPosition * 1000).round(),
+    );
+    final requestedPosition =
+        state.position < Duration.zero ? Duration.zero : state.position;
+    final diffMs = (requestedPosition - enginePosition).inMilliseconds.abs();
+    if (diffMs < 500) return;
+
+    ffi.seek(requestedPosition.inMilliseconds / 1000.0);
+    _enginePosition = requestedPosition;
+    _lastCompletedItemId = null;
+    _sawEngineProgressForItem = false;
   }
 
   bool _shouldAdvanceAfterEngineEnd({
