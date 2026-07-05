@@ -44,7 +44,6 @@ class ControllerScreen extends StatefulWidget {
 }
 
 class _ControllerScreenState extends State<ControllerScreen> {
-  final TextEditingController _searchController = TextEditingController();
   BrowseMode? _browseMode;
   String _browseInitialQuery = '';
   int _browseSerial = 0;
@@ -54,12 +53,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
   void initState() {
     super.initState();
     _startLanServer();
-  }
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
   }
 
   Future<void> _startLanServer() async {
@@ -107,10 +100,9 @@ class _ControllerScreenState extends State<ControllerScreen> {
                 children: [
                   _TopBar(
                     announcement: _announcement,
-                    searchController: _searchController,
                     playbackService: widget.playbackService,
-                    onSearch: _runSearch,
-                    onSearchTap: () => _runSearch(_searchController.text),
+                    showSearch: _browseMode == null,
+                    onSearchTap: () => _runSearch(''),
                     onQr: _showQrDialog,
                     onSettings: _showDisplayDialog,
                     onMaster: _showMasterDialog,
@@ -503,9 +495,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
 class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.announcement,
-    required this.searchController,
     required this.playbackService,
-    required this.onSearch,
+    required this.showSearch,
     required this.onSearchTap,
     required this.onQr,
     required this.onSettings,
@@ -513,9 +504,8 @@ class _TopBar extends StatelessWidget {
   });
 
   final String announcement;
-  final TextEditingController searchController;
   final PlaybackService playbackService;
-  final ValueChanged<String> onSearch;
+  final bool showSearch;
   final VoidCallback onSearchTap;
   final VoidCallback onQr;
   final VoidCallback onSettings;
@@ -629,50 +619,13 @@ class _TopBar extends StatelessWidget {
               constraints: const BoxConstraints(minWidth: 490),
               child: Row(
                 children: [
-                  Expanded(
-                    child: Container(
-                      height: 60,
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      decoration: BoxDecoration(
-                        color: KiraColors.cream,
-                        border: Border.all(color: KiraColors.line),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.search,
-                            color: KiraColors.red,
-                            size: 30,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextField(
-                              controller: searchController,
-                              onTap: onSearchTap,
-                              onSubmitted: onSearch,
-                              textInputAction: TextInputAction.search,
-                              style: const TextStyle(
-                                color: Color(0xff17181c),
-                                fontSize: 19,
-                                fontWeight: FontWeight.w700,
-                              ),
-                              decoration: const InputDecoration(
-                                border: InputBorder.none,
-                                hintText: '搜索歌名、歌手、编号',
-                                hintStyle: TextStyle(
-                                  color: Color(0xff77746d),
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                  if (showSearch) ...[
+                    Expanded(
+                      child: _TopSearchEntry(onPressed: onSearchTap),
                     ),
-                  ),
-                  const SizedBox(width: 15),
+                    const SizedBox(width: 15),
+                  ] else
+                    const Spacer(),
                   _TopIconButton(icon: Icons.qr_code, onPressed: onQr),
                   const SizedBox(width: 15),
                   _TopTextButton(
@@ -1331,6 +1284,52 @@ class _TickerTag extends StatelessWidget {
           color: KiraColors.amber,
           fontSize: 18,
           fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _TopSearchEntry extends StatelessWidget {
+  const _TopSearchEntry({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 60,
+      child: FilledButton(
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          backgroundColor: KiraColors.surface2,
+          foregroundColor: KiraColors.muted,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+            side: const BorderSide(color: KiraColors.line),
+          ),
+        ),
+        child: const Row(
+          children: [
+            Icon(
+              Icons.search,
+              size: 30,
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '搜索歌名、歌手、编号',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
