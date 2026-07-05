@@ -20,6 +20,7 @@ typedef PlayNative = Void Function(ShowHostHandle);
 typedef PauseNative = Void Function(ShowHostHandle);
 typedef StopNative = Void Function(ShowHostHandle);
 typedef SeekNative = Void Function(ShowHostHandle, Double);
+typedef SetVolumeNative = Void Function(ShowHostHandle, Int32);
 typedef SetAudioTrackNative = Bool Function(ShowHostHandle, Int32);
 typedef SetStageVisibleNative = Void Function(ShowHostHandle, Bool);
 typedef SetControllerPreviewRectNative = Void Function(
@@ -60,6 +61,7 @@ typedef _Play = void Function(ShowHostHandle);
 typedef _Pause = void Function(ShowHostHandle);
 typedef _Stop = void Function(ShowHostHandle);
 typedef _Seek = void Function(ShowHostHandle, double);
+typedef _SetVolume = void Function(ShowHostHandle, int);
 typedef _SetAudioTrack = bool Function(ShowHostHandle, int);
 typedef _SetStageVisible = void Function(ShowHostHandle, bool);
 typedef _SetControllerPreviewRect = void Function(
@@ -103,6 +105,7 @@ class KirakaraShowFFI {
   late final _Pause _pause;
   late final _Stop _stop;
   late final _Seek _seek;
+  late final _SetVolume _setVolume;
   late final _SetAudioTrack _setAudioTrack;
   late final _SetStageVisible _setStageVisible;
   late final _SetControllerPreviewRect _setControllerPreviewRect;
@@ -129,6 +132,9 @@ class KirakaraShowFFI {
     _pause = _dylib.lookupFunction<PauseNative, _Pause>('show_host_pause');
     _stop = _dylib.lookupFunction<StopNative, _Stop>('show_host_stop');
     _seek = _dylib.lookupFunction<SeekNative, _Seek>('show_host_seek');
+    _setVolume = _dylib.lookupFunction<SetVolumeNative, _SetVolume>(
+      'show_host_set_volume',
+    );
     _setAudioTrack = _dylib.lookupFunction<SetAudioTrackNative, _SetAudioTrack>(
       'show_host_set_audio_track',
     );
@@ -190,6 +196,7 @@ class KirakaraShowFFI {
   void pause() => _pause(_handle);
   void stop() => _stop(_handle);
   void seek(double seconds) => _seek(_handle, seconds);
+  void setVolume(int volumePercent) => _setVolume(_handle, volumePercent);
   bool setAudioTrack(int track) => _setAudioTrack(_handle, track);
   void setStageVisible(bool visible) => _setStageVisible(_handle, visible);
   void setControllerPreviewRect({

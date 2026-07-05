@@ -19,6 +19,7 @@ class KirakaraShowService extends ChangeNotifier {
   String? _loadedItemId;
   AudioTrackMode? _loadedAudioTrackMode;
   bool? _lastPlaying;
+  int? _lastVolume;
   String? _lastCompletedItemId;
   bool _sawEngineProgressForItem = false;
   bool _started = false;
@@ -69,6 +70,7 @@ class KirakaraShowService extends ChangeNotifier {
     if (ffi == null) return;
 
     final state = _playbackService.state;
+    _syncVolume(ffi, state);
     final item = state.currentItem;
 
     if (item == null) {
@@ -270,6 +272,13 @@ class KirakaraShowService extends ChangeNotifier {
 
   int _trackIndex(AudioTrackMode mode) {
     return mode == AudioTrackMode.accompaniment ? 1 : 0;
+  }
+
+  void _syncVolume(KirakaraShowFFI ffi, PlaybackState state) {
+    final volume = state.volume.clamp(0, 100).toInt();
+    if (_lastVolume == volume) return;
+    ffi.setVolume(volume);
+    _lastVolume = volume;
   }
 
   void _syncRequestedPosition(
