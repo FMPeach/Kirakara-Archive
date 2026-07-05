@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kirakara_app/domain/media_asset.dart';
 import 'package:kirakara_app/domain/playback_state.dart';
+import 'package:kirakara_app/services/lan_server.dart';
 import 'package:kirakara_app/services/playback_service.dart';
 import 'package:kirakara_app/services/queue_service.dart';
 import 'package:kirakara_app/services/search_service.dart';
@@ -62,5 +64,25 @@ void main() {
       expect(File(asset.cachedPath!).existsSync(), isTrue);
     }
     expect(File(song.lyricProject.cachedPath!).existsSync(), isTrue);
+  });
+
+  test('LAN search returns catalog index without duration metadata', () async {
+    final search = SearchService();
+    final queue = QueueService();
+    final server = LanServer(queueService: queue, searchService: search);
+    addTearDown(server.stop);
+
+    await server.start(port: 0);
+    final uri = Uri.parse(
+      'http://127.0.0.1:${server.localUri!.port}/api/search?q=agony',
+    );
+    final request = await HttpClient().getUrl(uri);
+    final response = await request.close();
+    final body = await utf8.decoder.bind(response).join();
+    final payload = jsonDecode(body) as List<dynamic>;
+    final song = payload.single as Map<String, dynamic>;
+
+    expect(song['id'], 'song-local-agony');
+    expect(song.containsKey('durationSeconds'), isFalse);
   });
 }

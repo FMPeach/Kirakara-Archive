@@ -81,7 +81,6 @@ class LanServer {
       'id': song.id,
       'title': song.title,
       'artist': song.artist.name,
-      'durationSeconds': song.duration.inSeconds,
       'category': song.category,
       'code': song.code,
     };

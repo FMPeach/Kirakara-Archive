@@ -33,13 +33,11 @@ class _MockStageCanvas extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final song = playbackState.currentSong;
-    final duration = song?.duration ?? const Duration(minutes: 5, seconds: 12);
-    final progress = duration.inMilliseconds == 0
+    const mockLoop = Duration(seconds: 12);
+    final progress = playbackState.position.inMilliseconds <= 0
         ? 0.0
-        : (playbackState.position.inMilliseconds / duration.inMilliseconds)
-            .clamp(0.0, 1.0)
-            .toDouble();
+        : (playbackState.position.inMilliseconds % mockLoop.inMilliseconds) /
+            mockLoop.inMilliseconds;
 
     return AspectRatio(
       aspectRatio: 16 / 9,
@@ -89,8 +87,7 @@ class _MockStageCanvas extends StatelessWidget {
                 right: 28,
                 top: 24,
                 child: _StagePill(
-                  text:
-                      '${_format(playbackState.position)} / ${_format(duration)}',
+                  text: _format(playbackState.position),
                 ),
               ),
             Positioned(

@@ -69,7 +69,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
         return;
       }
       setState(() {
-        _announcement = '手机点歌服务未启动，可在主控设置中重试';
+        _announcement = '手机点歌服务未启动，可在设定中重试';
       });
     }
   }
@@ -104,8 +104,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
                     showSearch: _browseMode == null,
                     onSearchTap: () => _runSearch(''),
                     onQr: _showQrDialog,
-                    onSettings: _showDisplayDialog,
-                    onMaster: _showMasterDialog,
+                    onSettings: _showSettingsDialog,
+                    onCast: _showCastDialog,
                   ),
                   Expanded(
                     child: _browseMode == null
@@ -372,7 +372,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
     );
   }
 
-  void _showDisplayDialog() {
+  void _showCastDialog() {
     _showDialogAboveNativePreview<void>(
       builder: (context) {
         return AnimatedBuilder(
@@ -382,14 +382,14 @@ class _ControllerScreenState extends State<ControllerScreen> {
             final stageWindowOpen =
                 widget.displayManager.mode == DisplayMode.previewWindow;
             return _KiraDialog(
-              title: '显示与投屏',
+              title: '投屏与舞台输出',
               width: 540,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   _StatusLine(
                     icon: Icons.monitor,
-                    label: '显示模式',
+                    label: '舞台输出',
                     value: _displayModeLabel(widget.displayManager.mode),
                   ),
                   _StatusLine(
@@ -451,19 +451,47 @@ class _ControllerScreenState extends State<ControllerScreen> {
     );
   }
 
-  void _showMasterDialog() {
+  void _showSettingsDialog() {
     _showDialogAboveNativePreview<void>(
       builder: (context) {
-        return const _KiraDialog(
-          title: '主控',
-          width: 500,
-          child: Text(
-            '这里预留房间主控能力：音频输出、LAN 服务端口、副屏选择、缓存状态、系统返回桌面等。',
-            style: TextStyle(
-              color: KiraColors.muted,
-              height: 1.6,
-              fontWeight: FontWeight.w700,
-            ),
+        return _KiraDialog(
+          title: '设定',
+          width: 560,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _StatusLine(
+                icon: Icons.router,
+                label: '手机点歌',
+                value: widget.lanServer.isRunning
+                    ? '已启动：${widget.lanServer.localUri}'
+                    : '未启动',
+              ),
+              const _StatusLine(
+                icon: Icons.volume_up,
+                label: '音频输出',
+                value: '默认设备',
+              ),
+              const _StatusLine(
+                icon: Icons.keyboard,
+                label: '输入方式',
+                value: '触控输入法 / 系统键盘',
+              ),
+              const _StatusLine(
+                icon: Icons.storage,
+                label: '本地缓存',
+                value: '媒体、封面与 KRL 缓存目录',
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                '这里预留通用设置：LAN 服务端口、音频设备、输入法、曲库缓存、系统行为等。投屏和舞台输出放到右上角“投屏”里。',
+                style: TextStyle(
+                  color: KiraColors.muted,
+                  height: 1.55,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ),
         );
       },
@@ -500,7 +528,7 @@ class _TopBar extends StatelessWidget {
     required this.onSearchTap,
     required this.onQr,
     required this.onSettings,
-    required this.onMaster,
+    required this.onCast,
   });
 
   final String announcement;
@@ -509,12 +537,17 @@ class _TopBar extends StatelessWidget {
   final VoidCallback onSearchTap;
   final VoidCallback onQr;
   final VoidCallback onSettings;
-  final VoidCallback onMaster;
+  final VoidCallback onCast;
 
   @override
   Widget build(BuildContext context) {
-    final current = playbackService.state.currentSong;
-    final next = playbackService.state.upNext?.song;
+    final state = playbackService.state;
+    final tickerText = _tickerText(
+      announcement: announcement,
+      current: state.currentSong,
+      next: state.upNext?.song,
+      isPaused: state.currentSong != null && !state.isPlaying,
+    );
     return Container(
       height: 95,
       padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 18),
@@ -594,10 +627,8 @@ class _TopBar extends StatelessWidget {
                         const _TickerTag(text: '报幕'),
                         const SizedBox(width: 15),
                         Expanded(
-                          child: Text(
-                            '$announcement  ·  正在播放：${current?.title ?? '等待点歌'}  ·  下一首：${next?.title ?? '暂无'}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          child: _MarqueeText(
+                            text: tickerText,
                             style: const TextStyle(
                               color: KiraColors.cream,
                               fontSize: 20,
@@ -635,10 +666,10 @@ class _TopBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 15),
                   _TopTextButton(
-                    icon: Icons.monitor,
+                    icon: Icons.cast,
                     width: 115,
-                    label: '主控',
-                    onPressed: onMaster,
+                    label: '投屏',
+                    onPressed: onCast,
                   ),
                 ],
               ),
@@ -647,6 +678,158 @@ class _TopBar extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  static String _tickerText({
+    required String announcement,
+    required Song? current,
+    required Song? next,
+    required bool isPaused,
+  }) {
+    final parts = <String>[
+      announcement.trim().isEmpty ? '欢迎使用 Kira Karaoke' : announcement.trim(),
+      '当前播放：${_songLabel(current, fallback: '等待点歌')}',
+      if (isPaused) '暂停中',
+      next == null ? '下一首：暂无，快去点一首吧' : '下一首：${_songLabel(next)}',
+    ];
+    return parts.join('  ·  ');
+  }
+
+  static String _songLabel(Song? song, {String fallback = '暂无'}) {
+    if (song == null) return fallback;
+    return '${song.artist.name} - ${song.title}';
+  }
+}
+
+class _MarqueeText extends StatefulWidget {
+  const _MarqueeText({
+    required this.text,
+    required this.style,
+  });
+
+  final String text;
+  final TextStyle style;
+
+  @override
+  State<_MarqueeText> createState() => _MarqueeTextState();
+}
+
+class _MarqueeTextState extends State<_MarqueeText>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this);
+  }
+
+  @override
+  void didUpdateWidget(covariant _MarqueeText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text || oldWidget.style != widget.style) {
+      _controller
+        ..stop()
+        ..value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textWidth = _measureText(context, widget.text, widget.style);
+        final availableWidth = constraints.maxWidth;
+        if (!textWidth.isFinite ||
+            !availableWidth.isFinite ||
+            textWidth <= availableWidth) {
+          _controller.stop();
+          return Text(
+            widget.text,
+            maxLines: 1,
+            overflow: TextOverflow.visible,
+            style: widget.style,
+          );
+        }
+
+        const gap = 80.0;
+        final distance = textWidth + gap;
+        final duration = Duration(
+          milliseconds: (distance / 68 * 1000).round().clamp(5000, 30000),
+        );
+        if (!_controller.isAnimating || _controller.duration != duration) {
+          _controller
+            ..duration = duration
+            ..repeat();
+        }
+
+        return ClipRect(
+          child: SizedBox.expand(
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) {
+                final offset = -distance * _controller.value;
+                return Stack(
+                  fit: StackFit.expand,
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned(
+                      left: offset,
+                      top: 0,
+                      bottom: 0,
+                      width: textWidth,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          widget.text,
+                          maxLines: 1,
+                          overflow: TextOverflow.visible,
+                          style: widget.style,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      left: offset + distance,
+                      top: 0,
+                      bottom: 0,
+                      width: textWidth,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          widget.text,
+                          maxLines: 1,
+                          overflow: TextOverflow.visible,
+                          style: widget.style,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  static double _measureText(
+    BuildContext context,
+    String text,
+    TextStyle style,
+  ) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      maxLines: 1,
+      textDirection: Directionality.of(context),
+    )..layout();
+    return painter.width;
   }
 }
 

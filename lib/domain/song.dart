@@ -7,10 +7,10 @@ class Song {
     required this.id,
     required this.title,
     required this.artist,
-    required this.duration,
     required this.category,
     required this.assets,
     required this.lyricProject,
+    this.duration,
     this.code,
     this.tags = const [],
     this.coverColor = 0xffdd3e38,
@@ -19,7 +19,7 @@ class Song {
   final String id;
   final String title;
   final Artist artist;
-  final Duration duration;
+  final Duration? duration;
   final String category;
   final List<MediaAsset> assets;
   final LyricProject lyricProject;
