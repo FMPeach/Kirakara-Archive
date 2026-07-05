@@ -86,14 +86,19 @@ class _HandwritingPadState extends State<HandwritingPad> {
               ),
               child: Row(
                 children: [
-                  _PadAction(
-                    label: '撤销一笔',
-                    onTap: _undoStroke,
+                  Expanded(
+                    child: _PadAction(
+                      label: '撤销一笔',
+                      onTap: _undoStroke,
+                    ),
                   ),
                   const SizedBox(width: 10),
-                  _PadAction(
-                    label: '清空',
-                    onTap: _clear,
+                  Expanded(
+                    child: _PadAction(
+                      label: '清空',
+                      onTap: _clear,
+                      destructive: true,
+                    ),
                   ),
                 ],
               ),
@@ -142,24 +147,41 @@ class _PadAction extends StatelessWidget {
   const _PadAction({
     required this.label,
     required this.onTap,
+    this.destructive = false,
   });
 
   final String label;
   final VoidCallback onTap;
+  final bool destructive;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-        child: Text(
-          label,
-          style: const TextStyle(
-            color: KiraColors.muted,
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
+    final foreground = destructive ? KiraColors.amber : KiraColors.cream;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 86),
+          child: Ink(
+            height: 36,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: KiraColors.surface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0x24ffffff)),
+            ),
+            child: Center(
+              child: Text(
+                label,
+                style: TextStyle(
+                  color: foreground,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
           ),
         ),
       ),

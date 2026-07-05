@@ -130,6 +130,18 @@ void main() {
     await tester.drag(find.byType(HandwritingPad), const Offset(80, 80));
     await tester.pumpAndSettle();
     expect(find.text('1 残'), findsOneWidget);
+
+    await tester.tap(find.text('撤销一笔'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 残'), findsNothing);
+
+    await tester.drag(find.byType(HandwritingPad), const Offset(80, 80));
+    await tester.pumpAndSettle();
+    expect(find.text('1 残'), findsOneWidget);
+
+    await tester.tap(find.text('清空'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 残'), findsNothing);
   });
 
   testWidgets('numeric mode shows a dial pad for song numbers', (tester) async {

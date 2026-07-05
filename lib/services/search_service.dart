@@ -107,6 +107,7 @@ const _artistNoz = Artist(
 const _artistKanzaki = Artist(id: 'artist-kanzaki', name: 'カンザキイオリ');
 const _artistYoko = Artist(id: 'artist-yoko', name: '高橋洋子');
 const _artistFripSide = Artist(id: 'artist-fripside', name: 'fripSide');
+const _artistKotoko = Artist(id: 'artist-kotoko', name: 'KOTOKO');
 const _artistHaruhi = Artist(id: 'artist-haruhi', name: '涼宮ハルヒ');
 const _artistJay = Artist(id: 'artist-jay', name: '周杰伦');
 const _artistGem = Artist(id: 'artist-gem', name: '邓紫棋');
@@ -162,6 +163,13 @@ const List<ArtistSummary> _artistSummaries = [
     type: '组合',
     group: '日本歌手/组合',
     note: '动画 / 电音',
+  ),
+  ArtistSummary(
+    id: 'artist-kotoko',
+    name: 'KOTOKO',
+    type: '歌手',
+    group: '日本歌手/组合',
+    note: '动画 / 神无月的巫女 ED',
   ),
   ArtistSummary(
     id: 'artist-haruhi',
@@ -267,6 +275,29 @@ final List<Song> _mockSongs = [
     coverColor: 0xffe95895,
     assets: _localAssets('song-local-ikari', 'ikari'),
     lyricProject: _localLyric('song-local-ikari', 'ikari'),
+  ),
+  Song(
+    id: 'song-local-agony',
+    title: 'agony',
+    artist: _artistKotoko,
+    duration: const Duration(minutes: 4, seconds: 22),
+    category: '动画',
+    code: '20003',
+    tags: const [
+      'KOTOKO',
+      'agony',
+      '神无月的巫女',
+      '神無月の巫女',
+      'Kannazuki no Miko',
+      'ED',
+      'エンディング',
+      '动画',
+      'KRL',
+      '本地',
+    ],
+    coverColor: 0xff6d4bd4,
+    assets: _localAssets('song-local-agony', 'agony'),
+    lyricProject: _localLyric('song-local-agony', 'agony'),
   ),
   Song(
     id: 'song-001',
