@@ -542,6 +542,9 @@ class _ControllerScreenState extends State<ControllerScreen> {
   void _showSettingsDialog() {
     _showDialogAboveNativePreview<void>(
       builder: (context) {
+        // TODO: add Settings controls for custom announcement text and the
+        // video/stage QR overlay switch. Keep them hidden until the behavior is
+        // wired end-to-end.
         return _KiraDialog(
           title: '设定',
           width: 560,

@@ -71,13 +71,19 @@ class _NativePreviewRect {
   int get hashCode => Object.hash(x, y, width, height);
 }
 
-class _KirakaraNativeStageWidgetState
-    extends State<_KirakaraNativeStageWidget>
+class _KirakaraNativeStageWidgetState extends State<_KirakaraNativeStageWidget>
     with WidgetsBindingObserver {
   int? _parentHwnd;
   _NativePreviewRect? _lastRect;
   _NativePreviewRect? _lastQrRect;
   bool _syncScheduled = false;
+  bool _stageQrOverlayHidden = false;
+
+  bool get _stageQrOverlayEnabled {
+    // TODO: read from the future Settings switch for the video/stage QR
+    // overlay. Keep the top-bar QR entry available while this remains false.
+    return false;
+  }
 
   @override
   void initState() {
@@ -186,6 +192,20 @@ class _KirakaraNativeStageWidgetState
         width: rect.width,
         height: rect.height,
       );
+    }
+
+    if (!_stageQrOverlayEnabled) {
+      if (!_stageQrOverlayHidden || _lastQrRect != null) {
+        _stageQrOverlayHidden = true;
+        _lastQrRect = null;
+        widget.showService.setControllerQrRect(
+          visible: false,
+          x: 0,
+          y: 0,
+          size: 0,
+        );
+      }
+      return;
     }
 
     final scaleX = stageWidth / designSize.width;
