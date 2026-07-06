@@ -869,6 +869,7 @@ class _MarqueeTextState extends State<_MarqueeText>
             widget.text,
             maxLines: 1,
             overflow: TextOverflow.visible,
+            softWrap: false,
             style: widget.style,
           );
         }
@@ -890,41 +891,30 @@ class _MarqueeTextState extends State<_MarqueeText>
               animation: _controller,
               builder: (context, _) {
                 final offset = -distance * _controller.value;
-                return Stack(
-                  fit: StackFit.expand,
-                  clipBehavior: Clip.none,
-                  children: [
-                    Positioned(
-                      left: offset,
-                      top: 0,
-                      bottom: 0,
-                      width: textWidth,
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          widget.text,
-                          maxLines: 1,
-                          overflow: TextOverflow.visible,
-                          style: widget.style,
-                        ),
+                return Align(
+                  alignment: Alignment.centerLeft,
+                  child: OverflowBox(
+                    alignment: Alignment.centerLeft,
+                    minWidth: 0,
+                    maxWidth: double.infinity,
+                    child: Transform.translate(
+                      offset: Offset(offset, 0),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _MarqueeTextRun(
+                            text: widget.text,
+                            style: widget.style,
+                          ),
+                          const SizedBox(width: gap),
+                          _MarqueeTextRun(
+                            text: widget.text,
+                            style: widget.style,
+                          ),
+                        ],
                       ),
                     ),
-                    Positioned(
-                      left: offset + distance,
-                      top: 0,
-                      bottom: 0,
-                      width: textWidth,
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          widget.text,
-                          maxLines: 1,
-                          overflow: TextOverflow.visible,
-                          style: widget.style,
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 );
               },
             ),
@@ -943,8 +933,30 @@ class _MarqueeTextState extends State<_MarqueeText>
       text: TextSpan(text: text, style: style),
       maxLines: 1,
       textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
     )..layout();
     return painter.width;
+  }
+}
+
+class _MarqueeTextRun extends StatelessWidget {
+  const _MarqueeTextRun({
+    required this.text,
+    required this.style,
+  });
+
+  final String text;
+  final TextStyle style;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.visible,
+      softWrap: false,
+      style: style,
+    );
   }
 }
 
