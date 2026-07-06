@@ -1,0 +1,431 @@
+# Kirakara Catalog API v1
+
+## 总体设计
+
+Kirakara-App 是 local-first KTV 主机。服务器只负责 **catalog 权威数据** 和 **资源文件托管**。
+客户端启动时拉取全量索引写入本地 IndexCache (SQLite + FTS)，之后的搜索、过滤、
+歌手详情、分类详情全部在本地完成，不再请求服务器。
+
+```
+服务器 (dumb data source)              客户端 (smart cache + search engine)
+┌──────────────────────────┐          ┌──────────────────────────────┐
+│ GET /api/catalog/artists  │ ──全量──→ │ IndexCache (SQLite)          │
+│ GET /api/catalog/songs    │          │   ├─ songs 表                 │
+│ GET /api/catalog/categories│          │   ├─ artists 表              │
+│ GET /api/catalog/rankings │          │   ├─ categories 表           │
+│                           │          │   ├─ FTS5 全文索引            │
+│ GET /media/**             │ ←点歌时─→ │   └─ 本地 join / filter      │
+└──────────────────────────┘          ├──────────────────────────────┤
+                                      │ PlaybackAssetCache (即抛)     │
+                                      │   当前播放周期的媒体/封面/KRL  │
+                                      └──────────────────────────────┘
+```
+
+### 基础约定
+
+- `$BASE` = 服务器地址（本地 `http://localhost:7391` / NAS / 云端），客户端可配置
+- 所有 JSON 端点返回 `Content-Type: application/json; charset=utf-8`
+- URI 使用**相对路径**（如 `/media/songs/20001/vocal.wav`），客户端拼接 `$BASE + uri`
+- 客户端可能附加 `?r=<random>` 破缓存，服务端应忽略未知 query 参数
+- 返回格式：可以裸数组 `[...]`；如果包一层，仅允许 `schemaVersion`、`revision`、`items`，不加 `generatedAt` 等装饰字段
+- 歌曲/歌手 ID 为字符串
+
+---
+
+## 端点一览
+
+| # | 方法 | 路径 | 说明 |
+|---|------|------|------|
+| 1 | `GET` | `/api/catalog/artists` | 歌手 / 社团 / 角色 / 创作者 全量 |
+| 2 | `GET` | `/api/catalog/songs` | 歌曲全量 |
+| 3 | `GET` | `/api/catalog/categories` | 分类全量（歌曲分类 + 歌手分组） |
+| 4 | `GET` | `/api/catalog/rankings` | 排行榜（可带 `?category=<id>` 筛选） |
+| — | `GET` | `/media/**` | 静态资源文件 |
+
+---
+
+## 1. `GET /api/catalog/artists`
+
+### JSON 示例
+
+```json
+[
+  {
+    "id": "3",
+    "name": "ナナツカゼ",
+    "sortName": "nanatsukaze",
+    "type": "solo",
+    "categoryIds": ["artist-jp"],
+    "note": "本地 KRL / 实机测试",
+    "avatarUri": null
+  },
+  {
+    "id": "5",
+    "name": "カンザキイオリ",
+    "sortName": "kanzaki iori",
+    "type": "creator",
+    "categoryIds": ["artist-vocal-synth"],
+    "note": "VOCALOID 创作者",
+    "avatarUri": "/media/artists/5/avatar.jpg"
+  },
+  {
+    "id": "10",
+    "name": "Alstroemeria Records",
+    "sortName": "alstroemeria records",
+    "type": "circle",
+    "categoryIds": ["artist-circle"],
+    "note": "东方同人社团",
+    "avatarUri": null
+  },
+  {
+    "id": "20",
+    "name": "平沢唯",
+    "sortName": "hirasawa yui",
+    "type": "character",
+    "categoryIds": ["artist-character"],
+    "note": "けいおん！",
+    "avatarUri": null
+  },
+  {
+    "id": "21",
+    "name": "豊崎愛生",
+    "sortName": "toyosaki aki",
+    "type": "voice_actor",
+    "categoryIds": ["artist-voice-actor"],
+    "note": null,
+    "avatarUri": null
+  },
+  {
+    "id": "30",
+    "name": "初音ミク",
+    "sortName": "hatsune miku",
+    "type": "vocal_synth",
+    "categoryIds": ["artist-vocal-synth"],
+    "note": null,
+    "avatarUri": "/media/artists/30/avatar.jpg"
+  }
+]
+```
+
+### 字段表
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `id` | `string` | ✅ | 唯一标识 |
+| `name` | `string` | ✅ | 展示名 |
+| `sortName` | `string?` | | 排序用罗马音/拼音；无则 `null` |
+| `type` | `string` | ✅ | `solo` / `group` / `circle` / `character` / `voice_actor` / `vocal_synth` / `creator` |
+| `categoryIds` | `string[]` | ✅ | 指向 `/api/catalog/categories` 中 `type: "artist"` 的分类 |
+| `note` | `string?` | | 一行备注，可空 |
+| `avatarUri` | `string?` | | 相对路径，可空 |
+
+---
+
+## 2. `GET /api/catalog/songs`
+
+### JSON 示例
+
+```json
+[
+  {
+    "id": "20001",
+    "title": "七ツ風",
+    "artistLine": "ナナツカゼ",
+    "primaryArtistId": "3",
+    "artistRefs": [
+      { "id": "3", "role": "vocal", "display": true }
+    ],
+    "categoryIds": ["song-test"],
+    "tags": ["ナナツカゼ", "七ツ風", "七风", "日文", "KRL"],
+    "searchHints": ["Nanatsukaze", "nanatsukaze"],
+    "coverColor": "14bfd0",
+    "assets": [
+      { "type": "video",  "uri": "/media/songs/20001/background.mp4", "version": 1, "hash": "sha256:a1b2c3...", "size": 52428800 },
+      { "type": "vocal",  "uri": "/media/songs/20001/vocal.wav",      "version": 1, "hash": "sha256:b2c3d4...", "size": 4194304 },
+      { "type": "inst",   "uri": "/media/songs/20001/inst.wav",       "version": 1, "hash": "sha256:c3d4e5...", "size": 4194304 },
+      { "type": "cover",  "uri": "/media/songs/20001/cover.jpg",      "version": 1, "hash": "sha256:d4e5f6...", "size": 102400 },
+      { "type": "krl",    "uri": "/media/songs/20001/lyrics.krl",     "version": 3, "hash": "sha256:e5f6a7...", "size": 12800 }
+    ]
+  },
+  {
+    "id": "20002",
+    "title": "怒り[VOCALOID ver.] (feat. Noz.)",
+    "artistLine": "カンザキイオリ feat. 初音ミク, 鏡音リン",
+    "primaryArtistId": "5",
+    "artistRefs": [
+      { "id": "5",  "role": "composer",        "display": false },
+      { "id": "5",  "role": "arranger",        "display": false },
+      { "id": "30", "role": "vocal_synth",     "display": true },
+      { "id": "31", "role": "vocal_synth",     "display": true }
+    ],
+    "categoryIds": ["song-vocaloid"],
+    "tags": ["怒り", "ikari", "VOCALOID", "初音ミク", "鏡音リン", "KRL"],
+    "coverColor": "e95895",
+    "assets": [
+      { "type": "video", "uri": "/media/songs/20002/background.mp4", "version": 1, "hash": "sha256:f6a7b8...", "size": 62914560 },
+      { "type": "vocal", "uri": "/media/songs/20002/vocal.wav",      "version": 1, "hash": "sha256:a7b8c9...", "size": 5242880 },
+      { "type": "inst",  "uri": "/media/songs/20002/inst.wav",       "version": 1, "hash": "sha256:b8c9d0...", "size": 5242880 },
+      { "type": "cover", "uri": "/media/songs/20002/cover.jpg",      "version": 1, "hash": "sha256:c9d0e1...", "size": 81920 },
+      { "type": "krl",   "uri": "/media/songs/20002/lyrics.krl",     "version": 2, "hash": "sha256:d0e1f2...", "size": 9600 }
+    ]
+  },
+  {
+    "id": "20003",
+    "title": "Bad Apple!!",
+    "artistLine": "Alstroemeria Records feat. nomico",
+    "primaryArtistId": "10",
+    "artistRefs": [
+      { "id": "10", "role": "circle",           "display": true },
+      { "id": "11", "role": "vocal",            "display": true },
+      { "id": "12", "role": "arranger",         "display": false },
+      { "id": "13", "role": "original_composer", "display": false },
+      { "id": "13", "role": "original_track",   "display": false }
+    ],
+    "circleIds": ["10"],
+    "categoryIds": ["song-touhou"],
+    "workIds": ["th04"],
+    "tags": ["東方", "Touhou", "Bad Apple", "nomico", "同人", "经典"],
+    "coverColor": "4c36b8",
+    "assets": [
+      { "type": "video", "uri": "/media/songs/20003/background.mp4", "version": 1, "hash": "sha256:e1f2a3...", "size": 73400320 },
+      { "type": "vocal", "uri": "/media/songs/20003/vocal.wav",      "version": 1, "hash": "sha256:f2a3b4...", "size": 6291456 },
+      { "type": "inst",  "uri": "/media/songs/20003/inst.wav",       "version": 1, "hash": "sha256:a3b4c5...", "size": 6291456 },
+      { "type": "cover", "uri": "/media/songs/20003/cover.jpg",      "version": 1, "hash": "sha256:b4c5d6...", "size": 122880 },
+      { "type": "krl",   "uri": "/media/songs/20003/lyrics.krl",     "version": 1, "hash": "sha256:c5d6e7...", "size": 11200 }
+    ]
+  },
+  {
+    "id": "20004",
+    "title": "ふわふわ時間",
+    "artistLine": "平沢唯 (CV: 豊崎愛生)",
+    "primaryArtistId": "20",
+    "artistRefs": [
+      { "id": "20", "role": "character_vocal", "display": true },
+      { "id": "21", "role": "voice_actor",     "display": false }
+    ],
+    "categoryIds": ["song-anime", "song-character"],
+    "workIds": ["keion"],
+    "tags": ["けいおん！", "K-ON!", "桜高軽音部", "角色歌", "日文"],
+    "coverColor": "f2b84b",
+    "assets": [
+      { "type": "video", "uri": "/media/songs/20004/background.mp4", "version": 1, "hash": "sha256:d6e7f8...", "size": 41943040 },
+      { "type": "vocal", "uri": "/media/songs/20004/vocal.wav",      "version": 1, "hash": "sha256:e7f8a9...", "size": 4718592 },
+      { "type": "inst",  "uri": "/media/songs/20004/inst.wav",       "version": 1, "hash": "sha256:f8a9b0...", "size": 4718592 },
+      { "type": "cover", "uri": "/media/songs/20004/cover.jpg",      "version": 1, "hash": "sha256:a9b0c1...", "size": 94208 },
+      { "type": "krl",   "uri": "/media/songs/20004/lyrics.krl",     "version": 1, "hash": "sha256:b0c1d2...", "size": 8500 }
+    ]
+  }
+]
+```
+
+### 字段表
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `id` | `string` | ✅ | 点歌编号，即唯一 ID |
+| `title` | `string` | ✅ | 歌曲标题 |
+| `artistLine` | `string` | ✅ | **UI 直接显示的歌手行**，如 `"平沢唯 (CV: 豊崎愛生)"` |
+| `primaryArtistId` | `string?` | | 主要关联歌手 ID |
+| `artistRefs` | `object[]` | ✅ | 结构化演出/创作关系，见下方 |
+| `circleIds` | `string[]?` | | 东方社团 ID；普通歌曲可省略 |
+| `categoryIds` | `string[]` | ✅ | 指向 `categories` 中 `type: "song"` 的分类 |
+| `workIds` | `string[]?` | | 关联作品 ID（东方原作/动画作品等），可省略 |
+| `tags` | `string[]` | ✅ | 结构化标签，进入 FTS 索引 |
+| `searchHints` | `string[]?` | | 人工补充召回词（别名/罗马音等），不替代大规模别名库 |
+| `coverColor` | `string?` | | 6 位 hex，无前缀；无则客户端自选 |
+| `assets` | `object[]` | ✅ | 资源文件列表 |
+
+#### `artistRefs` 条目
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `string` | 指向 `artists` 的 ID |
+| `role` | `string` | 见下表 |
+| `display` | `bool` | 是否应出现在默认 UI 中 |
+
+**role 枚举：**
+
+| 值 | 含义 | UI 默认显示 |
+|----|------|------------|
+| `vocal` | 人声演唱 | ✅ |
+| `character_vocal` | 角色名义演唱 | ✅ |
+| `vocal_synth` | 虚拟歌手/声库 | ✅ |
+| `circle` | 同人社团 | ✅ |
+| `voice_actor` | 声优 | ❌ |
+| `composer` | 作曲 | ❌ |
+| `arranger` | 编曲 | ❌ |
+| `original_composer` | 原曲作曲（东方） | ❌ |
+| `original_track` | 原曲曲名引用（东方） | ❌ |
+
+客户端可提供「查看完整 credits」展开 `display: false` 的条目。
+
+#### `assets` 条目
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `type` | `string` | ✅ | `video` / `vocal` / `inst` / `cover` / `krl` |
+| `uri` | `string` | ✅ | 相对路径，客户端用 `$BASE + uri` |
+| `version` | `int` | ✅ | 资源版本号，服务器 bump |
+| `hash` | `string` | ✅ | `"sha256:<hex>"` 格式 |
+| `size` | `int` | ✅ | 字节数 |
+
+---
+
+## 3. `GET /api/catalog/categories`
+
+### JSON 示例
+
+```json
+[
+  { "id": "song-hot",       "type": "song",   "name": "热门",   "note": "最近常点与推荐曲目",           "order": 1 },
+  { "id": "song-anime",     "type": "song",   "name": "动画",   "note": "番剧 OP / ED / 插曲",          "order": 2 },
+  { "id": "song-vocaloid",  "type": "song",   "name": "VOCALOID", "note": "术力口与创作者曲目",          "order": 3 },
+  { "id": "song-vtuber",    "type": "song",   "name": "Vtuber",   "note": "虚拟主播 / Vsinger",          "order": 4 },
+  { "id": "song-touhou",    "type": "song",   "name": "东方",   "note": "东方同人与社团作品",             "order": 5 },
+  { "id": "song-classic",   "type": "song",   "name": "经典",   "note": "年代曲与包厢常备曲",             "order": 6 },
+  { "id": "song-character", "type": "song",   "name": "角色歌", "note": "角色名义演唱曲目",               "order": 7 },
+  { "id": "song-chinese",   "type": "song",   "name": "华语",   "note": "华语流行歌曲",                  "order": 8 },
+  { "id": "song-test",      "type": "song",   "name": "本地实机", "note": "开发测试曲目",                 "order": 99 },
+  { "id": "artist-jp",          "type": "artist", "name": "日本歌手/组合",  "note": null, "order": 1 },
+  { "id": "artist-vocal-synth", "type": "artist", "name": "VOCALOID 声库",  "note": null, "order": 2 },
+  { "id": "artist-circle",      "type": "artist", "name": "同人社团",      "note": null, "order": 3 },
+  { "id": "artist-character",   "type": "artist", "name": "ACG 角色",      "note": null, "order": 4 },
+  { "id": "artist-voice-actor", "type": "artist", "name": "声优",          "note": null, "order": 5 },
+  { "id": "artist-chinese-male", "type": "artist", "name": "华语男歌手",    "note": null, "order": 6 },
+  { "id": "artist-chinese-female", "type": "artist", "name": "华语女歌手",  "note": null, "order": 7 }
+]
+```
+
+### 字段表
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `id` | `string` | ✅ | 稳定 ID，**关联使用此字段，不用 `name`** |
+| `type` | `string` | ✅ | `song` = 歌曲分类 / `artist` = 歌手分组 |
+| `name` | `string` | ✅ | 展示名 |
+| `note` | `string?` | | 一行备注 |
+| `order` | `int?` | | 排序权重，越小越前 |
+
+---
+
+## 4. `GET /api/catalog/rankings`
+
+### 请求
+
+```
+GET /api/catalog/rankings              → 返回所有榜单
+GET /api/catalog/rankings?category=song-anime  → 仅返回指定分类榜
+```
+
+### JSON 示例
+
+```json
+[
+  {
+    "categoryId": null,
+    "name": "总榜",
+    "entries": [
+      { "rank": 1, "songId": "10001", "playCount": 12580 },
+      { "rank": 2, "songId": "20003", "playCount": 9800 },
+      { "rank": 3, "songId": "10008", "playCount": 7200 }
+    ]
+  },
+  {
+    "categoryId": "song-anime",
+    "name": "动画",
+    "entries": [
+      { "rank": 1, "songId": "10001", "playCount": 12580 },
+      { "rank": 2, "songId": "10004", "playCount": 9800 },
+      { "rank": 3, "songId": "10008", "playCount": 7200 }
+    ]
+  },
+  {
+    "categoryId": "song-vocaloid",
+    "name": "VOCALOID",
+    "entries": [
+      { "rank": 1, "songId": "20002", "playCount": 6400 },
+      { "rank": 2, "songId": "10003", "playCount": 5100 }
+    ]
+  }
+]
+```
+
+### 字段表
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `categoryId` | `string?` | `null` = 总榜；否则为 category ID |
+| `name` | `string` | 榜单展示名 |
+| `entries[].rank` | `int` | 排名 |
+| `entries[].songId` | `string` | 指向 `songs` 的 ID，客户端本地 join |
+| `entries[].playCount` | `int?` | 播放次数等服务器计算指标 |
+
+> 排行榜不内嵌完整歌曲对象。客户端用 `songId` 在本地 IndexCache 中 join。
+
+---
+
+## 5. 静态资源 `GET /media/**`
+
+普通文件下载，不返回 JSON。`assets[].uri` 和 `avatarUri` 指向此处。
+
+```
+/media/songs/20001/background.mp4
+/media/songs/20001/vocal.wav
+/media/songs/20001/inst.wav
+/media/songs/20001/cover.jpg
+/media/songs/20001/lyrics.krl
+/media/artists/5/avatar.jpg
+```
+
+客户端下载后按 `version` / `hash` / `size` 校验，写入 PlaybackAssetCache。
+校验失败或服务器版本变更时立即丢弃旧缓存。
+
+---
+
+## 客户端同步流程
+
+```
+启动
+  │
+  ├─ GET /api/catalog/artists     ──→ 写入 artists 表
+  ├─ GET /api/catalog/songs       ──→ 写入 songs 表 + 重建 FTS5 索引
+  ├─ GET /api/catalog/categories  ──→ 写入 categories 表
+  └─ GET /api/catalog/rankings    ──→ 写入 rankings 表
+                                          │
+  用户浏览 / 搜索                          │
+    SELECT * FROM songs WHERE ...   ←─────┘  (纯本地)
+    SELECT * FROM songs_fts WHERE ... MATCH '...'
+                                          │
+  用户查看歌手详情                          │
+    SELECT * FROM artists WHERE id = ?     │
+    SELECT * FROM songs WHERE id IN (      │
+      SELECT id FROM songs WHERE json_extract(artistRefs, ...)  │
+    )                                      │
+                                          │
+  用户点歌                                  │
+    GET /media/songs/{id}/video.xxx  ──→ PlaybackAssetCache
+    GET /media/songs/{id}/vocal.xxx  ──→ PlaybackAssetCache
+    GET /media/songs/{id}/inst.xxx   ──→ PlaybackAssetCache
+    GET /media/songs/{id}/cover.xxx  ──→ PlaybackAssetCache
+    GET /media/songs/{id}/lyrics.krl ──→ PlaybackAssetCache
+                                          │
+  切歌 / App 退出 / 缓存压力               │
+    PlaybackAssetCache 全部清空 ◄──────────┘
+```
+
+---
+
+## 不做的事
+
+| 不做 | 原因 |
+|------|------|
+| 服务端搜索端点 | 客户端有全量数据 + FTS，本地搜索更快且离线可用 |
+| `/artists/{id}` 详情端点 | 全量已在客户端，详情 = 本地一行 SELECT + join |
+| `/songs/{id}` 详情端点 | 同上 |
+| `/categories/{id}/songs` | 客户端 `WHERE categoryIds LIKE ?` 即可 |
+| 分类用显示名做关联键 | 名称会变，用稳定 `id` |
+| 排行榜内嵌完整歌曲对象 | 浪费带宽，客户端自己 join |
+| 服务器传 `duration` | 播放时长以实际打开的音频为准 |
+| 服务器维护大规模别名库 | 本地 `tags` + `searchHints` + FTS 派生拼音/罗马音即可 |
+| 媒体资源做本地离线曲库 | PlaybackAssetCache 是即抛的，服务器可随时增删改资源 |
+| 响应包 `generatedAt` 等装饰字段 | 无实际用途 |
