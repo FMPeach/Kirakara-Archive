@@ -7,6 +7,7 @@ import '../../services/cast_service.dart';
 import '../../services/display_manager.dart';
 import '../../services/kirakara_show_service.dart';
 import '../../services/lan_server.dart';
+import '../../services/native_window_service.dart';
 import '../../services/playback_service.dart';
 import '../../services/queue_service.dart';
 import '../../services/search_service.dart';
@@ -44,15 +45,24 @@ class ControllerScreen extends StatefulWidget {
 }
 
 class _ControllerScreenState extends State<ControllerScreen> {
+  final NativeWindowService _nativeWindowService = const NativeWindowService();
   BrowseMode? _browseMode;
   String _browseInitialQuery = '';
   int _browseSerial = 0;
   String _announcement = '欢迎使用 Kira Karaoke，本机队列已就绪';
+  bool _controllerFullscreen = false;
 
   @override
   void initState() {
     super.initState();
     _startLanServer();
+    _loadControllerFullscreenState();
+  }
+
+  Future<void> _loadControllerFullscreenState() async {
+    final fullscreen = await _nativeWindowService.isControllerFullscreen();
+    if (!mounted) return;
+    setState(() => _controllerFullscreen = fullscreen);
   }
 
   Future<void> _startLanServer() async {
@@ -102,9 +112,11 @@ class _ControllerScreenState extends State<ControllerScreen> {
                     announcement: _announcement,
                     playbackService: widget.playbackService,
                     showSearch: _browseMode == null,
+                    controllerFullscreen: _controllerFullscreen,
                     onSearchTap: () => _runSearch(''),
                     onQr: _showQrDialog,
                     onSettings: _showSettingsDialog,
+                    onFullscreen: _toggleControllerFullscreen,
                     onCast: _showCastDialog,
                   ),
                   Expanded(
@@ -372,6 +384,13 @@ class _ControllerScreenState extends State<ControllerScreen> {
     );
   }
 
+  Future<void> _toggleControllerFullscreen() async {
+    final next = !_controllerFullscreen;
+    final ok = await _nativeWindowService.setControllerFullscreen(next);
+    if (!mounted) return;
+    setState(() => _controllerFullscreen = ok ? next : _controllerFullscreen);
+  }
+
   void _showCastDialog() {
     _showDialogAboveNativePreview<void>(
       builder: (context) {
@@ -446,7 +465,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: widget.displayManager.detectDisplays,
+                          onPressed: _refreshDisplays,
                           icon: const Icon(Icons.refresh),
                           label: const Text('刷新显示器'),
                         ),
@@ -510,6 +529,14 @@ class _ControllerScreenState extends State<ControllerScreen> {
   Future<void> _closeStageOutput() async {
     await widget.displayManager.closeStageWindow();
     widget.kirakaraShowService.setStageWindowVisible(false);
+  }
+
+  Future<void> _refreshDisplays() async {
+    await widget.displayManager.detectDisplays();
+    if (widget.displayManager.stageDisplay == null &&
+        widget.displayManager.mode == DisplayMode.singleScreen) {
+      widget.kirakaraShowService.setStageWindowVisible(false);
+    }
   }
 
   void _showSettingsDialog() {
@@ -586,18 +613,22 @@ class _TopBar extends StatelessWidget {
     required this.announcement,
     required this.playbackService,
     required this.showSearch,
+    required this.controllerFullscreen,
     required this.onSearchTap,
     required this.onQr,
     required this.onSettings,
+    required this.onFullscreen,
     required this.onCast,
   });
 
   final String announcement;
   final PlaybackService playbackService;
   final bool showSearch;
+  final bool controllerFullscreen;
   final VoidCallback onSearchTap;
   final VoidCallback onQr;
   final VoidCallback onSettings;
+  final VoidCallback onFullscreen;
   final VoidCallback onCast;
 
   @override
@@ -724,6 +755,15 @@ class _TopBar extends StatelessWidget {
                     icon: Icons.settings,
                     label: '设定',
                     onPressed: onSettings,
+                  ),
+                  const SizedBox(width: 15),
+                  _TopTextButton(
+                    icon: controllerFullscreen
+                        ? Icons.fullscreen_exit
+                        : Icons.fullscreen,
+                    width: 115,
+                    label: controllerFullscreen ? '窗口' : '全屏',
+                    onPressed: onFullscreen,
                   ),
                   const SizedBox(width: 15),
                   _TopTextButton(

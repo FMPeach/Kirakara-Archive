@@ -27,4 +27,18 @@ class NativeWindowService {
             ))
         .toList(growable: false);
   }
+
+  Future<bool> isControllerFullscreen() async {
+    if (!Platform.isWindows) return false;
+    return await channel.invokeMethod<bool>('isControllerFullscreen') ?? false;
+  }
+
+  Future<bool> setControllerFullscreen(bool fullscreen) async {
+    if (!Platform.isWindows) return false;
+    return await channel.invokeMethod<bool>(
+          'setControllerFullscreen',
+          fullscreen,
+        ) ??
+        false;
+  }
 }

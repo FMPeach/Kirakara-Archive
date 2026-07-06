@@ -27,7 +27,7 @@ class PlaybackState {
     return PlaybackState(
       mode: PlaybackMode.paused,
       volume: 72,
-      key: -3,
+      key: 0,
       audioTrackMode: AudioTrackMode.vocal,
       position: Duration.zero,
       currentItem: currentItem,

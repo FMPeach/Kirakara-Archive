@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 
 namespace {
 
@@ -17,6 +18,10 @@ using MethodCall = flutter::MethodCall<EncodableValue>;
 using MethodResult = flutter::MethodResult<EncodableValue>;
 
 std::unique_ptr<flutter::MethodChannel<EncodableValue>> g_window_channel;
+bool g_controller_fullscreen = false;
+DWORD g_controller_restore_style = 0;
+DWORD g_controller_restore_ex_style = 0;
+WINDOWPLACEMENT g_controller_restore_placement{sizeof(WINDOWPLACEMENT)};
 
 std::string WideToUtf8(const wchar_t* text) {
   if (text == nullptr || text[0] == L'\0') {
@@ -78,6 +83,89 @@ EncodableList EnumerateDisplays() {
   return displays;
 }
 
+HWND ControllerWindowFromFlutterView(HWND flutter_view) {
+  if (!flutter_view) {
+    return nullptr;
+  }
+  HWND root = GetAncestor(flutter_view, GA_ROOT);
+  return root ? root : flutter_view;
+}
+
+bool ReadBoolArgument(const EncodableValue* value, bool fallback) {
+  if (!value) {
+    return fallback;
+  }
+  if (const auto* bool_value = std::get_if<bool>(value)) {
+    return *bool_value;
+  }
+  return fallback;
+}
+
+bool SetControllerFullscreen(HWND flutter_view, bool fullscreen) {
+  HWND window = ControllerWindowFromFlutterView(flutter_view);
+  if (!window) {
+    return false;
+  }
+  if (g_controller_fullscreen == fullscreen) {
+    return true;
+  }
+
+  if (fullscreen) {
+    g_controller_restore_style =
+        static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE));
+    g_controller_restore_ex_style =
+        static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE));
+    g_controller_restore_placement = WINDOWPLACEMENT{sizeof(WINDOWPLACEMENT)};
+    GetWindowPlacement(window, &g_controller_restore_placement);
+
+    HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitor_info{};
+    monitor_info.cbSize = sizeof(monitor_info);
+    if (!GetMonitorInfoW(monitor, &monitor_info)) {
+      return false;
+    }
+
+    SetWindowLongPtrW(
+        window,
+        GWL_STYLE,
+        g_controller_restore_style & ~(WS_CAPTION | WS_THICKFRAME));
+    SetWindowLongPtrW(
+        window,
+        GWL_EXSTYLE,
+        g_controller_restore_ex_style &
+            ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE |
+              WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+
+    const RECT& rect = monitor_info.rcMonitor;
+    SetWindowPos(
+        window,
+        nullptr,
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+        SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED |
+            SWP_SHOWWINDOW);
+    g_controller_fullscreen = true;
+    return true;
+  }
+
+  SetWindowLongPtrW(window, GWL_STYLE, g_controller_restore_style);
+  SetWindowLongPtrW(window, GWL_EXSTYLE, g_controller_restore_ex_style);
+  SetWindowPlacement(window, &g_controller_restore_placement);
+  SetWindowPos(
+      window,
+      nullptr,
+      0,
+      0,
+      0,
+      0,
+      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER |
+          SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+  g_controller_fullscreen = false;
+  return true;
+}
+
 }  // namespace
 
 void RegisterWindowBridge(flutter::BinaryMessenger* messenger, HWND flutter_view) {
@@ -95,6 +183,18 @@ void RegisterWindowBridge(flutter::BinaryMessenger* messenger, HWND flutter_view
         }
         if (call.method_name() == "getDisplays") {
           result->Success(EncodableValue(EnumerateDisplays()));
+          return;
+        }
+        if (call.method_name() == "isControllerFullscreen") {
+          result->Success(EncodableValue(g_controller_fullscreen));
+          return;
+        }
+        if (call.method_name() == "setControllerFullscreen") {
+          const bool fullscreen =
+              ReadBoolArgument(call.arguments(), !g_controller_fullscreen);
+          const bool ok = SetControllerFullscreen(flutter_view, fullscreen);
+          result->Success(
+              EncodableValue(ok && g_controller_fullscreen == fullscreen));
           return;
         }
         result->NotImplemented();

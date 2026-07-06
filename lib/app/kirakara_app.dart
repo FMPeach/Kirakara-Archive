@@ -50,7 +50,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
     kirakaraShowService = KirakaraShowService(
       playbackService: playbackService,
     )..start();
-    displayManager = DisplayManager()..detectDisplays();
+    displayManager = DisplayManager();
     castService = CastService();
     lanServer = LanServer(
       queueService: queueService,
@@ -58,6 +58,27 @@ class _KirakaraAppState extends State<KirakaraApp> {
     );
     catalogClient = const MockCatalogClient();
     stageRenderer = KirakaraStageRenderer(showService: kirakaraShowService);
+    unawaited(_initializeDisplayOutput());
+  }
+
+  Future<void> _initializeDisplayOutput() async {
+    await displayManager.detectDisplays();
+    if (!mounted) return;
+
+    final stageDisplay = displayManager.stageDisplay;
+    if (stageDisplay == null) {
+      kirakaraShowService.setStageWindowVisible(false);
+      return;
+    }
+
+    kirakaraShowService.setStageWindowRect(
+      x: stageDisplay.left,
+      y: stageDisplay.top,
+      width: stageDisplay.width,
+      height: stageDisplay.height,
+    );
+    await displayManager.openStageWindow(preview: false);
+    kirakaraShowService.setStageWindowVisible(true);
   }
 
   @override
