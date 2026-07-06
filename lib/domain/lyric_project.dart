@@ -1,5 +1,5 @@
 class LyricProject {
-  const LyricProject({
+  LyricProject({
     required this.id,
     required this.songId,
     required this.krlUri,
@@ -11,5 +11,5 @@ class LyricProject {
   final String songId;
   final Uri krlUri;
   final int version;
-  final String? cachedPath;
+  String? cachedPath;
 }

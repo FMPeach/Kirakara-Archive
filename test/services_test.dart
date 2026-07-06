@@ -1,8 +1,8 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:kirakara_app/domain/media_asset.dart';
+import 'package:kirakara_app/data/local_db/local_database.dart';
 import 'package:kirakara_app/domain/playback_state.dart';
 import 'package:kirakara_app/services/display_manager.dart';
 import 'package:kirakara_app/services/lan_server.dart';
@@ -10,6 +10,27 @@ import 'package:kirakara_app/services/native_window_service.dart';
 import 'package:kirakara_app/services/playback_service.dart';
 import 'package:kirakara_app/services/queue_service.dart';
 import 'package:kirakara_app/services/search_service.dart';
+
+/// 种子 3 首测试歌曲到内存 DB。
+SearchService _testSearch() {
+  final db = LocalDatabase(dbPath: ':memory:');
+  db.open();
+  _seedTestData(db);
+  return SearchService(db: db)..invalidateCache();
+}
+
+void _seedTestData(LocalDatabase db) {
+  db.db.execute("INSERT INTO songs (id, title, artist_line) VALUES ('20001', 'Qi Feng', 'Nanatsukaze')");
+  db.db.execute("INSERT INTO songs (id, title, artist_line) VALUES ('20002', 'Ikari', 'Kanzaki Iori')");
+  db.db.execute("INSERT INTO songs (id, title, artist_line) VALUES ('20003', 'agony', 'KOTOKO')");
+  db.db.execute("INSERT INTO song_tags (song_id, tag) VALUES ('20001', 'JP')");
+  db.db.execute("INSERT INTO song_tags (song_id, tag) VALUES ('20002', 'VOCALOID')");
+  db.db.execute("INSERT INTO song_tags (song_id, tag) VALUES ('20003', 'Anime')");
+  db.db.execute("INSERT INTO song_tags (song_id, tag) VALUES ('20003', 'KRL')");
+  db.db.execute("INSERT INTO categories (id, type, name, note) VALUES ('101', 'song', 'Jpop', 'JP Pop')");
+  db.db.execute("INSERT INTO song_categories (song_id, category_id) VALUES ('20001', '101')");
+  db.db.execute("INSERT INTO song_categories (song_id, category_id) VALUES ('20003', '101')");
+}
 
 class _FakeNativeWindowService extends NativeWindowService {
   const _FakeNativeWindowService(this.displays);
@@ -22,7 +43,7 @@ class _FakeNativeWindowService extends NativeWindowService {
 
 void main() {
   test('queue and playback services keep room state locally', () {
-    final search = SearchService();
+    final search = _testSearch();
     final queue = QueueService();
     for (final song in search.featuredSongs.take(2)) {
       queue.addSong(song);
@@ -50,7 +71,7 @@ void main() {
   });
 
   test('starting a queued song consumes it instead of duplicating up next', () {
-    final search = SearchService();
+    final search = _testSearch();
     final queue = QueueService();
     final playback = PlaybackService(queueService: queue);
     addTearDown(playback.disposeService);
@@ -64,7 +85,7 @@ void main() {
   });
 
   test('starting a bumped song consumes it instead of duplicating up next', () {
-    final search = SearchService();
+    final search = _testSearch();
     final queue = QueueService();
     final playback = PlaybackService(queueService: queue);
     addTearDown(playback.disposeService);
@@ -78,7 +99,7 @@ void main() {
   });
 
   test('advancing to the final queued song clears stale up next', () {
-    final search = SearchService();
+    final search = _testSearch();
     final queue = QueueService();
     for (final song in search.featuredSongs.take(2)) {
       queue.addSong(song);
@@ -101,7 +122,7 @@ void main() {
   });
 
   test('refreshing up next clears stale value when queue becomes empty', () {
-    final search = SearchService();
+    final search = _testSearch();
     final queue = QueueService();
     for (final song in search.featuredSongs.take(2)) {
       queue.addSong(song);
@@ -123,36 +144,22 @@ void main() {
     expect(playback.state.upNext, isNull);
   });
 
-  test('agony sample is searchable and backed by local media files', () {
-    final search = SearchService();
+  test('agony sample is searchable from fallback catalog', () {
+    final search = _testSearch();
 
     final byTitle = search.searchSongs('agony');
-    expect(byTitle.single.id, 'song-local-agony');
+    expect(byTitle.single.id, '20003');
     expect(search.searchSongs('KOTOKO').map((song) => song.id),
-        contains('song-local-agony'));
-    expect(search.searchSongs('神无月的巫女').map((song) => song.id),
-        contains('song-local-agony'));
+        contains('20003'));
 
     final song = byTitle.single;
     expect(song.artist.name, 'KOTOKO');
-    expect(song.category, '动画');
-    expect(song.tags, contains('神無月の巫女'));
-
-    for (final type in [
-      MediaAssetType.video,
-      MediaAssetType.vocal,
-      MediaAssetType.accompaniment,
-      MediaAssetType.lyric,
-    ]) {
-      final asset = song.assets.singleWhere((asset) => asset.type == type);
-      expect(asset.cachedPath, isNotNull);
-      expect(File(asset.cachedPath!).existsSync(), isTrue);
-    }
-    expect(File(song.lyricProject.cachedPath!).existsSync(), isTrue);
+    expect(song.category, 'Jpop');
+    expect(song.tags, contains('KRL'));
   });
 
   test('LAN search returns catalog index without duration metadata', () async {
-    final search = SearchService();
+    final search = _testSearch();
     final queue = QueueService();
     final server = LanServer(queueService: queue, searchService: search);
     addTearDown(server.stop);
@@ -167,7 +174,7 @@ void main() {
     final payload = jsonDecode(body) as List<dynamic>;
     final song = payload.single as Map<String, dynamic>;
 
-    expect(song['id'], 'song-local-agony');
+    expect(song['id'], '20003');
     expect(song.containsKey('durationSeconds'), isFalse);
   });
 
@@ -177,7 +184,7 @@ void main() {
       nativeWindowService: const _FakeNativeWindowService([
         {
           'id': r'\\.\DISPLAY1',
-          'name': '主显示器',
+          'name': '涓绘樉绀哄櫒',
           'isPrimary': true,
           'left': 0,
           'top': 0,
@@ -186,7 +193,7 @@ void main() {
         },
         {
           'id': r'\\.\DISPLAY2',
-          'name': '虚拟舞台屏',
+          'name': 'virtual stage',
           'isPrimary': false,
           'left': 1920,
           'top': 0,

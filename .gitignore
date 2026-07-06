@@ -6,14 +6,28 @@ build/
 coverage/
 media/library/
 
+# SQLite local index
+kirakara_index.db
+kirakara_index.db-*
+
+# temp debug/test scripts
+tool/debug_*.dart
+tool/test_catalog_pull.dart
+tool/test_e2e.dart
+
+# IDE / workspace
 .idea/
 .vscode/
 *.iml
+*.code-workspace
 .agents/
 .codex/
 kira-ktv-demo - *.html
 
+# Android
 android/.gradle/
 android/local.properties
+
+# iOS
 ios/Flutter/Generated.xcconfig
 ios/Flutter/flutter_export_environment.sh

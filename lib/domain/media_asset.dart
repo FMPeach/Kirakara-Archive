@@ -7,7 +7,7 @@ enum MediaAssetType {
 }
 
 class MediaAsset {
-  const MediaAsset({
+  MediaAsset({
     required this.id,
     required this.type,
     required this.uri,
@@ -19,5 +19,5 @@ class MediaAsset {
   final MediaAssetType type;
   final Uri uri;
   final int version;
-  final String? cachedPath;
+  String? cachedPath;
 }

@@ -2,13 +2,15 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../data/catalog/catalog_client.dart';
+import '../data/local_db/local_database.dart';
 import '../engine/kirakara_stage_renderer.dart';
 import '../engine/stage_renderer.dart';
 import '../services/cast_service.dart';
-import '../services/catalog_client.dart';
 import '../services/display_manager.dart';
 import '../services/kirakara_show_service.dart';
 import '../services/lan_server.dart';
+import '../services/playback_asset_cache.dart';
 import '../services/playback_service.dart';
 import '../services/queue_service.dart';
 import '../services/search_service.dart';
@@ -23,21 +25,34 @@ class KirakaraApp extends StatefulWidget {
 }
 
 class _KirakaraAppState extends State<KirakaraApp> {
+  late final LocalDatabase _localDb;
+  late final HttpCatalogClient _catalogClient;
   late final SearchService searchService;
   late final QueueService queueService;
   late final PlaybackService playbackService;
   late final DisplayManager displayManager;
   late final CastService castService;
   late final LanServer lanServer;
+  late final PlaybackAssetCache _assetCache;
   late final KirakaraShowService kirakaraShowService;
-  late final MockCatalogClient catalogClient;
   late final StageRenderer stageRenderer;
 
   @override
   void initState() {
     super.initState();
-    searchService = SearchService();
+    _localDb = LocalDatabase();
+    _localDb.open(); // 同步打开，确保 SearchService 可用
+    _catalogClient = HttpCatalogClient(
+      baseUrl: Uri.parse('http://localhost:7392'),
+    );
+    _assetCache = PlaybackAssetCache(
+      baseUrl: 'http://localhost:7392',
+    );
+
+    // 先用 fallback 数据初始化 SearchService，等同步完成后再刷新
+    searchService = SearchService(db: _localDb);
     queueService = QueueService();
+
     for (final song in searchService.featuredSongs.take(3)) {
       queueService.addSong(song);
     }
@@ -49,6 +64,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
     playbackService.refreshUpNext();
     kirakaraShowService = KirakaraShowService(
       playbackService: playbackService,
+      assetCache: _assetCache,
     )..start();
     displayManager = DisplayManager();
     castService = CastService();
@@ -56,9 +72,25 @@ class _KirakaraAppState extends State<KirakaraApp> {
       queueService: queueService,
       searchService: searchService,
     );
-    catalogClient = const MockCatalogClient();
     stageRenderer = KirakaraStageRenderer(showService: kirakaraShowService);
     unawaited(_initializeDisplayOutput());
+    unawaited(_syncCatalog());
+  }
+
+  Future<void> _syncCatalog() async {
+    try {
+      final manifest = await _catalogClient.fetchManifest();
+      _localDb.replaceAll(manifest);
+      searchService.labelMaps = manifest.labelMaps;
+      searchService.invalidateCache();
+      if (mounted) {
+        setState(() {
+          // SearchService 下次读取 featuredSongs 时自动从 DB 取
+        });
+      }
+    } catch (e) {
+      debugPrint('Catalog sync failed, using fallback data: $e');
+    }
   }
 
   Future<void> _initializeDisplayOutput() async {
@@ -85,7 +117,8 @@ class _KirakaraAppState extends State<KirakaraApp> {
   void dispose() {
     unawaited(kirakaraShowService.dispose());
     playbackService.disposeService();
-    lanServer.stop();
+    lanServer.stop();    _assetCache.clear();    _catalogClient.dispose();
+    _localDb.close();
     super.dispose();
   }
 

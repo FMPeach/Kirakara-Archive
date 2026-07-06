@@ -5,16 +5,21 @@ import 'package:flutter/foundation.dart';
 
 import '../domain/media_asset.dart';
 import '../domain/playback_state.dart';
+import '../domain/queue_item.dart';
 import '../domain/song.dart';
 import 'kirakara_show_ffi.dart';
+import 'playback_asset_cache.dart';
 import 'playback_service.dart';
 
 class KirakaraShowService extends ChangeNotifier {
   KirakaraShowService({
     required PlaybackService playbackService,
-  }) : _playbackService = playbackService;
+    PlaybackAssetCache? assetCache,
+  })  : _playbackService = playbackService,
+        _assetCache = assetCache;
 
   final PlaybackService _playbackService;
+  final PlaybackAssetCache? _assetCache;
   KirakaraShowFFI? _ffi;
   String? _loadedItemId;
   AudioTrackMode? _loadedAudioTrackMode;
@@ -26,6 +31,7 @@ class KirakaraShowService extends ChangeNotifier {
   bool _started = false;
   bool _applyingEnginePosition = false;
   bool _controllerPreviewSuppressed = false;
+  bool _preparingSong = false;
   Duration _enginePosition = Duration.zero;
   Duration _engineDuration = Duration.zero;
 
@@ -65,6 +71,64 @@ class KirakaraShowService extends ChangeNotifier {
 
   // ── Playback sync ──────────────────────────────────────────────
 
+  /// 异步下载媒体并加载到引擎。
+  Future<void> _prepareAndLoadMedia(QueueItem item) async {
+    if (_preparingSong) return;
+    _preparingSong = true;
+
+    // 立即停引擎 + 重置状态，防止下载期间帧轮询污染 position
+    _ffi?.stop();
+    _loadedItemId = null;
+    _sawEngineProgressForItem = false;
+    _lastCompletedItemId = null;
+    _enginePosition = Duration.zero;
+    _engineDuration = Duration.zero;
+
+    try {
+      // 1) 确保 media + KRL 已下载到本地
+      if (_assetCache != null) {
+        await _assetCache.ensureSongAssets(item.song);
+      }
+
+      final ffi = _ffi;
+      if (ffi == null) return;
+
+      // 2) 查找路径
+      final videoPath = _pathFor(item.song, MediaAssetType.video);
+      final lyricPath = item.song.lyricProject.cachedPath ??
+          _pathFor(item.song, MediaAssetType.lyric);
+      if (videoPath == null || lyricPath == null) return;
+      if (!File(videoPath).existsSync() || !File(lyricPath).existsSync()) {
+        return;
+      }
+      final vocalPath = _existingPathFor(item.song, MediaAssetType.vocal);
+      final accompanimentPath =
+          _existingPathFor(item.song, MediaAssetType.accompaniment);
+
+      // 3) 加载到引擎
+      final loaded = ffi.load(
+        videoPath,
+        lyricPath,
+        vocalPath: vocalPath,
+        accompanimentPath: accompanimentPath,
+      );
+      if (!loaded) return;
+
+      _loadedItemId = item.id;
+      _loadedAudioTrackMode = vocalPath == null && accompanimentPath != null
+          ? AudioTrackMode.accompaniment
+          : AudioTrackMode.vocal;
+      _lastPlaying = null;
+      _enginePosition = Duration.zero;
+      _engineDuration = Duration.zero;
+
+      // 下载完成后再次同步播放状态
+      _syncWithPlayback();
+    } finally {
+      _preparingSong = false;
+    }
+  }
+
   void _syncWithPlayback() {
     if (_applyingEnginePosition) return;
     final ffi = _ffi;
@@ -90,33 +154,8 @@ class KirakaraShowService extends ChangeNotifier {
 
     // Load new media if different from current
     if (_loadedItemId != item.id) {
-      final videoPath = _pathFor(item.song, MediaAssetType.video);
-      final lyricPath = item.song.lyricProject.cachedPath ??
-          _pathFor(item.song, MediaAssetType.lyric);
-      if (videoPath == null || lyricPath == null) return;
-      if (!File(videoPath).existsSync() || !File(lyricPath).existsSync()) {
-        return;
-      }
-      final vocalPath = _existingPathFor(item.song, MediaAssetType.vocal);
-      final accompanimentPath =
-          _existingPathFor(item.song, MediaAssetType.accompaniment);
-
-      final loaded = ffi.load(
-        videoPath,
-        lyricPath,
-        vocalPath: vocalPath,
-        accompanimentPath: accompanimentPath,
-      );
-      if (!loaded) return;
-      _loadedItemId = item.id;
-      _loadedAudioTrackMode = vocalPath == null && accompanimentPath != null
-          ? AudioTrackMode.accompaniment
-          : AudioTrackMode.vocal;
-      _lastPlaying = null;
-      _lastCompletedItemId = null;
-      _sawEngineProgressForItem = false;
-      _enginePosition = Duration.zero;
-      _engineDuration = Duration.zero;
+      _prepareAndLoadMedia(item);
+      return;
     }
 
     if (_loadedAudioTrackMode != state.audioTrackMode) {
@@ -126,7 +165,11 @@ class KirakaraShowService extends ChangeNotifier {
       }
     }
 
-    _syncRequestedPosition(ffi, state);
+    // 刚加载完新歌时跳过 seek（引擎 position 就是 0，无需同步）
+    final justLoaded = _lastPlaying == null;
+    if (!justLoaded) {
+      _syncRequestedPosition(ffi, state);
+    }
 
     // Sync play/pause
     if (_lastPlaying == state.isPlaying) return;

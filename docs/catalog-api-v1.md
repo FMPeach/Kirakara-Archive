@@ -34,6 +34,8 @@ Server catalog/resource API            Kirakara-App
 - URI 使用相对路径，例如 `/media/songs/20001/vocal.wav`，App 用 `$BASE + uri`。
 - App 可能附加 `?r=<random>` 破缓存，服务端应忽略未知 query 参数。
 - 返回可以是裸数组。若包一层，只保留有实际用途的字段，例如 `schemaVersion`、`revision`、`items`。
+- `type`、`role`、asset `type` 等枚举是机器字段，App 不允许直接展示枚举原文。
+  需要展示时使用服务器下发的 `labelMaps`。
 - 不要求服务器提供 `duration`。播放时长、进度和自动切歌以 App 打开的原唱音频实际时长为准。
 - 公开关联 ID 使用服务器分配的数字字符串，不携带名称、罗马音、分类语义。
 - 歌曲 ID 是点歌编号，也使用数字字符串。
@@ -44,7 +46,7 @@ Server catalog/resource API            Kirakara-App
 |---|------|------|------|
 | 1 | `GET` | `/api/catalog/artists` | 已归一歌手 / 组合 / 社团 / 角色 / 声优 / 声库等实体 |
 | 2 | `GET` | `/api/catalog/songs` | 歌曲全量索引 |
-| 3 | `GET` | `/api/catalog/categories` | 歌曲分类和歌手分组 |
+| 3 | `GET` | `/api/catalog/categories` | 歌曲分类、歌手分组和枚举展示文案 |
 | 4 | `GET` | `/api/catalog/rankings` | 榜单，只引用 `songId` |
 | - | `GET` | `/media/**` | 静态资源文件 |
 
@@ -301,34 +303,88 @@ App 搜索时可索引 `name`；如果 `entityId` 存在，也可 join 到 artis
 ## 3. `GET /api/catalog/categories`
 
 分类是服务器下发的展示/筛选维度，关联使用稳定 `id`，不要使用 `name`。
+这个端点也负责下发枚举展示文案。`solo`、`voice_actor`、`inst` 这类
+机器字段不能直接显示给用户。
 
 ### JSON 示例
 
 ```json
-[
-  { "id": "101", "type": "song", "name": "热门", "note": "最近常点与推荐曲目", "order": 1 },
-  { "id": "102", "type": "song", "name": "动画", "note": "番剧 OP / ED / 插曲", "order": 2 },
-  { "id": "103", "type": "song", "name": "VOCALOID", "note": "术力口与创作者曲目", "order": 3 },
-  { "id": "104", "type": "song", "name": "东方", "note": "东方同人与社团作品", "order": 4 },
-  { "id": "105", "type": "song", "name": "角色歌", "note": "角色名义演唱曲目", "order": 5 },
-  { "id": "199", "type": "song", "name": "本地实机", "note": "开发测试曲目", "order": 99 },
-  { "id": "201", "type": "artist", "name": "日本歌手/组合", "note": null, "order": 1 },
-  { "id": "202", "type": "artist", "name": "VOCALOID 声库", "note": null, "order": 2 },
-  { "id": "203", "type": "artist", "name": "同人社团", "note": null, "order": 3 },
-  { "id": "204", "type": "artist", "name": "ACG 角色", "note": null, "order": 4 },
-  { "id": "205", "type": "artist", "name": "声优", "note": null, "order": 5 }
-]
+{
+  "items": [
+    { "id": "101", "type": "song", "name": "热门", "note": "最近常点与推荐曲目", "order": 1 },
+    { "id": "102", "type": "song", "name": "动画", "note": "番剧 OP / ED / 插曲", "order": 2 },
+    { "id": "103", "type": "song", "name": "VOCALOID", "note": "术力口与创作者曲目", "order": 3 },
+    { "id": "104", "type": "song", "name": "东方", "note": "东方同人与社团作品", "order": 4 },
+    { "id": "105", "type": "song", "name": "角色歌", "note": "角色名义演唱曲目", "order": 5 },
+    { "id": "199", "type": "song", "name": "本地实机", "note": "开发测试曲目", "order": 99 },
+    { "id": "201", "type": "artist", "name": "日本歌手/组合", "note": null, "order": 1 },
+    { "id": "202", "type": "artist", "name": "VOCALOID 声库", "note": null, "order": 2 },
+    { "id": "203", "type": "artist", "name": "同人社团", "note": null, "order": 3 },
+    { "id": "204", "type": "artist", "name": "ACG 角色", "note": null, "order": 4 },
+    { "id": "205", "type": "artist", "name": "声优", "note": null, "order": 5 }
+  ],
+  "labelMaps": {
+    "categoryTypes": {
+      "song": "歌曲分类",
+      "artist": "歌手分组"
+    },
+    "artistTypes": {
+      "solo": "歌手",
+      "group": "组合",
+      "circle": "社团",
+      "character": "角色",
+      "voice_actor": "声优",
+      "vocal_synth": "声库",
+      "creator": "创作者",
+      "other": "其他"
+    },
+    "roles": {
+      "vocal": "演唱",
+      "character_vocal": "角色演唱",
+      "voice_actor": "声优",
+      "vocal_synth": "声库",
+      "circle": "社团",
+      "creator": "创作者",
+      "featured": "合作",
+      "lyricist": "作词",
+      "composer": "作曲",
+      "arranger": "编曲",
+      "original_composer": "原曲作曲",
+      "original_track": "原曲",
+      "original_work": "原作"
+    },
+    "assetTypes": {
+      "video": "视频",
+      "vocal": "原唱",
+      "inst": "伴奏",
+      "cover": "封面",
+      "krl": "KRL"
+    }
+  }
+}
 ```
 
-### 字段表
+### `items` 字段表
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `id` | `string` | yes | 服务器分配的数字字符串，不携带语义 |
-| `type` | `string` | yes | `song` / `artist` |
+| `type` | `string` | yes | `song` / `artist`，展示文案使用 `labelMaps.categoryTypes` |
 | `name` | `string` | yes | 展示名 |
 | `note` | `string?` | no | 一行备注 |
 | `order` | `int?` | no | 排序权重，越小越前 |
+
+### `labelMaps` 字段表
+
+| 字段 | 说明 |
+|------|------|
+| `categoryTypes` | `categories.items[].type` 的展示文案 |
+| `artistTypes` | `artists[].type` 的展示文案 |
+| `roles` | `artistRefs[].role` 和 `credits[].role` 的展示文案 |
+| `assetTypes` | `assets[].type` 的展示文案 |
+
+App 应把缺失 label 视为服务器数据问题，可以降级显示“其他”或隐藏该字段，
+不要把 `solo`、`voice_actor` 等 key 原样显示到 UI。
 
 ## 4. `GET /api/catalog/rankings`
 
@@ -401,6 +457,7 @@ GET /api/catalog/songs
 GET /api/catalog/categories
 GET /api/catalog/rankings
   -> replace IndexCache transactionally
+  -> import labelMaps
   -> rebuild FTS
   -> browse/search/join locally
   -> request /media/** only when playback needs assets
@@ -422,6 +479,7 @@ JSON 中的数组字段可以保留，但导入 SQLite 时建议拆成关系表�
 | `song_assets(song_id, type, uri, version, hash, size)` | 资源 |
 | `song_tags(song_id, tag)` | tag |
 | `song_search_hints(song_id, value)` | 少量召回词 |
+| `catalog_labels(scope, key, label)` | 枚举展示文案，例如 artistTypes / roles / assetTypes |
 | `songs_fts` | FTS 索引 |
 
 本地查询示例：
@@ -482,6 +540,7 @@ WHERE c.entity_id = ? AND c.role = 'voice_actor';
 | `/categories/{id}/songs` | 本地 `song_categories` join |
 | 分类用显示名做关联键 | 显示名会变，关联必须用稳定 ID |
 | App 根据 credits 拼默认歌手行 | 默认展示由 `artistLine` 决定 |
+| UI 直接展示 `type` / `role` / asset `type` | 这些是机器 key，展示必须走 `labelMaps` |
 | 要求每个文本歌手名都进入 artists | UGC/来源数据无法保证完全归一 |
 | 排行榜内嵌完整歌曲对象 | App 本地 join 即可 |
 | 服务器传 `duration` | 以实际打开的原唱音频时长为准 |

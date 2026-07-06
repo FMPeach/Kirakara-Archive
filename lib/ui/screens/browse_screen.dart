@@ -181,6 +181,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
           child: _ArtistResultPanel(
             artists: artists,
             songCountForArtist: widget.searchService.songCountForArtist,
+            typeLabel: (a) => widget.searchService.labelMaps?.artistTypeLabel(a.type) ?? a.type,
             onArtist: _openArtist,
           ),
         ),
@@ -233,7 +234,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
         Expanded(
           child: _SongResultPanel(
             title: artist.name,
-            subtitle: '${artist.type} · ${artist.note}',
+            subtitle: widget.searchService.labelMaps?.artistTypeLabel(artist.type) ?? artist.type,
             songs: artistSongs,
             columns: 1,
             onAddSong: _addSong,
@@ -484,11 +485,12 @@ class _BrowseScreenState extends State<BrowseScreen> {
   }
 
   List<Song> _scopedSongs() {
-    var songs = widget.searchService.searchSongs(_songQuery);
     if (_songScope != '全部') {
-      songs = songs.where((s) => s.category == _songScope).toList();
+      // 通过 DB 关系查分类，不用 song.category（后者只存了首个分类）
+      final scopeCategory = CategorySummary(name: _songScope, note: '');
+      return widget.searchService.songsForCategory(scopeCategory, query: _songQuery);
     }
-    return songs;
+    return widget.searchService.searchSongs(_songQuery);
   }
 
   List<String> get _songScopeOptions {
@@ -1283,11 +1285,13 @@ class _ArtistResultPanel extends StatelessWidget {
     required this.artists,
     required this.songCountForArtist,
     required this.onArtist,
+    required this.typeLabel,
   });
 
   final List<ArtistSummary> artists;
   final int Function(ArtistSummary artist) songCountForArtist;
   final ValueChanged<ArtistSummary> onArtist;
+  final String Function(ArtistSummary artist) typeLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1309,6 +1313,7 @@ class _ArtistResultPanel extends StatelessWidget {
                 return _ArtistCard(
                   artist: artist,
                   songCount: songCountForArtist(artist),
+                  typeLabel: typeLabel(artist),
                   onTap: () => onArtist(artist),
                 );
               },
@@ -1321,11 +1326,13 @@ class _ArtistCard extends StatelessWidget {
   const _ArtistCard({
     required this.artist,
     required this.songCount,
+    required this.typeLabel,
     required this.onTap,
   });
 
   final ArtistSummary artist;
   final int songCount;
+  final String typeLabel;
   final VoidCallback onTap;
 
   @override
@@ -1360,7 +1367,7 @@ class _ArtistCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 7),
                       Text(
-                        '${artist.type} · ${artist.note}',
+                        typeLabel,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
