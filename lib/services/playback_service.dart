@@ -63,25 +63,34 @@ class PlaybackService extends ChangeNotifier {
       return;
     }
 
+    final upNext = _peekNextQueueItem();
     _setState(
       _state.copyWith(
         mode: PlaybackMode.playing,
         position: Duration.zero,
         currentItem: nextItem,
-        upNext: _peekNextQueueItem(),
+        upNext: upNext,
+        clearUpNext: upNext == null,
       ),
     );
   }
 
   void setCurrent(QueueItem item, {bool startPlaying = true}) {
+    final upNext = _peekNextQueueItem();
     _setState(
       _state.copyWith(
         currentItem: item,
         mode: startPlaying ? PlaybackMode.playing : PlaybackMode.paused,
         position: Duration.zero,
-        upNext: _peekNextQueueItem(),
+        upNext: upNext,
+        clearUpNext: upNext == null,
       ),
     );
+  }
+
+  void setCurrentFromQueue(QueueItem item, {bool startPlaying = true}) {
+    _queueService.remove(item.id);
+    setCurrent(item, startPlaying: startPlaying);
   }
 
   void setKey(int key) {
@@ -108,7 +117,8 @@ class PlaybackService extends ChangeNotifier {
   }
 
   void refreshUpNext() {
-    _setState(_state.copyWith(upNext: _peekNextQueueItem()));
+    final upNext = _peekNextQueueItem();
+    _setState(_state.copyWith(upNext: upNext, clearUpNext: upNext == null));
   }
 
   void _setState(PlaybackState nextState) {

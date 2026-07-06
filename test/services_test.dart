@@ -49,6 +49,80 @@ void main() {
     expect(playback.state.audioTrackMode, AudioTrackMode.accompaniment);
   });
 
+  test('starting a queued song consumes it instead of duplicating up next', () {
+    final search = SearchService();
+    final queue = QueueService();
+    final playback = PlaybackService(queueService: queue);
+    addTearDown(playback.disposeService);
+
+    final item = queue.addSong(search.featuredSongs.first);
+    playback.setCurrentFromQueue(item, startPlaying: true);
+
+    expect(playback.state.currentItem?.id, item.id);
+    expect(playback.state.upNext, isNull);
+    expect(queue.items, isEmpty);
+  });
+
+  test('starting a bumped song consumes it instead of duplicating up next', () {
+    final search = SearchService();
+    final queue = QueueService();
+    final playback = PlaybackService(queueService: queue);
+    addTearDown(playback.disposeService);
+
+    final item = queue.bumpToNext(search.featuredSongs.first);
+    playback.setCurrentFromQueue(item, startPlaying: true);
+
+    expect(playback.state.currentItem?.id, item.id);
+    expect(playback.state.upNext, isNull);
+    expect(queue.items, isEmpty);
+  });
+
+  test('advancing to the final queued song clears stale up next', () {
+    final search = SearchService();
+    final queue = QueueService();
+    for (final song in search.featuredSongs.take(2)) {
+      queue.addSong(song);
+    }
+
+    final first = queue.takeNext();
+    final playback = PlaybackService(
+      queueService: queue,
+      initialItem: first,
+    );
+    addTearDown(playback.disposeService);
+
+    playback.refreshUpNext();
+    expect(playback.state.upNext?.song.id, search.featuredSongs[1].id);
+
+    playback.next();
+    expect(playback.state.currentSong?.id, search.featuredSongs[1].id);
+    expect(playback.state.upNext, isNull);
+    expect(queue.items, isEmpty);
+  });
+
+  test('refreshing up next clears stale value when queue becomes empty', () {
+    final search = SearchService();
+    final queue = QueueService();
+    for (final song in search.featuredSongs.take(2)) {
+      queue.addSong(song);
+    }
+
+    final first = queue.takeNext();
+    final playback = PlaybackService(
+      queueService: queue,
+      initialItem: first,
+    );
+    addTearDown(playback.disposeService);
+
+    playback.refreshUpNext();
+    final staleUpNext = playback.state.upNext;
+    expect(staleUpNext, isNotNull);
+
+    queue.remove(staleUpNext!.id);
+    playback.refreshUpNext();
+    expect(playback.state.upNext, isNull);
+  });
+
   test('agony sample is searchable and backed by local media files', () {
     final search = SearchService();
 
@@ -97,7 +171,8 @@ void main() {
     expect(song.containsKey('durationSeconds'), isFalse);
   });
 
-  test('display manager selects the first non-primary display as stage', () async {
+  test('display manager selects the first non-primary display as stage',
+      () async {
     final displayManager = DisplayManager(
       nativeWindowService: const _FakeNativeWindowService([
         {

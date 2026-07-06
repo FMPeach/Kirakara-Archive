@@ -39,7 +39,7 @@ class QueueService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void bumpToNext(Song song, {String requestedBy = '本机'}) {
+  QueueItem bumpToNext(Song song, {String requestedBy = '本机'}) {
     final item = QueueItem(
       id: 'queue-${++_sequence}',
       song: song,
@@ -48,6 +48,7 @@ class QueueService extends ChangeNotifier {
     );
     _items.insert(0, item);
     notifyListeners();
+    return item;
   }
 
   void bumpItemToNext(String id) {

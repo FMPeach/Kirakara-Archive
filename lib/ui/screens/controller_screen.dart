@@ -183,27 +183,26 @@ class _ControllerScreenState extends State<ControllerScreen> {
 
   void _addSong(Song song) {
     final item = widget.queueService.addSong(song);
-    widget.playbackService.refreshUpNext();
+    if (widget.playbackService.state.currentItem == null) {
+      widget.playbackService.setCurrentFromQueue(item, startPlaying: true);
+    } else {
+      widget.playbackService.refreshUpNext();
+    }
     setState(() {
       _announcement = '已加入队列：${song.title}';
     });
-    if (widget.playbackService.state.currentItem == null) {
-      widget.playbackService.setCurrent(item, startPlaying: true);
-    }
   }
 
   void _bumpSong(Song song) {
-    widget.queueService.bumpToNext(song);
-    widget.playbackService.refreshUpNext();
+    final item = widget.queueService.bumpToNext(song);
+    if (widget.playbackService.state.currentItem == null) {
+      widget.playbackService.setCurrentFromQueue(item, startPlaying: true);
+    } else {
+      widget.playbackService.refreshUpNext();
+    }
     setState(() {
       _announcement = '已顶到下一首：${song.title}';
     });
-    if (widget.playbackService.state.currentItem == null) {
-      widget.playbackService.setCurrent(
-        widget.queueService.items.first,
-        startPlaying: true,
-      );
-    }
   }
 
   void _showPanel(String title) {
