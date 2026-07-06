@@ -7,11 +7,13 @@ class HandwritingPad extends StatefulWidget {
   const HandwritingPad({
     super.key,
     required this.onRecognize,
+    required this.onBackspace,
     required this.onClear,
     required this.clearRevision,
   });
 
   final Future<void> Function(List<ImeStroke> strokes) onRecognize;
+  final Future<void> Function() onBackspace;
   final Future<void> Function() onClear;
   final int clearRevision;
 
@@ -98,6 +100,13 @@ class _HandwritingPadState extends State<HandwritingPad> {
                       label: '清空',
                       onTap: _clear,
                       destructive: true,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _PadAction(
+                      label: '退格',
+                      onTap: widget.onBackspace,
                     ),
                   ),
                 ],

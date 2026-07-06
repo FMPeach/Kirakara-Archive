@@ -92,6 +92,11 @@ class ImeController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> backspaceSearchText() async {
+    _searchQueryController.backspace();
+    notifyListeners();
+  }
+
   Future<void> clearAll() async {
     _composition = await _activeEngine.clear();
     _searchQueryController.clear();

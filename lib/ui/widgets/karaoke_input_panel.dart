@@ -190,6 +190,7 @@ class KaraokeInputPanel extends StatelessWidget {
                   return HandwritingPad(
                     onRecognize: imeController.recognizeHandwritingStrokes,
                     onClear: imeController.clearComposition,
+                    onBackspace: imeController.backspaceSearchText,
                     clearRevision: imeController.handwritingClearRevision,
                   );
                 }
