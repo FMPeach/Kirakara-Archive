@@ -2,9 +2,9 @@
 
 ## Product Split
 
-Kirakara-App is a local-first KTV host. The cloud catalog can help synchronize
-song metadata, KRL projects, media, covers, and versions, but room state belongs
-to the local app.
+Kirakara-App is a local-first KTV host. Room state belongs to the local app.
+Catalog and asset authority belongs to a catalog/resource server, which may be a
+local LAN server, a NAS-style server, or a future cloud catalog.
 
 Local authority state:
 
@@ -15,12 +15,37 @@ Local authority state:
 - vocal / accompaniment mode
 - volume and playback progress
 
-Cloud-assisted data:
+Catalog/resource server authority:
 
 - catalog metadata
-- KRL lyric projects
-- media asset versions
-- cover art
+- taxonomy and category membership
+- rankings and sub-rankings
+- KRL lyric projects and versions
+- media and cover asset versions
+- resource URI, hash, size, and revision metadata
+
+The server may add, remove, or replace media files and KRL projects at any time.
+The app must not treat cached resource bytes as authoritative.
+
+Local persistent data:
+
+- last synced taxonomy / ranking / catalog index manifests
+- local search index, such as SQLite FTS or another local index
+- app settings, display preferences, and input/search history
+- optional local user aliases or personal tags
+
+Local volatile playback cache:
+
+- media files or streams required by the current playback cycle
+- covers and KRL files required by the current playback cycle
+- decoded or prepared assets needed by the current StageRenderer session
+
+Asset cache is disposable. It should be cleared after playback, app exit, cache
+pressure, or a server version/hash mismatch. It is not an offline song library.
+
+Playback duration and auto-advance should come from the actual selected audio
+stream/file after it is opened. The server does not need to send duration
+metadata.
 
 ## Screens
 
@@ -67,8 +92,12 @@ Debug mode:
 ## Replacement Points
 
 - `MockStageRenderer` -> KiraKara-Show native renderer / texture
-- `SearchService` mock list -> repository backed by SQLite FTS
+- `SearchService` mock list -> repository backed by synced catalog index and
+  SQLite FTS or equivalent
 - `LanServer` mock JSON endpoints -> phone ordering web app and API
-- `MockCatalogClient` -> cloud catalog sync client
+- `MockCatalogClient` -> local/cloud catalog client with manifest and delta
+  sync
+- `CacheService` mock state -> persistent index cache plus disposable playback
+  asset cache
 - `DisplayManager` mock display list -> Windows / Android native display APIs
 - `CastService` mock state -> DLNA / cast output pipeline

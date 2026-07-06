@@ -351,17 +351,19 @@ IME 解决“怎么输入”，Catalog 索引解决“本地怎么搜到”，�
 - 选中歌曲后，本机再按资源描述向服务器请求媒体、封面、KRL 或拉流。
 - 服务器可以是本地 NAS / 本机资源服务，也可以是后续云端曲库；两者遵循同一套 Catalog API。
 - 云端服务器一定需要数据库；App 本地是否使用 SQLite 是缓存和搜索实现细节，不改变服务器作为 catalog 权威的定位。
+- 服务器可以随时增删媒体、封面和 KRL；本机缓存的资源文件只是播放周期临时副本。
 
 推荐流程：
 
 ```text
 CatalogServer / LocalCatalogServer
   -> taxonomy manifest / ranking manifest / index manifest / delta updates
-  -> Kirakara local cache or SQLite + FTS
+  -> Kirakara persistent index cache or SQLite + FTS
   -> local search result
   -> queue item
   -> media asset request / stream request
-  -> local playback cache
+  -> temporary playback asset cache
+  -> playback engine
 ```
 
 索引包应优先包含稳定结构化字段：
@@ -377,7 +379,7 @@ CatalogServer / LocalCatalogServer
 - 年代或热度等排序信号
 - 媒体资源描述，如 video、accompaniment、vocal、cover、krl
 - 资源版本、hash、大小和可拉取 URI
-- 本地缓存策略
+- 索引缓存策略和资源临时缓存策略
 
 Catalog 权威边界：
 
@@ -387,7 +389,16 @@ Catalog 权威边界：
 - 排行榜和子榜由服务器下发，例如总榜、新歌榜、动画榜、VOCALOID 榜、包厢热唱榜。
 - App 不硬编码分类数量、分类名称、分类顺序、歌手分类归属和榜单结构。
 - App 只缓存最近一次成功同步的 taxonomy / ranking / index manifest；离线时继续使用缓存。
+- App 不把媒体、封面和 KRL 缓存视为离线曲库；这些资源必须按服务器版本/hash 校验，播放周期结束后可以删除。
 - 开发阶段可以使用 mock manifest，但 mock 数据也要走同样的数据结构，避免 UI 写死。
+
+资源缓存边界：
+
+- 持久缓存只保留 catalog / taxonomy / ranking / FTS 所需索引和本地用户数据。
+- 媒体、封面、KRL 和解码准备文件属于 `PlaybackAssetCache`，默认在当前应用周期或当前播放链路内有效。
+- 服务器删除资源、修改 KRL、资源版本/hash 变化、校验失败、缓存压力或 App 退出时，本地临时资源可以被清理。
+- 离线状态下可以继续使用已缓存索引做搜索和排队规划，但不承诺播放已经被缓存过的资源文件。
+- 播放时长、自动切歌和进度基准来自 App 打开的原唱音频实际时长，不要求服务器下发 duration。
 
 本地可派生或维护的搜索字段：
 
@@ -601,6 +612,8 @@ lib/
 - 本地搜索接入原文、编号、歌手、社团、番剧/作品 tag、服务器分类 tag、服务器歌手分类 tag。
 - 本地派生拼音、罗马音、假名、简繁等辅助搜索字段。
 - 选中歌曲后，通过 media asset URI 请求本地或云端资源服务。
+- 媒体、封面、KRL 只进入播放周期临时缓存；索引可以持久缓存，资源字节不作为本地离线曲库。
+- 播放时长由 App 打开的原唱音频实际时长决定，不把 duration 作为服务器必填字段。
 - 输入法不加入曲库专名；曲库召回靠本地索引字段、派生读音字段和服务器下发的 tag。
 - 歌名、歌手、分类、排行榜页面都消费服务器下发的 manifest，不在 UI 里写死列表。
 
@@ -612,6 +625,7 @@ lib/
 - 搜番剧 / 作品 tag 可以返回对应歌曲。
 - 搜歌曲编号、歌手、社团、声库、角色可召回。
 - 点歌后可以从本地或云端资源 URI 拉取媒体、封面和 KRL。
+- 服务器更新或删除资源后，本地临时资源不会被继续当作权威版本使用。
 - 服务器无需提供每首歌的完整民间别名列表。
 
 ## 已完成的最小闭环
