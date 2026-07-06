@@ -21,6 +21,8 @@ typedef PauseNative = Void Function(ShowHostHandle);
 typedef StopNative = Void Function(ShowHostHandle);
 typedef SeekNative = Void Function(ShowHostHandle, Double);
 typedef SetVolumeNative = Void Function(ShowHostHandle, Int32);
+typedef SetKeyNative = Void Function(ShowHostHandle, Int32);
+typedef SetAudioClockOffsetNative = Void Function(ShowHostHandle, Double);
 typedef SetAudioTrackNative = Bool Function(ShowHostHandle, Int32);
 typedef SetStageVisibleNative = Void Function(ShowHostHandle, Bool);
 typedef SetStageWindowRectNative = Void Function(
@@ -69,6 +71,8 @@ typedef _Pause = void Function(ShowHostHandle);
 typedef _Stop = void Function(ShowHostHandle);
 typedef _Seek = void Function(ShowHostHandle, double);
 typedef _SetVolume = void Function(ShowHostHandle, int);
+typedef _SetKey = void Function(ShowHostHandle, int);
+typedef _SetAudioClockOffset = void Function(ShowHostHandle, double);
 typedef _SetAudioTrack = bool Function(ShowHostHandle, int);
 typedef _SetStageVisible = void Function(ShowHostHandle, bool);
 typedef _SetStageWindowRect = void Function(
@@ -120,6 +124,8 @@ class KirakaraShowFFI {
   late final _Stop _stop;
   late final _Seek _seek;
   late final _SetVolume _setVolume;
+  late final _SetKey _setKey;
+  late final _SetAudioClockOffset _setAudioClockOffset;
   late final _SetAudioTrack _setAudioTrack;
   late final _SetStageVisible _setStageVisible;
   late final _SetStageWindowRect _setStageWindowRect;
@@ -150,6 +156,13 @@ class KirakaraShowFFI {
     _setVolume = _dylib.lookupFunction<SetVolumeNative, _SetVolume>(
       'show_host_set_volume',
     );
+    _setKey = _dylib.lookupFunction<SetKeyNative, _SetKey>(
+      'show_host_set_key_semitones',
+    );
+    _setAudioClockOffset =
+        _dylib.lookupFunction<SetAudioClockOffsetNative, _SetAudioClockOffset>(
+      'show_host_set_audio_clock_offset',
+    );
     _setAudioTrack = _dylib.lookupFunction<SetAudioTrackNative, _SetAudioTrack>(
       'show_host_set_audio_track',
     );
@@ -157,13 +170,13 @@ class KirakaraShowFFI {
         _dylib.lookupFunction<SetStageVisibleNative, _SetStageVisible>(
       'show_host_set_stage_visible',
     );
-    _setStageWindowRect = _dylib.lookupFunction<SetStageWindowRectNative,
-        _SetStageWindowRect>('show_host_set_stage_window_rect');
+    _setStageWindowRect =
+        _dylib.lookupFunction<SetStageWindowRectNative, _SetStageWindowRect>(
+            'show_host_set_stage_window_rect');
     _setControllerPreviewRect = _dylib.lookupFunction<
         SetControllerPreviewRectNative,
         _SetControllerPreviewRect>('show_host_set_controller_preview_rect');
-    _hideControllerPreview = _dylib.lookupFunction<
-        HideControllerPreviewNative,
+    _hideControllerPreview = _dylib.lookupFunction<HideControllerPreviewNative,
         _HideControllerPreview>('show_host_hide_controller_preview');
     _setControllerQrRect =
         _dylib.lookupFunction<SetControllerQrRectNative, _SetControllerQrRect>(
@@ -214,6 +227,9 @@ class KirakaraShowFFI {
   void stop() => _stop(_handle);
   void seek(double seconds) => _seek(_handle, seconds);
   void setVolume(int volumePercent) => _setVolume(_handle, volumePercent);
+  void setKeySemitones(int keySemitones) => _setKey(_handle, keySemitones);
+  void setAudioClockOffset(double seconds) =>
+      _setAudioClockOffset(_handle, seconds);
   bool setAudioTrack(int track) => _setAudioTrack(_handle, track);
   void setStageVisible(bool visible) => _setStageVisible(_handle, visible);
   void setStageWindowRect({

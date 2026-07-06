@@ -20,6 +20,7 @@ class KirakaraShowService extends ChangeNotifier {
   AudioTrackMode? _loadedAudioTrackMode;
   bool? _lastPlaying;
   int? _lastVolume;
+  int? _lastKey;
   String? _lastCompletedItemId;
   bool _sawEngineProgressForItem = false;
   bool _started = false;
@@ -71,6 +72,7 @@ class KirakaraShowService extends ChangeNotifier {
 
     final state = _playbackService.state;
     _syncVolume(ffi, state);
+    _syncKey(ffi, state);
     final item = state.currentItem;
 
     if (item == null) {
@@ -78,6 +80,7 @@ class KirakaraShowService extends ChangeNotifier {
       _loadedItemId = null;
       _loadedAudioTrackMode = null;
       _lastPlaying = null;
+      _lastKey = null;
       _lastCompletedItemId = null;
       _sawEngineProgressForItem = false;
       _enginePosition = Duration.zero;
@@ -257,6 +260,11 @@ class KirakaraShowService extends ChangeNotifier {
     );
   }
 
+  void setAudioClockOffset(Duration offset) {
+    final seconds = offset.inMicroseconds / Duration.microsecondsPerSecond;
+    _ffi?.setAudioClockOffset(seconds);
+  }
+
   // ── Helpers ────────────────────────────────────────────────────
 
   String? _pathFor(Song song, MediaAssetType type) {
@@ -287,6 +295,13 @@ class KirakaraShowService extends ChangeNotifier {
     if (_lastVolume == volume) return;
     ffi.setVolume(volume);
     _lastVolume = volume;
+  }
+
+  void _syncKey(KirakaraShowFFI ffi, PlaybackState state) {
+    final key = state.key.clamp(-6, 6).toInt();
+    if (_lastKey == key) return;
+    ffi.setKeySemitones(key);
+    _lastKey = key;
   }
 
   void _syncRequestedPosition(
