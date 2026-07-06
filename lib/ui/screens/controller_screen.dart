@@ -642,6 +642,122 @@ class _TopBar extends StatelessWidget {
       next: state.upNext?.song,
       isPaused: state.currentSong != null && !state.isPlaying,
     );
+    final brandBlock = SizedBox(
+      width: 325,
+      child: Row(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: KiraColors.cream,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.graphic_eq,
+              color: KiraColors.red,
+              size: 30,
+            ),
+          ),
+          const SizedBox(width: 15),
+          const Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Kira Karaoke',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 25,
+                    height: 1,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                SizedBox(height: 6),
+                Text(
+                  '家庭 KTV / 实时歌词系统',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: KiraColors.muted,
+                    fontSize: 15,
+                    height: 1,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    final tickerBlock = Container(
+      height: 60,
+      padding: const EdgeInsets.symmetric(horizontal: 19),
+      decoration: BoxDecoration(
+        color: const Color(0xff111216),
+        border: Border.all(color: KiraColors.line),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          const _TickerTag(text: '报幕'),
+          const SizedBox(width: 15),
+          Expanded(
+            child: _MarqueeText(
+              text: tickerText,
+              style: const TextStyle(
+                color: KiraColors.cream,
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    Widget buildActions({required bool includeSearch}) {
+      return Row(
+        mainAxisSize: includeSearch ? MainAxisSize.max : MainAxisSize.min,
+        children: [
+          if (includeSearch) ...[
+            Expanded(
+              child: _TopSearchEntry(onPressed: onSearchTap),
+            ),
+            const SizedBox(width: 15),
+          ],
+          _TopIconButton(
+            icon: Icons.qr_code,
+            tooltip: '手机点歌',
+            onPressed: onQr,
+          ),
+          const SizedBox(width: 15),
+          _TopIconButton(
+            icon: Icons.settings,
+            tooltip: '设定',
+            onPressed: onSettings,
+          ),
+          const SizedBox(width: 15),
+          _TopIconButton(
+            icon:
+                controllerFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+            tooltip: controllerFullscreen ? '退出全屏' : '全屏',
+            onPressed: onFullscreen,
+          ),
+          const SizedBox(width: 15),
+          _TopTextButton(
+            icon: Icons.cast,
+            width: 115,
+            label: '投屏',
+            onPressed: onCast,
+          ),
+        ],
+      );
+    }
+
     return Container(
       height: 95,
       padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 18),
@@ -650,135 +766,31 @@ class _TopBar extends StatelessWidget {
         border: Border(bottom: BorderSide(color: KiraColors.line)),
       ),
       child: Row(
-        children: [
-          Expanded(
-            flex: 2,
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 325,
+        children: showSearch
+            ? [
+                Expanded(
+                  flex: 2,
                   child: Row(
                     children: [
-                      Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          color: KiraColors.cream,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(
-                          Icons.graphic_eq,
-                          color: KiraColors.red,
-                          size: 30,
-                        ),
-                      ),
-                      const SizedBox(width: 15),
-                      const Expanded(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Kira Karaoke',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 25,
-                                height: 1,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            SizedBox(height: 6),
-                            Text(
-                              '家庭 KTV / 实时歌词系统',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: KiraColors.muted,
-                                fontSize: 15,
-                                height: 1,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                      brandBlock,
+                      const SizedBox(width: 22),
+                      Expanded(child: tickerBlock),
                     ],
                   ),
                 ),
                 const SizedBox(width: 22),
                 Expanded(
-                  child: Container(
-                    height: 60,
-                    padding: const EdgeInsets.symmetric(horizontal: 19),
-                    decoration: BoxDecoration(
-                      color: const Color(0xff111216),
-                      border: Border.all(color: KiraColors.line),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(
-                      children: [
-                        const _TickerTag(text: '报幕'),
-                        const SizedBox(width: 15),
-                        Expanded(
-                          child: _MarqueeText(
-                            text: tickerText,
-                            style: const TextStyle(
-                              color: KiraColors.cream,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  flex: 1,
+                  child: buildActions(includeSearch: true),
                 ),
+              ]
+            : [
+                brandBlock,
+                const SizedBox(width: 22),
+                Expanded(child: tickerBlock),
+                const SizedBox(width: 22),
+                buildActions(includeSearch: false),
               ],
-            ),
-          ),
-          const SizedBox(width: 28),
-          Expanded(
-            flex: 1,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 490),
-              child: Row(
-                children: [
-                  if (showSearch) ...[
-                    Expanded(
-                      child: _TopSearchEntry(onPressed: onSearchTap),
-                    ),
-                    const SizedBox(width: 15),
-                  ] else
-                    const Spacer(),
-                  _TopIconButton(icon: Icons.qr_code, onPressed: onQr),
-                  const SizedBox(width: 15),
-                  _TopTextButton(
-                    icon: Icons.settings,
-                    label: '设定',
-                    onPressed: onSettings,
-                  ),
-                  const SizedBox(width: 15),
-                  _TopTextButton(
-                    icon: controllerFullscreen
-                        ? Icons.fullscreen_exit
-                        : Icons.fullscreen,
-                    width: 115,
-                    label: controllerFullscreen ? '窗口' : '全屏',
-                    onPressed: onFullscreen,
-                  ),
-                  const SizedBox(width: 15),
-                  _TopTextButton(
-                    icon: Icons.cast,
-                    width: 115,
-                    label: '投屏',
-                    onPressed: onCast,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1626,10 +1638,12 @@ class _TopIconButton extends StatelessWidget {
   const _TopIconButton({
     required this.icon,
     required this.onPressed,
+    this.tooltip,
   });
 
   final IconData icon;
   final VoidCallback onPressed;
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
@@ -1638,6 +1652,7 @@ class _TopIconButton extends StatelessWidget {
       height: 60,
       child: IconButton.filled(
         onPressed: onPressed,
+        tooltip: tooltip,
         icon: Icon(icon, size: 30),
         style: IconButton.styleFrom(
           backgroundColor: KiraColors.surface2,
