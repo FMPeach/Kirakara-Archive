@@ -146,13 +146,17 @@ class KirakaraShowService extends ChangeNotifier {
   void _loadFromSlot(PlaybackSlot slot, QueueItem item) {
     final ffi = _ffi;
     if (ffi == null) return;
-    if (!slot.isReady || slot.videoPath == null || slot.krlPath == null) return;
+    if (!slot.isReady || slot.videoPath == null) return;
+
+    // 外部歌曲允许 krlPath 为 null
+    final isExternal = item.song.isExternal;
+    if (!isExternal && slot.krlPath == null) return;
 
     _loadedItemId = null;
 
     final loaded = ffi.load(
       slot.videoPath!,
-      slot.krlPath!,
+      lyricPath: isExternal ? null : slot.krlPath,
       vocalPath: slot.vocalPath,
       accompanimentPath: slot.instPath,
     );
@@ -175,7 +179,10 @@ class KirakaraShowService extends ChangeNotifier {
   /// 异步下载 + 加载（慢路径，仅 standby 未命中时用）。
   Future<void> _prepareAndLoadAsync(QueueItem item) async {
     try {
-      if (_assetCache != null) {
+      final isExternal = item.song.isExternal;
+
+      // 外部歌曲跳过 assetCache（视频是 HTTP URL，直接给 MediaEngine 拉流）
+      if (!isExternal && _assetCache != null) {
         await _assetCache.ensureSongAssets(item.song);
       }
 
@@ -183,19 +190,29 @@ class KirakaraShowService extends ChangeNotifier {
       if (ffi == null) return;
 
       final videoPath = _pathFor(item.song, MediaAssetType.video);
-      final lyricPath = item.song.lyricProject.cachedPath ??
-          _pathFor(item.song, MediaAssetType.lyric);
-      if (videoPath == null || lyricPath == null) return;
-      if (!File(videoPath).existsSync() || !File(lyricPath).existsSync()) {
-        return;
+      if (videoPath == null) return;
+
+      // 外部歌曲不需要歌词，也不做 existsSync 检查（视频是 HTTP URL）
+      final String? lyricPath;
+      if (isExternal) {
+        lyricPath = null;
+      } else {
+        lyricPath = item.song.lyricProject?.cachedPath ??
+            _pathFor(item.song, MediaAssetType.lyric);
+        if (lyricPath == null) return;
+        if (!File(videoPath).existsSync() || !File(lyricPath).existsSync()) {
+          return;
+        }
       }
-      final vocalPath = _existingPathFor(item.song, MediaAssetType.vocal);
-      final accompanimentPath =
-          _existingPathFor(item.song, MediaAssetType.accompaniment);
+
+      final vocalPath = isExternal ? null : _existingPathFor(item.song, MediaAssetType.vocal);
+      final accompanimentPath = isExternal
+          ? null
+          : _existingPathFor(item.song, MediaAssetType.accompaniment);
 
       final loaded = ffi.load(
         videoPath,
-        lyricPath,
+        lyricPath: lyricPath,
         vocalPath: vocalPath,
         accompanimentPath: accompanimentPath,
       );
@@ -359,6 +376,10 @@ class KirakaraShowService extends ChangeNotifier {
       if (asset.type != type) continue;
       if (asset.cachedPath != null && asset.cachedPath!.isNotEmpty) {
         return asset.cachedPath;
+      }
+      // HTTP(S) URL 直接返回（外部歌曲流媒体，不走本地文件）
+      if (asset.uri.isScheme('http') || asset.uri.isScheme('https')) {
+        return asset.uri.toString();
       }
       if (asset.uri.isScheme('file')) {
         return asset.uri.toFilePath(windows: Platform.isWindows);

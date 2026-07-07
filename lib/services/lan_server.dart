@@ -80,7 +80,7 @@ class LanServer {
     return {
       'id': song.id,
       'title': song.title,
-      'artist': song.artist.name,
+      'artist': song.artist?.name ?? '未知',
       'category': song.category,
       'code': song.code,
     };

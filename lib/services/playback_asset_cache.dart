@@ -29,10 +29,13 @@ class PlaybackAssetCache {
       await _ensureOne(song.id, asset);
     }
     // KRL 下载后同步更新 lyricProject.cachedPath
-    for (final a in song.assets) {
-      if (a.type == MediaAssetType.lyric && a.cachedPath != null) {
-        song.lyricProject.cachedPath = a.cachedPath;
-        break;
+    final lp = song.lyricProject;
+    if (lp != null) {
+      for (final a in song.assets) {
+        if (a.type == MediaAssetType.lyric && a.cachedPath != null) {
+          lp.cachedPath = a.cachedPath;
+          break;
+        }
       }
     }
   }

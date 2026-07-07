@@ -127,7 +127,7 @@ class SearchService {
     final normalized = query.trim().toLowerCase();
     return pool.where((s) {
       final fields = [
-        s.title, s.artist.name, s.category, s.code ?? '', ...s.tags,
+        s.title, s.artist?.name ?? '未知', s.category, s.code ?? '', ...s.tags,
       ].join(' ').toLowerCase();
       return fields.contains(normalized);
     }).toList();

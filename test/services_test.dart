@@ -153,7 +153,7 @@ void main() {
         contains('20003'));
 
     final song = byTitle.single;
-    expect(song.artist.name, 'KOTOKO');
+    expect(song.artist?.name, 'KOTOKO');
     expect(song.category, 'Jpop');
     expect(song.tags, contains('KRL'));
   });

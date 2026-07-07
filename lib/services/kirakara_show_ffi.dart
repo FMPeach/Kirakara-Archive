@@ -198,13 +198,13 @@ class KirakaraShowFFI {
   }
 
   bool load(
-    String videoPath,
-    String lyricPath, {
+    String videoPath, {
+    String? lyricPath,
     String? vocalPath,
     String? accompanimentPath,
   }) {
     final video = videoPath.toNativeUtf16();
-    final lyric = lyricPath.toNativeUtf16();
+    final lyric = (lyricPath ?? '').toNativeUtf16();
     final vocal = (vocalPath ?? '').toNativeUtf16();
     final accompaniment = (accompanimentPath ?? '').toNativeUtf16();
     try {

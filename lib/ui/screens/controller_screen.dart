@@ -278,7 +278,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                       _QueueItemRow(
                         index: 0,
                         song: currentItem.song,
-                        subtitle: '${currentItem.song.artist.name} · 正在播放',
+                        subtitle: '${currentItem.song.artist?.name ?? '未知'} · 正在播放',
                         isCurrent: true,
                         onBump: null,
                         onDelete: null,
@@ -323,7 +323,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                                   index: index + 1,
                                   song: item.song,
                                   subtitle:
-                                      '${item.song.artist.name} · ${item.song.category}',
+                                      '${item.song.artist?.name ?? '未知'} · ${item.song.category}',
                                   isCurrent: false,
                                   onBump: () {
                                     widget.queueService.bumpItemToNext(item.id);
@@ -812,7 +812,7 @@ class _TopBar extends StatelessWidget {
 
   static String _songLabel(Song? song, {String fallback = '暂无'}) {
     if (song == null) return fallback;
-    return '${song.artist.name} - ${song.title}';
+    return '${song.artist?.name ?? '未知'} - ${song.title}';
   }
 }
 
@@ -1063,7 +1063,7 @@ class _LeftPane extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 10),
                                 Text(
-                                  song?.artist.name ?? '请从右侧或手机加入歌曲',
+                                  song?.artist?.name ?? '请从右侧或手机加入歌曲',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(

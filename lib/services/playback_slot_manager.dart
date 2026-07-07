@@ -90,6 +90,7 @@ class PlaybackSlotManager extends ChangeNotifier {
 
   Future<void> _prepareStandby(QueueItem item) async {
     final gen = ++_prepGeneration;
+    final isExternal = item.song.isExternal;
     final slot = PlaybackSlot(songId: item.song.id)
       ..state = SlotState.preparing
       ..generation = gen
@@ -99,22 +100,23 @@ class PlaybackSlotManager extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1) 下载资源
-      if (_assetCache != null) {
+      // 1) 下载资源 — 外部歌曲跳过（视频是 HTTP URL，直接给引擎拉流）
+      if (!isExternal && _assetCache != null) {
         await _assetCache.ensureSongAssets(item.song);
       }
       if (_isStale(gen)) return;
 
       // 2) 收集本地路径
       slot.videoPath = _pathFor(item.song, MediaAssetType.video);
-      slot.vocalPath = _existingPathFor(item.song, MediaAssetType.vocal);
-      slot.instPath = _existingPathFor(item.song, MediaAssetType.accompaniment);
-      slot.krlPath = item.song.lyricProject.cachedPath ??
-          _pathFor(item.song, MediaAssetType.lyric);
+      slot.vocalPath = isExternal ? null : _existingPathFor(item.song, MediaAssetType.vocal);
+      slot.instPath = isExternal ? null : _existingPathFor(item.song, MediaAssetType.accompaniment);
+      slot.krlPath = isExternal ? null : (item.song.lyricProject?.cachedPath ??
+          _pathFor(item.song, MediaAssetType.lyric));
 
-      if (slot.videoPath == null || slot.krlPath == null) {
+      // 外部歌曲只需 videoPath；普通歌曲需要 video + krl
+      if (slot.videoPath == null || (!isExternal && slot.krlPath == null)) {
         slot.state = SlotState.failed;
-        slot.error = 'missing media or KRL';
+        slot.error = isExternal ? 'missing video URL' : 'missing media or KRL';
         notifyListeners();
         return;
       }
@@ -177,6 +179,10 @@ class PlaybackSlotManager extends ChangeNotifier {
       if (asset.type != type) continue;
       if (asset.cachedPath != null && asset.cachedPath!.isNotEmpty) {
         return asset.cachedPath;
+      }
+      // HTTP(S) URL 直接返回（外部歌曲流媒体）
+      if (asset.uri.isScheme('http') || asset.uri.isScheme('https')) {
+        return asset.uri.toString();
       }
       if (asset.uri.isScheme('file')) {
         return asset.uri.toFilePath(windows: Platform.isWindows);
