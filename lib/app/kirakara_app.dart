@@ -12,6 +12,7 @@ import '../services/kirakara_show_service.dart';
 import '../services/lan_server.dart';
 import '../services/playback_asset_cache.dart';
 import '../services/playback_service.dart';
+import '../services/playback_slot_manager.dart';
 import '../services/queue_service.dart';
 import '../services/search_service.dart';
 import '../ui/screens/controller_screen.dart';
@@ -34,6 +35,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
   late final CastService castService;
   late final LanServer lanServer;
   late final PlaybackAssetCache _assetCache;
+  late final PlaybackSlotManager _slotManager;
   late final KirakaraShowService kirakaraShowService;
   late final StageRenderer stageRenderer;
 
@@ -62,9 +64,14 @@ class _KirakaraAppState extends State<KirakaraApp> {
       initialItem: first,
     );
     playbackService.refreshUpNext();
+    _slotManager = PlaybackSlotManager(
+      queueService: queueService,
+      assetCache: _assetCache,
+    );
     kirakaraShowService = KirakaraShowService(
       playbackService: playbackService,
       assetCache: _assetCache,
+      slotManager: _slotManager,
     )..start();
     displayManager = DisplayManager();
     castService = CastService();
@@ -117,7 +124,10 @@ class _KirakaraAppState extends State<KirakaraApp> {
   void dispose() {
     unawaited(kirakaraShowService.dispose());
     playbackService.disposeService();
-    lanServer.stop();    _assetCache.clear();    _catalogClient.dispose();
+    lanServer.stop();
+    _slotManager.dispose();
+    _assetCache.clear();
+    _catalogClient.dispose();
     _localDb.close();
     super.dispose();
   }

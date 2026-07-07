@@ -10,16 +10,21 @@ import '../domain/song.dart';
 import 'kirakara_show_ffi.dart';
 import 'playback_asset_cache.dart';
 import 'playback_service.dart';
+import 'playback_slot.dart';
+import 'playback_slot_manager.dart';
 
 class KirakaraShowService extends ChangeNotifier {
   KirakaraShowService({
     required PlaybackService playbackService,
     PlaybackAssetCache? assetCache,
+    PlaybackSlotManager? slotManager,
   })  : _playbackService = playbackService,
-        _assetCache = assetCache;
+        _assetCache = assetCache,
+        _slotManager = slotManager;
 
   final PlaybackService _playbackService;
   final PlaybackAssetCache? _assetCache;
+  final PlaybackSlotManager? _slotManager;
   KirakaraShowFFI? _ffi;
   String? _loadedItemId;
   AudioTrackMode? _loadedAudioTrackMode;
@@ -71,64 +76,6 @@ class KirakaraShowService extends ChangeNotifier {
 
   // ── Playback sync ──────────────────────────────────────────────
 
-  /// 异步下载媒体并加载到引擎。
-  Future<void> _prepareAndLoadMedia(QueueItem item) async {
-    if (_preparingSong) return;
-    _preparingSong = true;
-
-    // 立即停引擎 + 重置状态，防止下载期间帧轮询污染 position
-    _ffi?.stop();
-    _loadedItemId = null;
-    _sawEngineProgressForItem = false;
-    _lastCompletedItemId = null;
-    _enginePosition = Duration.zero;
-    _engineDuration = Duration.zero;
-
-    try {
-      // 1) 确保 media + KRL 已下载到本地
-      if (_assetCache != null) {
-        await _assetCache.ensureSongAssets(item.song);
-      }
-
-      final ffi = _ffi;
-      if (ffi == null) return;
-
-      // 2) 查找路径
-      final videoPath = _pathFor(item.song, MediaAssetType.video);
-      final lyricPath = item.song.lyricProject.cachedPath ??
-          _pathFor(item.song, MediaAssetType.lyric);
-      if (videoPath == null || lyricPath == null) return;
-      if (!File(videoPath).existsSync() || !File(lyricPath).existsSync()) {
-        return;
-      }
-      final vocalPath = _existingPathFor(item.song, MediaAssetType.vocal);
-      final accompanimentPath =
-          _existingPathFor(item.song, MediaAssetType.accompaniment);
-
-      // 3) 加载到引擎
-      final loaded = ffi.load(
-        videoPath,
-        lyricPath,
-        vocalPath: vocalPath,
-        accompanimentPath: accompanimentPath,
-      );
-      if (!loaded) return;
-
-      _loadedItemId = item.id;
-      _loadedAudioTrackMode = vocalPath == null && accompanimentPath != null
-          ? AudioTrackMode.accompaniment
-          : AudioTrackMode.vocal;
-      _lastPlaying = null;
-      _enginePosition = Duration.zero;
-      _engineDuration = Duration.zero;
-
-      // 下载完成后再次同步播放状态
-      _syncWithPlayback();
-    } finally {
-      _preparingSong = false;
-    }
-  }
-
   void _syncWithPlayback() {
     if (_applyingEnginePosition) return;
     final ffi = _ffi;
@@ -154,18 +101,11 @@ class KirakaraShowService extends ChangeNotifier {
 
     // Load new media if different from current
     if (_loadedItemId != item.id) {
-      _prepareAndLoadMedia(item);
+      _trySlotSwapOrPrepare(item);
       return;
     }
 
-    if (_loadedAudioTrackMode != state.audioTrackMode) {
-      final changed = ffi.setAudioTrack(_trackIndex(state.audioTrackMode));
-      if (changed) {
-        _loadedAudioTrackMode = state.audioTrackMode;
-      }
-    }
-
-    // 刚加载完新歌时跳过 seek（引擎 position 就是 0，无需同步）
+    _syncAudioTrack(ffi, state);
     final justLoaded = _lastPlaying == null;
     if (!justLoaded) {
       _syncRequestedPosition(ffi, state);
@@ -179,6 +119,110 @@ class KirakaraShowService extends ChangeNotifier {
       ffi.pause();
     }
     _lastPlaying = state.isPlaying;
+  }
+
+  /// 热路径：尝试 slot swap；失败则走异步下载 + 加载。
+  void _trySlotSwapOrPrepare(QueueItem item) {
+    final slot = _slotManager?.consumeStandby(item.song.id);
+    if (slot != null) {
+      _loadFromSlot(slot, item);
+      return;
+    }
+
+    if (_preparingSong) return;
+    _preparingSong = true;
+
+    _loadedItemId = null;
+    _sawEngineProgressForItem = false;
+    _lastCompletedItemId = null;
+    _enginePosition = Duration.zero;
+    _engineDuration = Duration.zero;
+
+    _slotManager?.createFallbackActive(item.song.id, item.song);
+    _prepareAndLoadAsync(item);
+  }
+
+  /// 从已预热 slot 加载（同步，极快）。不调用 stop，避免歌词闪回第一帧。
+  void _loadFromSlot(PlaybackSlot slot, QueueItem item) {
+    final ffi = _ffi;
+    if (ffi == null) return;
+    if (!slot.isReady || slot.videoPath == null || slot.krlPath == null) return;
+
+    _loadedItemId = null;
+
+    final loaded = ffi.load(
+      slot.videoPath!,
+      slot.krlPath!,
+      vocalPath: slot.vocalPath,
+      accompanimentPath: slot.instPath,
+    );
+    if (!loaded) return;
+
+    _loadedItemId = item.id;
+    _loadedAudioTrackMode = slot.vocalPath == null && slot.instPath != null
+        ? AudioTrackMode.accompaniment
+        : AudioTrackMode.vocal;
+    _lastPlaying = null;
+    _lastCompletedItemId = null;
+    _sawEngineProgressForItem = false;
+    _enginePosition = Duration.zero;
+    _engineDuration = Duration.zero;
+
+    _slotManager?.onPlaybackStarted();
+    _syncWithPlayback();
+  }
+
+  /// 异步下载 + 加载（慢路径，仅 standby 未命中时用）。
+  Future<void> _prepareAndLoadAsync(QueueItem item) async {
+    try {
+      if (_assetCache != null) {
+        await _assetCache.ensureSongAssets(item.song);
+      }
+
+      final ffi = _ffi;
+      if (ffi == null) return;
+
+      final videoPath = _pathFor(item.song, MediaAssetType.video);
+      final lyricPath = item.song.lyricProject.cachedPath ??
+          _pathFor(item.song, MediaAssetType.lyric);
+      if (videoPath == null || lyricPath == null) return;
+      if (!File(videoPath).existsSync() || !File(lyricPath).existsSync()) {
+        return;
+      }
+      final vocalPath = _existingPathFor(item.song, MediaAssetType.vocal);
+      final accompanimentPath =
+          _existingPathFor(item.song, MediaAssetType.accompaniment);
+
+      final loaded = ffi.load(
+        videoPath,
+        lyricPath,
+        vocalPath: vocalPath,
+        accompanimentPath: accompanimentPath,
+      );
+      if (!loaded) return;
+
+      _loadedItemId = item.id;
+      _loadedAudioTrackMode = vocalPath == null && accompanimentPath != null
+          ? AudioTrackMode.accompaniment
+          : AudioTrackMode.vocal;
+      _lastPlaying = null;
+      _enginePosition = Duration.zero;
+      _engineDuration = Duration.zero;
+
+      _slotManager?.onPlaybackStarted();
+      _syncWithPlayback();
+    } finally {
+      _preparingSong = false;
+    }
+  }
+
+  void _syncAudioTrack(KirakaraShowFFI ffi, PlaybackState state) {
+    if (_loadedAudioTrackMode != state.audioTrackMode) {
+      final changed = ffi.setAudioTrack(_trackIndex(state.audioTrackMode));
+      if (changed) {
+        _loadedAudioTrackMode = state.audioTrackMode;
+      }
+    }
   }
 
   // ── Frame polling ──────────────────────────────────────────────
