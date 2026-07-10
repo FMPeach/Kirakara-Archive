@@ -5,6 +5,7 @@
 build/
 coverage/
 media/library/
+dist/
 
 # SQLite local index
 kirakara_index.db
