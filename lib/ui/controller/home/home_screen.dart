@@ -495,10 +495,47 @@ class _SongCover extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = Color(song?.coverColor ?? 0xffdd3e38);
+    final coverAsset = song?.assets
+        .cast<MediaAsset?>()
+        .firstWhere(
+          (a) => a?.type == MediaAssetType.cover,
+          orElse: () => null,
+        );
+    final coverPath = coverAsset?.cachedPath;
+    final hasCover = coverPath != null &&
+        coverPath.isNotEmpty &&
+        File(coverPath).existsSync();
+
     return Container(
       width: size,
       height: size,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0x29ffffff)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: hasCover
+          ? Image.file(
+              File(coverPath!),
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) =>
+                  _CoverPlaceholder(song: song, size: size),
+            )
+          : _CoverPlaceholder(song: song, size: size),
+    );
+  }
+}
+
+class _CoverPlaceholder extends StatelessWidget {
+  const _CoverPlaceholder({required this.song, required this.size});
+
+  final Song? song;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Color(song?.coverColor ?? 0xffdd3e38);
+    return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -508,8 +545,6 @@ class _SongCover extends StatelessWidget {
             KiraColors.amber.withValues(alpha: 0.5),
           ],
         ),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0x29ffffff)),
       ),
       child: const Icon(
         Icons.music_note,

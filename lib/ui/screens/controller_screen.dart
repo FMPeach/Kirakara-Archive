@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../domain/media_asset.dart';
 import '../../domain/playback_state.dart';
 import '../../domain/song.dart';
 import '../../engine/stage_renderer.dart';
@@ -113,6 +114,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
             widget.castService,
             widget.kirakaraShowService,
             widget.settingsService,
+            widget.assetCache,
           ]),
           builder: (context, _) {
             return DecoratedBox(
