@@ -231,6 +231,14 @@ class PlaybackAssetCache extends ChangeNotifier {
       if (f.existsSync()) return Future.value();
     }
 
+    // A completed progressive video can remain as `.part` while Media
+    // Foundation still has the file open. Treat it as a finished cache entry
+    // and retry the cosmetic rename without issuing another HTTP request.
+    final completedPart = _completedPartFor(asset);
+    if (completedPart != null) {
+      return _promoteCompletedPart(asset, completedPart);
+    }
+
     // 本地 file:// 无需下载
     if (asset.uri.isScheme('file')) {
       asset.cachedPath = asset.uri.toFilePath(windows: Platform.isWindows);
@@ -338,12 +346,11 @@ class PlaybackAssetCache extends ChangeNotifier {
       final response = await client.send(request);
       if (response.statusCode == HttpStatus.requestedRangeNotSatisfiable) {
         if (existingBytes > 0) {
-          await partFile.rename(localPath);
-          asset.cachedPath = localPath;
           state.complete = true;
-          state.totalLength = await File(localPath).length();
+          state.totalLength = existingBytes;
           state.downloadedBytes = state.totalLength ?? 0;
           _notifyProgressListeners();
+          await _promoteCompletedPart(asset, partFile);
         }
         return;
       }
@@ -387,16 +394,15 @@ class PlaybackAssetCache extends ChangeNotifier {
       final expectedLength = _expectedLength(response, existingBytes);
       final actualLength = await partFile.length();
       if (expectedLength == null || actualLength >= expectedLength) {
-        if (await localFile.exists()) {
-          await localFile.delete();
-        }
-        await partFile.rename(localPath);
-        asset.cachedPath = localPath;
+        // Completion is defined by bytes on disk, not by whether Windows lets
+        // us rename a file that MF is currently reading. Mark it complete
+        // first so the queue cannot get stuck at 100% or download it twice.
         state.complete = true;
         state.totalLength = actualLength;
         state.downloadedBytes = actualLength;
         state.markSample(actualLength);
         _notifyProgressListeners();
+        await _promoteCompletedPart(asset, partFile);
       }
     } catch (_) {
       // 下载失败，asset.cachedPath 保持 null
@@ -719,6 +725,37 @@ class PlaybackAssetCache extends ChangeNotifier {
 
   _DownloadState _downloadStateFor(MediaAsset asset) =>
       _downloadStates.putIfAbsent(_localPathFor(asset), _DownloadState.new);
+
+  File? _completedPartFor(MediaAsset asset) {
+    final state = _downloadStateFor(asset);
+    if (!state.complete) return null;
+    final partFile = File('${_localPathFor(asset)}.part');
+    if (!partFile.existsSync()) return null;
+    final length = partFile.lengthSync();
+    final expected = state.totalLength;
+    if (length <= 0 || (expected != null && length < expected)) return null;
+    return partFile;
+  }
+
+  Future<void> _promoteCompletedPart(
+    MediaAsset asset,
+    File partFile,
+  ) async {
+    final localPath = _localPathFor(asset);
+    final localFile = File(localPath);
+    try {
+      if (await localFile.exists()) {
+        asset.cachedPath = localPath;
+        return;
+      }
+      await partFile.rename(localPath);
+      asset.cachedPath = localPath;
+    } on FileSystemException {
+      // The loopback stream may still be serving this file to MF. The `.part`
+      // already contains the complete resource and remains the readable source
+      // until a later ensure call can promote it.
+    }
+  }
 
   _AssetProgress _progressForAsset(MediaAsset asset) {
     if (asset.uri.isScheme('file')) {

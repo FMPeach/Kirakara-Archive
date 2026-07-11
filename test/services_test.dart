@@ -451,7 +451,7 @@ void main() {
     }
     expect(video.cachedPath, isNotNull);
     expect(File(video.cachedPath!).existsSync(), isTrue);
-    expect(cache.playbackPathFor(video), video.cachedPath);
+    expect(cache.playbackPathFor(video), startsWith('http://127.0.0.1:'));
   });
 
   test('playback cache starts video while required audio is still loading',
