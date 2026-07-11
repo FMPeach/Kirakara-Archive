@@ -836,11 +836,11 @@ class _TopBar extends StatelessWidget {
       if (custom.isNotEmpty) custom,
       '当前播放：${_songLabel(current, fallback: '等待点歌')}',
       if (isBuffering)
-        '播放状态：正在缓冲'
+        '正在缓冲'
       else if (current == null || mode == PlaybackMode.stopped)
-        '播放状态：已停止'
+        '已停止'
       else if (mode == PlaybackMode.paused)
-        '播放状态：暂停中',
+        '暂停中',
       next == null ? '下一首：暂无，快去点一首吧' : '下一首：${_songLabel(next)}',
     ];
     return parts.join('  ·  ');
