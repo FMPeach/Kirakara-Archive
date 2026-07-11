@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../domain/playback_state.dart';
 import '../domain/queue_item.dart';
+import '../domain/song.dart';
 import 'queue_service.dart';
 
 class PlaybackService extends ChangeNotifier {
@@ -13,6 +14,7 @@ class PlaybackService extends ChangeNotifier {
 
   final QueueService _queueService;
   PlaybackState _state;
+  int _directSequence = 0;
 
   PlaybackState get state => _state;
 
@@ -85,6 +87,22 @@ class PlaybackService extends ChangeNotifier {
         upNext: upNext,
         clearUpNext: upNext == null,
       ),
+    );
+  }
+
+  void setCurrentSong(
+    Song song, {
+    bool startPlaying = true,
+    String requestedBy = '本机',
+  }) {
+    setCurrent(
+      QueueItem(
+        id: 'direct-${++_directSequence}',
+        song: song,
+        requestedBy: requestedBy,
+        addedAt: DateTime.now(),
+      ),
+      startPlaying: startPlaying,
     );
   }
 

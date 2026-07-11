@@ -26,7 +26,9 @@ class KirakaraShowService extends ChangeNotifier {
   final PlaybackAssetCache? _assetCache;
   final PlaybackSlotManager? _slotManager;
   KirakaraShowFFI? _ffi;
+  String? _loadedSongId;
   String? _loadedItemId;
+  String? _preparingItemId;
   AudioTrackMode? _loadedAudioTrackMode;
   bool? _lastPlaying;
   int? _lastVolume;
@@ -36,7 +38,7 @@ class KirakaraShowService extends ChangeNotifier {
   bool _started = false;
   bool _applyingEnginePosition = false;
   bool _controllerPreviewSuppressed = false;
-  bool _preparingSong = false;
+  int _prepareGeneration = 0;
   Duration _enginePosition = Duration.zero;
   Duration _engineDuration = Duration.zero;
 
@@ -87,8 +89,11 @@ class KirakaraShowService extends ChangeNotifier {
     final item = state.currentItem;
 
     if (item == null) {
+      _prepareGeneration++;
       ffi.stop();
+      _loadedSongId = null;
       _loadedItemId = null;
+      _preparingItemId = null;
       _loadedAudioTrackMode = null;
       _lastPlaying = null;
       _lastKey = null;
@@ -99,8 +104,7 @@ class KirakaraShowService extends ChangeNotifier {
       return;
     }
 
-    // Load new media if different from current
-    if (_loadedItemId != item.id) {
+    if (_loadedItemId != item.id || _loadedSongId != item.song.id) {
       _trySlotSwapOrPrepare(item);
       return;
     }
@@ -125,21 +129,27 @@ class KirakaraShowService extends ChangeNotifier {
   void _trySlotSwapOrPrepare(QueueItem item) {
     final slot = _slotManager?.consumeStandby(item.song.id);
     if (slot != null) {
+      _prepareGeneration++;
+      _preparingItemId = null;
       _loadFromSlot(slot, item);
       return;
     }
 
-    if (_preparingSong) return;
-    _preparingSong = true;
+    if (_preparingItemId == item.id) return;
+    final generation = ++_prepareGeneration;
+    _preparingItemId = item.id;
 
+    _ffi?.pause();
+    _loadedSongId = null;
     _loadedItemId = null;
     _sawEngineProgressForItem = false;
     _lastCompletedItemId = null;
+    _lastPlaying = null;
     _enginePosition = Duration.zero;
     _engineDuration = Duration.zero;
 
     _slotManager?.createFallbackActive(item.song.id, item.song);
-    _prepareAndLoadAsync(item);
+    _prepareAndLoadAsync(item, generation);
   }
 
   /// 从已预热 slot 加载（同步，极快）。不调用 stop，避免歌词闪回第一帧。
@@ -152,6 +162,7 @@ class KirakaraShowService extends ChangeNotifier {
     final isExternal = item.song.isExternal;
     if (!isExternal && slot.krlPath == null) return;
 
+    _loadedSongId = null;
     _loadedItemId = null;
 
     final loaded = ffi.load(
@@ -162,6 +173,7 @@ class KirakaraShowService extends ChangeNotifier {
     );
     if (!loaded) return;
 
+    _loadedSongId = item.song.id;
     _loadedItemId = item.id;
     _loadedAudioTrackMode = slot.vocalPath == null && slot.instPath != null
         ? AudioTrackMode.accompaniment
@@ -177,20 +189,22 @@ class KirakaraShowService extends ChangeNotifier {
   }
 
   /// 异步下载 + 加载（慢路径，仅 standby 未命中时用）。
-  Future<void> _prepareAndLoadAsync(QueueItem item) async {
+  Future<void> _prepareAndLoadAsync(QueueItem item, int generation) async {
     try {
       final isExternal = item.song.isExternal;
 
       // 外部歌曲跳过 assetCache（视频是 HTTP URL，直接给 MediaEngine 拉流）
       if (!isExternal && _assetCache != null) {
-        await _assetCache.ensureSongAssets(item.song);
+        await _assetCache.ensurePlaybackAssets(item.song);
       }
+      if (!_isCurrentPreparation(item, generation)) return;
 
       final ffi = _ffi;
       if (ffi == null) return;
 
       final videoPath = _pathFor(item.song, MediaAssetType.video);
       if (videoPath == null) return;
+      if (!_isCurrentPreparation(item, generation)) return;
 
       // 外部歌曲不需要歌词，也不做 existsSync 检查（视频是 HTTP URL）
       final String? lyricPath;
@@ -200,15 +214,18 @@ class KirakaraShowService extends ChangeNotifier {
         lyricPath = item.song.lyricProject?.cachedPath ??
             _pathFor(item.song, MediaAssetType.lyric);
         if (lyricPath == null) return;
-        if (!File(videoPath).existsSync() || !File(lyricPath).existsSync()) {
+        if ((!_isHttpPath(videoPath) && !File(videoPath).existsSync()) ||
+            !File(lyricPath).existsSync()) {
           return;
         }
       }
 
-      final vocalPath = isExternal ? null : _existingPathFor(item.song, MediaAssetType.vocal);
+      final vocalPath =
+          isExternal ? null : _existingPathFor(item.song, MediaAssetType.vocal);
       final accompanimentPath = isExternal
           ? null
           : _existingPathFor(item.song, MediaAssetType.accompaniment);
+      if (!_isCurrentPreparation(item, generation)) return;
 
       final loaded = ffi.load(
         videoPath,
@@ -216,9 +233,15 @@ class KirakaraShowService extends ChangeNotifier {
         vocalPath: vocalPath,
         accompanimentPath: accompanimentPath,
       );
-      if (!loaded) return;
+      if (!loaded) {
+        return;
+      }
 
+      _loadedSongId = item.song.id;
       _loadedItemId = item.id;
+      if (_preparingItemId == item.id && generation == _prepareGeneration) {
+        _preparingItemId = null;
+      }
       _loadedAudioTrackMode = vocalPath == null && accompanimentPath != null
           ? AudioTrackMode.accompaniment
           : AudioTrackMode.vocal;
@@ -229,8 +252,16 @@ class KirakaraShowService extends ChangeNotifier {
       _slotManager?.onPlaybackStarted();
       _syncWithPlayback();
     } finally {
-      _preparingSong = false;
+      if (_preparingItemId == item.id && generation == _prepareGeneration) {
+        _preparingItemId = null;
+      }
     }
+  }
+
+  bool _isCurrentPreparation(QueueItem item, int generation) {
+    return generation == _prepareGeneration &&
+        _preparingItemId == item.id &&
+        _playbackService.state.currentItem?.id == item.id;
   }
 
   void _syncAudioTrack(KirakaraShowFFI ffi, PlaybackState state) {
@@ -269,19 +300,24 @@ class KirakaraShowService extends ChangeNotifier {
 
     final state = _playbackService.state;
     final itemId = state.currentItem?.id;
+    final songId = state.currentItem?.song.id;
+    final loadedCurrentItem =
+        itemId != null && itemId == _loadedItemId && songId == _loadedSongId;
+    if (!loadedCurrentItem || _preparingItemId != null) {
+      return;
+    }
     if (state.isPlaying &&
-        itemId != null &&
-        itemId == _loadedItemId &&
+        songId != null &&
         (engineState == 1 ||
             _enginePosition > const Duration(milliseconds: 1000))) {
       _sawEngineProgressForItem = true;
     }
     if (_shouldAdvanceAfterEngineEnd(
       state: state,
-      itemId: itemId,
+      songId: songId,
       engineState: engineState,
     )) {
-      _advanceAfterEngineEnd(itemId!);
+      _advanceAfterEngineEnd();
       return;
     }
 
@@ -374,6 +410,8 @@ class KirakaraShowService extends ChangeNotifier {
   String? _pathFor(Song song, MediaAssetType type) {
     for (final asset in song.assets) {
       if (asset.type != type) continue;
+      final cached = _assetCache?.playbackPathFor(asset);
+      if (cached != null) return cached;
       if (asset.cachedPath != null && asset.cachedPath!.isNotEmpty) {
         return asset.cachedPath;
       }
@@ -393,6 +431,9 @@ class KirakaraShowService extends ChangeNotifier {
     if (path == null || !File(path).existsSync()) return null;
     return path;
   }
+
+  bool _isHttpPath(String path) =>
+      path.startsWith('http://') || path.startsWith('https://');
 
   int _trackIndex(AudioTrackMode mode) {
     return mode == AudioTrackMode.accompaniment ? 1 : 0;
@@ -437,12 +478,13 @@ class KirakaraShowService extends ChangeNotifier {
 
   bool _shouldAdvanceAfterEngineEnd({
     required PlaybackState state,
-    required String? itemId,
+    required String? songId,
     required int engineState,
   }) {
-    if (!state.isPlaying || itemId == null || itemId != _loadedItemId) {
+    if (!state.isPlaying || songId == null || songId != _loadedSongId) {
       return false;
     }
+    final itemId = state.currentItem?.id;
     if (_lastCompletedItemId == itemId) return false;
 
     const stopped = 3;
@@ -454,8 +496,8 @@ class KirakaraShowService extends ChangeNotifier {
         _engineDuration;
   }
 
-  void _advanceAfterEngineEnd(String itemId) {
-    _lastCompletedItemId = itemId;
+  void _advanceAfterEngineEnd() {
+    _lastCompletedItemId = _playbackService.state.currentItem?.id;
     _applyingEnginePosition = true;
     try {
       _playbackService.next();

@@ -25,6 +25,7 @@ class PlaybackSlotManager extends ChangeNotifier {
 
   final QueueService _queueService;
   final PlaybackAssetCache? _assetCache;
+  static const int _prefetchLookahead = 3;
 
   PlaybackSlot? _activeSlot;
   PlaybackSlot? _standbySlot;
@@ -75,6 +76,8 @@ class PlaybackSlotManager extends ChangeNotifier {
       return;
     }
 
+    _prefetchQueuedItems();
+
     final nextId = nextItem.song.id;
     // 如果 standby 已经是同一首且 ready/preparing，不重复准备
     if (_standbySlot != null &&
@@ -86,6 +89,23 @@ class PlaybackSlotManager extends ChangeNotifier {
     _prepareStandby(nextItem);
   }
 
+  void _prefetchQueuedItems() {
+    final cache = _assetCache;
+    if (cache == null) return;
+
+    final items = _queueService.items;
+    final limit =
+        items.length < _prefetchLookahead ? items.length : _prefetchLookahead;
+    for (var i = 0; i < limit; i++) {
+      final song = items[i].song;
+      if (song.isExternal) continue;
+      // priority: 0=active, 1=standby, 2+i=queue
+      final priority = i.clamp(0, 3);
+      cache.setSongPriority(song.id, priority);
+      cache.prefetchPlaybackAssets(song);
+    }
+  }
+
   // ── 准备 standby ──────────────────────────────────────────────
 
   Future<void> _prepareStandby(QueueItem item) async {
@@ -94,24 +114,38 @@ class PlaybackSlotManager extends ChangeNotifier {
     final slot = PlaybackSlot(songId: item.song.id)
       ..state = SlotState.preparing
       ..generation = gen
-      ..song = item.song;
+      ..song = item.song
+      ..priority = 1; // standby = 1
 
     _standbySlot = slot;
     notifyListeners();
 
     try {
-      // 1) 下载资源 — 外部歌曲跳过（视频是 HTTP URL，直接给引擎拉流）
+      // 1) 下载资源 — 外部歌曲跳过
       if (!isExternal && _assetCache != null) {
-        await _assetCache.ensureSongAssets(item.song);
+        _assetCache.setSongPriority(item.song.id, 1);
+        // 进度轮询
+        unawaited(_pollSlotProgress(slot, gen));
+        await _assetCache.ensurePlaybackAssets(item.song);
       }
       if (_isStale(gen)) return;
 
+      // 标记下载完成
+      slot.downloadComplete = true;
+      slot.downloadedBytes = slot.downloadTotal;
+      notifyListeners();
+
       // 2) 收集本地路径
       slot.videoPath = _pathFor(item.song, MediaAssetType.video);
-      slot.vocalPath = isExternal ? null : _existingPathFor(item.song, MediaAssetType.vocal);
-      slot.instPath = isExternal ? null : _existingPathFor(item.song, MediaAssetType.accompaniment);
-      slot.krlPath = isExternal ? null : (item.song.lyricProject?.cachedPath ??
-          _pathFor(item.song, MediaAssetType.lyric));
+      slot.vocalPath =
+          isExternal ? null : _existingPathFor(item.song, MediaAssetType.vocal);
+      slot.instPath = isExternal
+          ? null
+          : _existingPathFor(item.song, MediaAssetType.accompaniment);
+      slot.krlPath = isExternal
+          ? null
+          : (item.song.lyricProject?.cachedPath ??
+              _existingPathFor(item.song, MediaAssetType.lyric));
 
       // 外部歌曲只需 videoPath；普通歌曲需要 video + krl
       if (slot.videoPath == null || (!isExternal && slot.krlPath == null)) {
@@ -145,6 +179,8 @@ class PlaybackSlotManager extends ChangeNotifier {
     if (standby.songId != nextSongId) return null;
 
     _activeSlot = standby;
+    _activeSlot!.priority = 0;
+    _assetCache?.setSongPriority(_activeSlot!.songId, 0);
     _standbySlot = null;
     notifyListeners();
 
@@ -161,7 +197,9 @@ class PlaybackSlotManager extends ChangeNotifier {
   PlaybackSlot createFallbackActive(String songId, Song song) {
     _activeSlot = PlaybackSlot(songId: songId)
       ..song = song
-      ..state = SlotState.empty;
+      ..state = SlotState.empty
+      ..priority = 0;
+    _assetCache?.setSongPriority(songId, 0);
     _standbySlot = null;
     notifyListeners();
     return _activeSlot!;
@@ -177,6 +215,8 @@ class PlaybackSlotManager extends ChangeNotifier {
   String? _pathFor(Song song, MediaAssetType type) {
     for (final asset in song.assets) {
       if (asset.type != type) continue;
+      final cached = _assetCache?.playbackPathFor(asset);
+      if (cached != null) return cached;
       if (asset.cachedPath != null && asset.cachedPath!.isNotEmpty) {
         return asset.cachedPath;
       }
@@ -192,11 +232,33 @@ class PlaybackSlotManager extends ChangeNotifier {
   }
 
   String? _existingPathFor(Song song, MediaAssetType type) {
-    final path = _pathFor(song, type);
-    if (path == null || !File(path).existsSync()) return null;
-    return path;
+    for (final asset in song.assets) {
+      if (asset.type != type) continue;
+      final cached = _assetCache?.existingLocalPathFor(asset);
+      if (cached != null) return cached;
+      final path = _pathFor(song, type);
+      if (path == null || !File(path).existsSync()) return null;
+      return path;
+    }
+    return null;
   }
 
   bool _isStale(int generation) =>
       generation != _prepGeneration || _standbySlot?.generation != generation;
+
+  Future<void> _pollSlotProgress(PlaybackSlot slot, int generation) async {
+    final cache = _assetCache;
+    if (cache == null || slot.song == null) return;
+    while (!_isStale(generation) && slot.state == SlotState.preparing) {
+      await Future.delayed(const Duration(milliseconds: 200));
+      final song = slot.song!;
+      final progress = cache.songProgress(song);
+      slot.downloadTotal = progress.total;
+      slot.downloadedBytes = progress.downloaded;
+      slot.downloadComplete = progress.complete;
+      if (slot.downloadTotal > 0 || slot.downloadedBytes > 0) {
+        notifyListeners();
+      }
+    }
+  }
 }

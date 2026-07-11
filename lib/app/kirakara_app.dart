@@ -127,6 +127,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
     lanServer.stop();
     _slotManager.dispose();
     _assetCache.clear();
+    _assetCache.dispose();
     _catalogClient.dispose();
     _localDb.close();
     super.dispose();
@@ -142,6 +143,8 @@ class _KirakaraAppState extends State<KirakaraApp> {
         searchService: searchService,
         queueService: queueService,
         playbackService: playbackService,
+        assetCache: _assetCache,
+        slotManager: _slotManager,
         displayManager: displayManager,
         kirakaraShowService: kirakaraShowService,
         castService: castService,

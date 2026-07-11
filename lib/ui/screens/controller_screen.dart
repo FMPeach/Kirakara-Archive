@@ -8,7 +8,10 @@ import '../../services/display_manager.dart';
 import '../../services/kirakara_show_service.dart';
 import '../../services/lan_server.dart';
 import '../../services/native_window_service.dart';
+import '../../services/playback_asset_cache.dart';
 import '../../services/playback_service.dart';
+import '../../services/playback_slot.dart';
+import '../../services/playback_slot_manager.dart';
 import '../../services/queue_service.dart';
 import '../../services/search_service.dart';
 import '../theme/kirakara_theme.dart';
@@ -24,6 +27,8 @@ class ControllerScreen extends StatefulWidget {
     required this.searchService,
     required this.queueService,
     required this.playbackService,
+    required this.assetCache,
+    required this.slotManager,
     required this.displayManager,
     required this.kirakaraShowService,
     required this.castService,
@@ -34,6 +39,8 @@ class ControllerScreen extends StatefulWidget {
   final SearchService searchService;
   final QueueService queueService;
   final PlaybackService playbackService;
+  final PlaybackAssetCache assetCache;
+  final PlaybackSlotManager slotManager;
   final DisplayManager displayManager;
   final KirakaraShowService kirakaraShowService;
   final CastService castService;
@@ -182,10 +189,10 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 
   void _addSong(Song song) {
-    final item = widget.queueService.addSong(song);
     if (widget.playbackService.state.currentItem == null) {
-      widget.playbackService.setCurrentFromQueue(item, startPlaying: true);
+      _startSongAfterFrame(song);
     } else {
+      widget.queueService.addSong(song);
       widget.playbackService.refreshUpNext();
     }
     setState(() {
@@ -194,14 +201,21 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 
   void _bumpSong(Song song) {
-    final item = widget.queueService.bumpToNext(song);
     if (widget.playbackService.state.currentItem == null) {
-      widget.playbackService.setCurrentFromQueue(item, startPlaying: true);
+      _startSongAfterFrame(song);
     } else {
+      widget.queueService.bumpToNext(song);
       widget.playbackService.refreshUpNext();
     }
     setState(() {
       _announcement = '已顶到下一首：${song.title}';
+    });
+  }
+
+  void _startSongAfterFrame(Song song) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.playbackService.state.currentItem != null) return;
+      widget.playbackService.setCurrentSong(song, startPlaying: true);
     });
   }
 
@@ -257,15 +271,64 @@ class _ControllerScreenState extends State<ControllerScreen> {
     });
   }
 
+  _SlotProgress _slotProgressForSong(
+    Song song,
+    PlaybackSlot? activeSlot, {
+    required bool isCurrent,
+  }) {
+    // 当前播放中且 active slot 匹配且有有效数据
+    if (isCurrent &&
+        activeSlot?.songId == song.id &&
+        activeSlot!.downloadTotal > 0) {
+      final slot = activeSlot;
+      return _SlotProgress(
+        state: slot.state,
+        downloaded: slot.downloadedBytes,
+        total: slot.downloadTotal,
+        complete: slot.downloadComplete,
+      );
+    }
+    // 从缓存获取进度
+    final progress = widget.assetCache.songProgress(song);
+    if (progress.complete) {
+      return _SlotProgress(
+        state: SlotState.ready,
+        downloaded: progress.downloaded,
+        total: progress.total,
+        complete: true,
+      );
+    }
+    if (progress.total > 0 || progress.downloaded > 0) {
+      return _SlotProgress(
+        state: SlotState.preparing,
+        downloaded: progress.downloaded,
+        total: progress.total,
+        complete: false,
+      );
+    }
+    return const _SlotProgress(
+      state: SlotState.empty,
+      downloaded: 0,
+      total: 0,
+      complete: false,
+    );
+  }
+
   void _showQueueDialog() {
     _showDialogAboveNativePreview<void>(
       builder: (context) {
         return AnimatedBuilder(
           animation:
-              Listenable.merge([widget.queueService, widget.playbackService]),
+              Listenable.merge([
+            widget.queueService,
+            widget.playbackService,
+            widget.assetCache,
+            widget.slotManager,
+          ]),
           builder: (context, _) {
             final currentItem = widget.playbackService.state.currentItem;
             final queueItems = widget.queueService.items;
+            final activeSlot = widget.slotManager.activeSlot;
             return _KiraDialog(
               title: '点歌列表',
               width: 680,
@@ -280,6 +343,14 @@ class _ControllerScreenState extends State<ControllerScreen> {
                         song: currentItem.song,
                         subtitle: '${currentItem.song.artist?.name ?? '未知'} · 正在播放',
                         isCurrent: true,
+                        progress: widget.assetCache.progressForSong(
+                          currentItem.song,
+                        ),
+                        slotProgress: _slotProgressForSong(
+                          currentItem.song,
+                          activeSlot,
+                          isCurrent: true,
+                        ),
                         onBump: null,
                         onDelete: null,
                       ),
@@ -325,6 +396,14 @@ class _ControllerScreenState extends State<ControllerScreen> {
                                   subtitle:
                                       '${item.song.artist?.name ?? '未知'} · ${item.song.category}',
                                   isCurrent: false,
+                                  progress: widget.assetCache.progressForSong(
+                                    item.song,
+                                  ),
+                                  slotProgress: _slotProgressForSong(
+                                    item.song,
+                                    activeSlot,
+                                    isCurrent: false,
+                                  ),
                                   onBump: () {
                                     widget.queueService.bumpItemToNext(item.id);
                                     widget.playbackService.refreshUpNext();
@@ -1866,12 +1945,27 @@ class _StatusLine extends StatelessWidget {
   }
 }
 
+class _SlotProgress {
+  const _SlotProgress({
+    required this.state,
+    required this.downloaded,
+    required this.total,
+    required this.complete,
+  });
+  final SlotState state;
+  final int downloaded;
+  final int total;
+  final bool complete;
+}
+
 class _QueueItemRow extends StatelessWidget {
   const _QueueItemRow({
     required this.index,
     required this.song,
     required this.subtitle,
     required this.isCurrent,
+    required this.progress,
+    this.slotProgress,
     this.onBump,
     this.onDelete,
   });
@@ -1880,6 +1974,8 @@ class _QueueItemRow extends StatelessWidget {
   final Song song;
   final String subtitle;
   final bool isCurrent;
+  final PlaybackAssetProgress progress;
+  final _SlotProgress? slotProgress;
   final VoidCallback? onBump;
   final VoidCallback? onDelete;
 
@@ -1948,31 +2044,46 @@ class _QueueItemRow extends StatelessWidget {
             ),
           ),
           if (isCurrent)
-            Container(
-              height: 24,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                color: const Color(0x2422c59b),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: const Color(0x4722c59b)),
-              ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.circle, size: 6, color: KiraColors.teal),
-                  SizedBox(width: 4),
-                  Text(
-                    '播放中',
-                    style: TextStyle(
-                      color: KiraColors.teal,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w900,
-                    ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _DownloadStatus(
+                  progress: progress,
+                  slotProgress: slotProgress,
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  height: 24,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0x2422c59b),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: const Color(0x4722c59b)),
                   ),
-                ],
-              ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.circle, size: 6, color: KiraColors.teal),
+                      SizedBox(width: 4),
+                      Text(
+                        '播放中',
+                        style: TextStyle(
+                          color: KiraColors.teal,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             )
           else ...[
+            _DownloadStatus(
+              progress: progress,
+              slotProgress: slotProgress,
+            ),
+            const SizedBox(width: 10),
             if (onBump != null)
               _QueueIconButton(
                 icon: Icons.arrow_upward,
@@ -1992,6 +2103,105 @@ class _QueueItemRow extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _DownloadStatus extends StatelessWidget {
+  const _DownloadStatus({required this.progress, this.slotProgress});
+
+  final PlaybackAssetProgress progress;
+  final _SlotProgress? slotProgress;
+
+  @override
+  Widget build(BuildContext context) {
+    // 下载完毕：所有资源完整缓存，不需要再显示进度条
+    if (progress.isComplete) {
+      return const SizedBox(width: 112);
+    }
+
+    final sp = slotProgress;
+    // 队列中无任何下载活动 → 等待下载
+    if (sp != null &&
+        sp.state == SlotState.empty &&
+        progress.knownAssets == 0) {
+      return const SizedBox(
+        width: 112,
+        child: Text(
+          '等待下载',
+          style: TextStyle(
+            color: KiraColors.muted,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      );
+    }
+
+    final fraction = progress.fraction;
+    final label = fraction == null
+        ? '${progress.completeAssets}/${progress.assetCount}'
+        : '${(fraction * 100).round()}%';
+    final speed = progress.bytesPerSecond > 1
+        ? '${_formatBytes(progress.bytesPerSecond.round())}/s'
+        : '准备中…';
+
+    return SizedBox(
+      width: 112,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: progress.isComplete ? KiraColors.teal : KiraColors.amber,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  speed,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    color: KiraColors.muted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              minHeight: 4,
+              value: fraction,
+              backgroundColor: KiraColors.surface2,
+              valueColor: const AlwaysStoppedAnimation<Color>(KiraColors.amber),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _formatBytes(int bytes) {
+    if (bytes < 1024) return '${bytes}B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(kb >= 100 ? 0 : 1)}KB';
+    final mb = kb / 1024;
+    if (mb < 1024) return '${mb.toStringAsFixed(mb >= 100 ? 0 : 1)}MB';
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(gb >= 100 ? 0 : 1)}GB';
   }
 }
 
