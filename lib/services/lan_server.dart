@@ -1,7 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../domain/queue_item.dart';
 import '../domain/song.dart';
+import 'bilibili_resolver.dart';
+import 'playback_service.dart';
 import 'queue_service.dart';
 import 'search_service.dart';
 
@@ -9,27 +12,59 @@ class LanServer {
   LanServer({
     required QueueService queueService,
     required SearchService searchService,
+    required PlaybackService playbackService,
   })  : _queueService = queueService,
-        _searchService = searchService;
+        _searchService = searchService,
+        _playbackService = playbackService;
 
   final QueueService _queueService;
   final SearchService _searchService;
+  final PlaybackService _playbackService;
   HttpServer? _server;
+  String? _lanIp;
 
   bool get isRunning => _server != null;
   Uri? get localUri {
-    final server = _server;
-    if (server == null) {
+    if (_server == null || _lanIp == null) return null;
+    return Uri.parse('http://$_lanIp:${_server!.port}');
+  }
+
+  /// 多网卡环境下优选非回环、非虚拟网卡的 LAN IPv4。
+  static Future<String?> _detectLanIp() async {
+    try {
+      final interfaces = await NetworkInterface.list();
+      String? best;
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          if (addr.type != InternetAddressType.IPv4) continue;
+          final ip = addr.address;
+          if (ip == '127.0.0.1') continue;
+          // 排除虚拟网卡和 VPN
+          final name = iface.name.toLowerCase();
+          if (name.contains('virtual') || name.contains('vmware') ||
+              name.contains('virtualbox') || name.contains('hyper-v') ||
+              name.contains('vpn') || name.contains('loopback') ||
+              name.contains('bluetooth') || name.contains('tunnel')) {
+            continue;
+          }
+          // 优选以太网 / Wi-Fi
+          if (name.contains('ethernet') || name.contains('wi-fi') ||
+              name.contains('wlan') || name.contains('en') ||
+              name.contains('eth')) {
+            return ip;
+          }
+          best ??= ip;
+        }
+      }
+      return best;
+    } catch (_) {
       return null;
     }
-    return Uri.parse('http://${server.address.host}:${server.port}');
   }
 
   Future<void> start({int port = 7391}) async {
-    if (_server != null) {
-      return;
-    }
-
+    if (_server != null) return;
+    _lanIp = await _detectLanIp();
     _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
     _server!.listen(_handleRequest);
   }
@@ -37,22 +72,79 @@ class LanServer {
   Future<void> stop() async {
     await _server?.close(force: true);
     _server = null;
+    _lanIp = null;
   }
 
   Future<void> _handleRequest(HttpRequest request) async {
+    // CORS
     request.response.headers
-      ..contentType = ContentType.json
-      ..add('Access-Control-Allow-Origin', '*');
+      ..add('Access-Control-Allow-Origin', '*')
+      ..add('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+      ..add('Access-Control-Allow-Headers', 'Content-Type');
 
-    if (request.method == 'GET' && request.uri.path == '/api/search') {
-      final query = request.uri.queryParameters['q'] ?? '';
-      final songs = await _searchService.search(query);
-      request.response.write(jsonEncode(songs.map(_songToJson).toList()));
+    if (request.method == 'OPTIONS') {
+      request.response.statusCode = 204;
       await request.response.close();
       return;
     }
 
-    if (request.method == 'POST' && request.uri.path == '/api/queue') {
+    final path = request.uri.path;
+    final method = request.method;
+
+    // ── Static HTML ──────────────────────────────────────────
+    if (method == 'GET' && (path == '/' || path == '/index.html')) {
+      await _serveFile(request, 'html/mobile-request.html', 'text/html; charset=utf-8');
+      return;
+    }
+    if (method == 'GET' && path.startsWith('/static/')) {
+      await _serveStatic(request, path);
+      return;
+    }
+
+    // ── API ──────────────────────────────────────────────────
+    try {
+      await _handleApi(request, method, path);
+    } catch (e) {
+      _json(request, 500, {'error': 'internal', 'detail': e.toString()});
+    }
+  }
+
+  Future<void> _handleApi(HttpRequest request, String method, String path) async {
+    // GET /api/cover?url= — 代理封面图片（绕过 B站 referer 限制）
+    if (method == 'GET' && path == '/api/cover') {
+      await _proxyCover(request);
+      return;
+    }
+
+    // GET /api/featured — 推荐歌曲
+    if (method == 'GET' && path == '/api/featured') {
+      final songs = _searchService.featuredSongs;
+      _json(request, 200, songs.map(_songToJson).toList());
+      return;
+    }
+
+    // GET /api/search?q=
+    if (method == 'GET' && path == '/api/search') {
+      final query = request.uri.queryParameters['q'] ?? '';
+      final songs = await _searchService.search(query);
+      _json(request, 200, songs.map(_songToJson).toList());
+      return;
+    }
+
+    // GET /api/queue — 当前队列
+    if (method == 'GET' && path == '/api/queue') {
+      final current = _playbackService.state.currentItem;
+      final items = _queueService.items;
+      _json(request, 200, {
+        'current': current != null ? _queueItemToJson(current) : null,
+        'upcoming': items.map(_queueItemToJson).toList(),
+        'isPlaying': _playbackService.state.isPlaying,
+      });
+      return;
+    }
+
+    // POST /api/queue — 加入队列
+    if (method == 'POST' && path == '/api/queue') {
       final body = await utf8.decoder.bind(request).join();
       final payload = jsonDecode(body) as Map<String, dynamic>;
       final songId = payload['songId'] as String?;
@@ -61,19 +153,226 @@ class LanServer {
       );
       final song = matches.isEmpty ? null : matches.first;
       if (song == null) {
-        request.response.statusCode = HttpStatus.notFound;
-        request.response.write(jsonEncode({'error': 'song_not_found'}));
+        _json(request, 404, {'error': 'song_not_found'});
       } else {
         final item = _queueService.addSong(song, requestedBy: '手机点歌');
-        request.response.write(jsonEncode({'queueId': item.id}));
+        _json(request, 200, {'queueId': item.id});
       }
-      await request.response.close();
       return;
     }
 
-    request.response.statusCode = HttpStatus.notFound;
-    request.response.write(jsonEncode({'error': 'not_found'}));
-    await request.response.close();
+    // DELETE /api/queue/:id — 移除
+    if (method == 'DELETE' && path.startsWith('/api/queue/')) {
+      final id = path.substring('/api/queue/'.length);
+      _queueService.remove(id);
+      _playbackService.refreshUpNext();
+      _json(request, 200, {'ok': true});
+      return;
+    }
+
+    // POST /api/queue/bump/:id — 顶歌
+    if (method == 'POST' && path.startsWith('/api/queue/bump/')) {
+      final id = path.substring('/api/queue/bump/'.length);
+      _queueService.bumpItemToNext(id);
+      _playbackService.refreshUpNext();
+      _json(request, 200, {'ok': true});
+      return;
+    }
+
+    // POST /api/resolve — 外链解析（B站链接/BV号）
+    if (method == 'POST' && path == '/api/resolve') {
+      await _handleResolve(request);
+      return;
+    }
+
+    // POST /api/playback/play
+    if (method == 'POST' && path == '/api/playback/play') {
+      _playbackService.play();
+      _json(request, 200, {'ok': true});
+      return;
+    }
+
+    // POST /api/playback/pause
+    if (method == 'POST' && path == '/api/playback/pause') {
+      _playbackService.pause();
+      _json(request, 200, {'ok': true});
+      return;
+    }
+
+    // POST /api/playback/next
+    if (method == 'POST' && path == '/api/playback/next') {
+      _playbackService.next();
+      _json(request, 200, {'ok': true});
+      return;
+    }
+
+    // POST /api/playback/track — 原唱/伴奏切换
+    if (method == 'POST' && path == '/api/playback/track') {
+      _playbackService.toggleAudioTrack();
+      _json(request, 200, {
+        'ok': true,
+        'track': _playbackService.state.audioTrackMode.name,
+      });
+      return;
+    }
+
+    // POST /api/playback/volume — 设置音量
+    if (method == 'POST' && path == '/api/playback/volume') {
+      final body = await utf8.decoder.bind(request).join();
+      final payload = jsonDecode(body) as Map<String, dynamic>;
+      final vol = (payload['volume'] as num?)?.toInt() ?? 72;
+      _playbackService.setVolume(vol);
+      _json(request, 200, {'ok': true, 'volume': _playbackService.state.volume});
+      return;
+    }
+
+    // GET /api/playback — 播放状态
+    if (method == 'GET' && path == '/api/playback') {
+      final state = _playbackService.state;
+      _json(request, 200, {
+        'isPlaying': state.isPlaying,
+        'volume': state.volume,
+        'key': state.key,
+        'track': state.audioTrackMode.name,
+        'currentSong': state.currentSong != null ? {
+          'id': state.currentSong!.id,
+          'title': state.currentSong!.title,
+          'artist': state.currentSong!.artist?.name ?? '',
+        } : null,
+      });
+      return;
+    }
+
+    _json(request, 404, {'error': 'not_found'});
+  }
+
+  // ── static files ───────────────────────────────────────────
+
+  Future<void> _serveFile(HttpRequest request, String relativePath, String contentType) async {
+    try {
+      final file = File(relativePath);
+      if (!await file.exists()) {
+        request.response.statusCode = 404;
+        request.response.write('Not found');
+        await request.response.close();
+        return;
+      }
+      request.response.headers.contentType = ContentType.parse(contentType);
+      await request.response.addStream(file.openRead());
+      await request.response.close();
+    } catch (_) {
+      request.response.statusCode = 500;
+      await request.response.close();
+    }
+  }
+
+  Future<void> _serveStatic(HttpRequest request, String path) async {
+    final relativePath = path.substring(1); // remove leading /
+    final ext = path.split('.').last;
+    final mime = _mimeType(ext);
+    await _serveFile(request, relativePath, mime);
+  }
+
+  String _mimeType(String ext) {
+    switch (ext) {
+      case 'html': return 'text/html; charset=utf-8';
+      case 'css': return 'text/css; charset=utf-8';
+      case 'js': return 'application/javascript; charset=utf-8';
+      case 'json': return 'application/json';
+      case 'png': return 'image/png';
+      case 'jpg': case 'jpeg': return 'image/jpeg';
+      case 'svg': return 'image/svg+xml';
+      case 'woff2': return 'font/woff2';
+      default: return 'application/octet-stream';
+    }
+  }
+
+  // ── resolve ──────────────────────────────────────────────
+
+  Future<void> _handleResolve(HttpRequest request) async {
+    final body = await utf8.decoder.bind(request).join();
+    final payload = jsonDecode(body) as Map<String, dynamic>;
+    final url = payload['url'] as String?;
+    final page = (payload['page'] as num?)?.toInt();
+    if (url == null || url.trim().isEmpty) {
+      _json(request, 400, {'error': 'empty_url'});
+      return;
+    }
+    try {
+      // 指定分P → 直接加入队列
+      if (page != null && page > 0) {
+        // 用之前缓存的结果或重新解析
+        final result = await resolveBilibiliUrl(url.trim());
+        final pageInfo = result.pages.firstWhere(
+          (p) => p.page == page,
+          orElse: () => result.pages.first,
+        );
+        final song = await resolveBilibiliPage(
+          bvid: result.bvid,
+          pageInfo: pageInfo,
+          ownerName: result.ownerName,
+          ownerMid: result.ownerMid,
+          mainTitle: result.song.title,
+        );
+        final item = _queueService.addSong(song, requestedBy: '手机点歌');
+        _json(request, 200, {
+          'queueId': item.id,
+          'title': song.title,
+          'added': true,
+        });
+        return;
+      }
+      // 第一步：返回预览信息供用户确认
+      final result = await resolveBilibiliUrl(url.trim());
+      _json(request, 200, {
+        'title': result.song.title,
+        'bvid': result.bvid,
+        'ownerName': result.ownerName,
+        'coverUrl': result.coverUrl,
+        'selectedPage': result.selectedPage,
+        'pages': result.pages.map((p) => {
+          'page': p.page,
+          'title': p.title,
+          'duration': p.duration,
+        }).toList(),
+        'added': false,
+      });
+    } on BilibiliResolveError catch (e) {
+      _json(request, 422, {'error': e.code, 'message': e.message});
+    } catch (e) {
+      _json(request, 500, {'error': 'resolve_failed', 'message': e.toString()});
+    }
+  }
+
+  Future<void> _proxyCover(HttpRequest request) async {
+    final url = request.uri.queryParameters['url'];
+    if (url == null || url.isEmpty) {
+      _json(request, 400, {'error': 'missing_url'});
+      return;
+    }
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 8);
+      final req = await client.getUrl(Uri.parse(url));
+      req.headers.set('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+      req.headers.set('Referer', 'https://www.bilibili.com');
+      final res = await req.close().timeout(const Duration(seconds: 10));
+      request.response.statusCode = res.statusCode;
+      request.response.headers.contentType = res.headers.contentType;
+      await request.response.addStream(res);
+      await request.response.close();
+      client.close();
+    } catch (_) {
+      request.response.statusCode = 502;
+      await request.response.close();
+    }
+  }
+
+  void _json(HttpRequest request, int status, Object? data) {
+    request.response.statusCode = status;
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(jsonEncode(data));
+    request.response.close();
   }
 
   Map<String, Object?> _songToJson(Song song) {
@@ -83,6 +382,16 @@ class LanServer {
       'artist': song.artist?.name ?? '未知',
       'category': song.category,
       'code': song.code,
+    };
+  }
+
+  Map<String, Object?> _queueItemToJson(QueueItem item) {
+    return {
+      'id': item.id,
+      'songId': item.song.id,
+      'title': item.song.title,
+      'artist': item.song.artist?.name ?? '未知',
+      'requestedBy': item.requestedBy,
     };
   }
 }

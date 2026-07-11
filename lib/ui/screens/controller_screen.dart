@@ -3,6 +3,7 @@ import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../domain/media_asset.dart';
 import '../../domain/playback_state.dart';
@@ -428,16 +429,43 @@ class _ControllerScreenState extends State<ControllerScreen> {
   void _showQrDialog() {
     _showDialogAboveNativePreview<void>(
       builder: (context) {
+        final uri = widget.lanServer.localUri;
         return _KiraDialog(
           title: '手机点歌',
           width: 430,
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              const MockQrCode(size: 210),
+              if (uri != null)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: QrImageView(
+                    data: uri.toString(),
+                    version: QrVersions.auto,
+                    size: 210,
+                    backgroundColor: Colors.white,
+                  ),
+                )
+              else
+                Container(
+                  width: 210,
+                  height: 210,
+                  decoration: BoxDecoration(
+                    color: KiraColors.surface2,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Center(
+                    child: Icon(Icons.wifi_off, size: 48, color: KiraColors.muted),
+                  ),
+                ),
               const SizedBox(height: 18),
               Text(
-                widget.lanServer.localUri?.toString() ?? 'http://本机局域网地址:7391',
+                uri?.toString() ?? '未检测到局域网 — 请检查网络设置',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: KiraColors.amber,
@@ -446,7 +474,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
               ),
               const SizedBox(height: 10),
               const Text(
-                '第一版为 LAN-only mock handler。手机扫码后只访问本机 HTTP 服务，不经过公网服务器。',
+                '手机连接同一 WiFi / 局域网后扫码即可点歌',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: KiraColors.muted,

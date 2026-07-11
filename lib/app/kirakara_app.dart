@@ -83,6 +83,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
     lanServer = LanServer(
       queueService: queueService,
       searchService: searchService,
+      playbackService: playbackService,
     );
     stageRenderer = KirakaraStageRenderer(showService: kirakaraShowService);
     unawaited(_initializeDisplayOutput());
