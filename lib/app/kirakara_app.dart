@@ -16,7 +16,8 @@ import '../services/playback_slot_manager.dart';
 import '../services/queue_service.dart';
 import '../services/search_service.dart';
 import '../services/settings_service.dart';
-import '../ui/screens/controller_screen.dart';
+import '../ui/shell/controller_services.dart';
+import '../ui/shell/controller_shell.dart';
 import '../ui/theme/kirakara_theme.dart';
 
 class KirakaraApp extends StatefulWidget {
@@ -150,18 +151,20 @@ class _KirakaraAppState extends State<KirakaraApp> {
       debugShowCheckedModeBanner: false,
       title: 'Kira Karaoke',
       theme: buildKirakaraTheme(),
-      home: ControllerScreen(
-        searchService: searchService,
-        queueService: queueService,
-        playbackService: playbackService,
-        assetCache: _assetCache,
-        slotManager: _slotManager,
-        settingsService: settingsService,
-        displayManager: displayManager,
-        kirakaraShowService: kirakaraShowService,
-        castService: castService,
-        lanServer: lanServer,
-        stageRenderer: stageRenderer,
+      home: ControllerShell(
+        services: ControllerServices(
+          searchService: searchService,
+          queueService: queueService,
+          playbackService: playbackService,
+          assetCache: _assetCache,
+          slotManager: _slotManager,
+          settingsService: settingsService,
+          displayManager: displayManager,
+          kirakaraShowService: kirakaraShowService,
+          castService: castService,
+          lanServer: lanServer,
+          stageRenderer: stageRenderer,
+        ),
       ),
     );
   }

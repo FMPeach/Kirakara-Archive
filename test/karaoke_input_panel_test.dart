@@ -6,8 +6,8 @@ import 'package:kirakara_app/ime/ime_mode.dart';
 import 'package:kirakara_app/ime/native/zinnia_native_bridge.dart';
 import 'package:kirakara_app/ime/search_query_controller.dart';
 import 'package:kirakara_app/ui/theme/kirakara_theme.dart';
-import 'package:kirakara_app/ui/widgets/handwriting_pad.dart';
-import 'package:kirakara_app/ui/widgets/karaoke_input_panel.dart';
+import 'package:kirakara_app/ui/input/handwriting_pad.dart';
+import 'package:kirakara_app/ui/input/karaoke_input_panel.dart';
 
 void main() {
   testWidgets('touch keyboard unfocuses hardware IME text field',

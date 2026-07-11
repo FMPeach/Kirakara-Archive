@@ -3,7 +3,7 @@ import 'package:flutter/widgets.dart';
 import '../../engine/stage_renderer.dart';
 import '../../services/display_manager.dart';
 import '../../services/playback_service.dart';
-import '../screens/stage_screen.dart';
+import 'stage_screen.dart';
 
 class StageWindowHost extends StatelessWidget {
   const StageWindowHost({
