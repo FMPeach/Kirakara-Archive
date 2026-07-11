@@ -232,8 +232,12 @@ function switchTab(tab) {
   document.getElementById('searchBar').style.display = tab==='search'?'flex':'none';
   document.getElementById('extTab').style.display = tab==='ext'?'block':'none';
   if (tab==='featured') renderFeatured();
-  else if (tab==='search') document.getElementById('searchInput').focus();
+  else if (tab==='search') { document.getElementById('searchInput').focus(); renderSearchDefault(); }
   else if (tab==='ext') { document.getElementById('extLinkInput').focus(); renderExt(); }
+}
+
+function renderSearchDefault() {
+  document.getElementById('content').innerHTML = '<div class="empty"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="1.5" opacity="0.4"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><br>输入歌名、歌手或编号搜索</div>';
 }
 
 async function loadFeatured() { try { featured = await api('/api/featured'); } catch(e) { featured = []; } renderFeatured(); }
