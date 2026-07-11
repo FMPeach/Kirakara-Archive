@@ -98,7 +98,6 @@ class PlaybackSlotManager extends ChangeNotifier {
         items.length < _prefetchLookahead ? items.length : _prefetchLookahead;
     for (var i = 0; i < limit; i++) {
       final song = items[i].song;
-      if (song.isExternal) continue;
       // priority: 0=active, 1=standby, 2+i=queue
       final priority = i.clamp(0, 3);
       cache.setSongPriority(song.id, priority);
@@ -121,8 +120,8 @@ class PlaybackSlotManager extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 1) 下载资源 — 外部歌曲跳过
-      if (!isExternal && _assetCache != null) {
+      // 1) 普通曲目和外链 DASH 都进入本次运行周期缓存。
+      if (_assetCache != null) {
         _assetCache.setSongPriority(item.song.id, 1);
         // 进度轮询
         unawaited(_pollSlotProgress(slot, gen));
@@ -137,11 +136,8 @@ class PlaybackSlotManager extends ChangeNotifier {
 
       // 2) 收集本地路径
       slot.videoPath = _pathFor(item.song, MediaAssetType.video);
-      slot.vocalPath =
-          isExternal ? null : _existingPathFor(item.song, MediaAssetType.vocal);
-      slot.instPath = isExternal
-          ? null
-          : _existingPathFor(item.song, MediaAssetType.accompaniment);
+      slot.vocalPath = _existingPathFor(item.song, MediaAssetType.vocal);
+      slot.instPath = _existingPathFor(item.song, MediaAssetType.accompaniment);
       slot.krlPath = isExternal
           ? null
           : (item.song.lyricProject?.cachedPath ??

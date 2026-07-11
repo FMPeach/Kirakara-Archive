@@ -15,6 +15,7 @@ class Song {
     this.tags = const [],
     this.coverColor = 0xffdd3e38,
     this.isExternal = false,
+    this.videoMasterClock = false,
   });
 
   final String id;
@@ -28,7 +29,8 @@ class Song {
   final List<String> tags;
   final int coverColor;
   final bool isExternal;
+  final bool videoMasterClock;
 
-  /// 外部歌曲（如 B站 DLNA 投屏）：纯视频，无歌词，无原唱/伴奏切换。
+  /// 外部歌曲可包含独立视频/音频，但没有 KRL 和原唱/伴奏切换。
   bool get isExternalSong => isExternal;
 }

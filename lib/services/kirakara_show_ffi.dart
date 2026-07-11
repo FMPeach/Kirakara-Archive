@@ -16,6 +16,14 @@ typedef LoadNative = Bool Function(
   Pointer<Utf16>,
   Pointer<Utf16>,
 );
+typedef LoadWithClockNative = Bool Function(
+  ShowHostHandle,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Int32,
+);
 typedef PlayNative = Void Function(ShowHostHandle);
 typedef PauseNative = Void Function(ShowHostHandle);
 typedef StopNative = Void Function(ShowHostHandle);
@@ -65,6 +73,14 @@ typedef _Load = bool Function(
   Pointer<Utf16>,
   Pointer<Utf16>,
   Pointer<Utf16>,
+);
+typedef _LoadWithClock = bool Function(
+  ShowHostHandle,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  int,
 );
 typedef _Play = void Function(ShowHostHandle);
 typedef _Pause = void Function(ShowHostHandle);
@@ -119,6 +135,7 @@ class KirakaraShowFFI {
   late final _Create _create;
   late final _Destroy _destroy;
   late final _Load _load;
+  _LoadWithClock? _loadWithClock;
   late final _Play _play;
   late final _Pause _pause;
   late final _Stop _stop;
@@ -149,6 +166,13 @@ class KirakaraShowFFI {
     _destroy =
         _dylib.lookupFunction<DestroyNative, _Destroy>('show_host_destroy');
     _load = _dylib.lookupFunction<LoadNative, _Load>('show_host_load');
+    try {
+      _loadWithClock =
+          _dylib.lookupFunction<LoadWithClockNative, _LoadWithClock>(
+              'show_host_load_with_clock');
+    } on ArgumentError {
+      _loadWithClock = null;
+    }
     _play = _dylib.lookupFunction<PlayNative, _Play>('show_host_play');
     _pause = _dylib.lookupFunction<PauseNative, _Pause>('show_host_pause');
     _stop = _dylib.lookupFunction<StopNative, _Stop>('show_host_stop');
@@ -202,13 +226,24 @@ class KirakaraShowFFI {
     String? lyricPath,
     String? vocalPath,
     String? accompanimentPath,
+    bool videoMasterClock = false,
   }) {
     final video = videoPath.toNativeUtf16();
     final lyric = (lyricPath ?? '').toNativeUtf16();
     final vocal = (vocalPath ?? '').toNativeUtf16();
     final accompaniment = (accompanimentPath ?? '').toNativeUtf16();
     try {
-      final ok = _load(_handle, video, lyric, vocal, accompaniment);
+      final loadWithClock = _loadWithClock;
+      final ok = loadWithClock == null
+          ? _load(_handle, video, lyric, vocal, accompaniment)
+          : loadWithClock(
+              _handle,
+              video,
+              lyric,
+              vocal,
+              accompaniment,
+              videoMasterClock ? 1 : 0,
+            );
       if (ok) {
         _width = _getWidth(_handle);
         _height = _getHeight(_handle);

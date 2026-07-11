@@ -170,6 +170,7 @@ class KirakaraShowService extends ChangeNotifier {
       lyricPath: isExternal ? null : slot.krlPath,
       vocalPath: slot.vocalPath,
       accompanimentPath: slot.instPath,
+      videoMasterClock: item.song.videoMasterClock,
     );
     if (!loaded) return;
 
@@ -193,8 +194,8 @@ class KirakaraShowService extends ChangeNotifier {
     try {
       final isExternal = item.song.isExternal;
 
-      // 外部歌曲跳过 assetCache（视频是 HTTP URL，直接给 MediaEngine 拉流）
-      if (!isExternal && _assetCache != null) {
+      // 外链 DASH 同样进入播放周期缓存：视频渐进，音频完整落盘。
+      if (_assetCache != null) {
         await _assetCache.ensurePlaybackAssets(item.song);
       }
       if (!_isCurrentPreparation(item, generation)) return;
@@ -220,11 +221,9 @@ class KirakaraShowService extends ChangeNotifier {
         }
       }
 
-      final vocalPath =
-          isExternal ? null : _existingPathFor(item.song, MediaAssetType.vocal);
-      final accompanimentPath = isExternal
-          ? null
-          : _existingPathFor(item.song, MediaAssetType.accompaniment);
+      final vocalPath = _existingPathFor(item.song, MediaAssetType.vocal);
+      final accompanimentPath =
+          _existingPathFor(item.song, MediaAssetType.accompaniment);
       if (!_isCurrentPreparation(item, generation)) return;
 
       final loaded = ffi.load(
@@ -232,6 +231,7 @@ class KirakaraShowService extends ChangeNotifier {
         lyricPath: lyricPath,
         vocalPath: vocalPath,
         accompanimentPath: accompanimentPath,
+        videoMasterClock: item.song.videoMasterClock,
       );
       if (!loaded) {
         return;

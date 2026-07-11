@@ -67,6 +67,11 @@ const _userAgent =
 
 const _referer = 'https://www.bilibili.com';
 
+const _mediaHeaders = <String, String>{
+  'User-Agent': _userAgent,
+  'Referer': _referer,
+};
+
 const _qualityMap = {
   6: '240P',
   16: '360P',
@@ -142,6 +147,103 @@ class _HttpResult {
   final int statusCode;
   final String body;
 }
+
+({String videoUrl, String? audioUrl, int quality, String qualityDesc})
+    _selectPlaybackStreams(Map<String, dynamic> data) {
+  final dash = data['dash'] as Map<String, dynamic>?;
+  if (dash != null) {
+    final videos = (dash['video'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .where((stream) => _streamUrl(stream) != null)
+        .toList();
+    final audios = (dash['audio'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .where((stream) => _streamUrl(stream) != null)
+        .toList();
+    if (videos.isNotEmpty && audios.isNotEmpty) {
+      final reportedQuality = (data['quality'] as num?)?.toInt() ?? 0;
+      var compatibleVideos = videos
+          .where((stream) => (stream['codecid'] as num?)?.toInt() == 7)
+          .toList();
+      if (compatibleVideos.isEmpty) compatibleVideos = videos;
+      final entitledVideos = compatibleVideos.where((stream) {
+        final id = (stream['id'] as num?)?.toInt() ?? 0;
+        return reportedQuality <= 0 || id <= reportedQuality;
+      }).toList();
+      final candidates =
+          entitledVideos.isNotEmpty ? entitledVideos : compatibleVideos;
+      candidates.sort(_compareDashStreams);
+      audios.sort(_compareDashStreams);
+      final video = candidates.first;
+      final audio = audios.first;
+      final quality = (video['id'] as num?)?.toInt() ?? reportedQuality;
+      return (
+        videoUrl: _streamUrl(video)!,
+        audioUrl: _streamUrl(audio),
+        quality: quality,
+        qualityDesc: _qualityMap[quality] ?? '${quality}P',
+      );
+    }
+  }
+
+  final durl = data['durl'] as List<dynamic>?;
+  if (durl != null && durl.isNotEmpty) {
+    final first = durl.first as Map<String, dynamic>;
+    final url = first['url'] as String?;
+    if (url != null && url.isNotEmpty) {
+      final quality = (data['quality'] as num?)?.toInt() ?? 0;
+      return (
+        videoUrl: url,
+        audioUrl: null,
+        quality: quality,
+        qualityDesc: _qualityMap[quality] ?? '${quality}P',
+      );
+    }
+  }
+
+  throw const BilibiliResolveError(
+    code: 'no_stream',
+    message: '未获取到可播放的 DASH 或 MP4 流地址',
+  );
+}
+
+String? _streamUrl(Map<String, dynamic> stream) {
+  final value = stream['baseUrl'] ?? stream['base_url'] ?? stream['url'];
+  return value is String && value.isNotEmpty ? value : null;
+}
+
+int _compareDashStreams(Map<String, dynamic> a, Map<String, dynamic> b) {
+  final aId = (a['id'] as num?)?.toInt() ?? 0;
+  final bId = (b['id'] as num?)?.toInt() ?? 0;
+  final byId = bId.compareTo(aId);
+  if (byId != 0) return byId;
+  final aBandwidth = (a['bandwidth'] as num?)?.toInt() ?? 0;
+  final bBandwidth = (b['bandwidth'] as num?)?.toInt() ?? 0;
+  return bBandwidth.compareTo(aBandwidth);
+}
+
+List<MediaAsset> _streamAssets({
+  required String videoId,
+  required int cid,
+  required int page,
+  required String videoUrl,
+  required String? audioUrl,
+}) =>
+    [
+      MediaAsset(
+        id: 'bili-$videoId-video-$cid-$page',
+        type: MediaAssetType.video,
+        uri: Uri.parse(videoUrl),
+        headers: _mediaHeaders,
+      ),
+      if (audioUrl != null)
+        MediaAsset(
+          id: 'bili-$videoId-audio-$cid-$page',
+          type: MediaAssetType.vocal,
+          uri: Uri.parse(audioUrl),
+          headers: _mediaHeaders,
+        ),
+    ];
 
 // ── Public API ────────────────────────────────────────────────────
 
@@ -272,9 +374,11 @@ Future<BilibiliResolveResult> resolveBilibiliUrl(String input) async {
   // 5. Playurl API — get stream URL
   final playParams = <String, String>{
     'cid': cid.toString(),
-    'fnval': '1',
-    'platform': 'html5',
-    'high_quality': '1',
+    'fnval': '16',
+    'fnver': '0',
+    'qn': '80',
+    'fourk': '0',
+    'try_look': '1',
   };
   if (bvid != null) {
     playParams['bvid'] = bvid;
@@ -315,25 +419,7 @@ Future<BilibiliResolveResult> resolveBilibiliUrl(String input) async {
   }
 
   final playResultData = playData['data'] as Map<String, dynamic>;
-  final durl = playResultData['durl'] as List<dynamic>?;
-  if (durl == null || durl.isEmpty) {
-    throw BilibiliResolveError(
-      code: 'no_stream',
-      message: '未获取到可播放的流地址',
-    );
-  }
-
-  final streamUrl = (durl[0] as Map<String, dynamic>)['url'] as String?;
-  if (streamUrl == null || streamUrl.isEmpty) {
-    throw BilibiliResolveError(
-      code: 'no_stream',
-      message: '流地址为空',
-    );
-  }
-
-  final quality =
-      (playResultData['quality'] as num?)?.toInt() ?? 0;
-  final qualityDesc = _qualityMap[quality] ?? '${quality}P';
+  final streams = _selectPlaybackStreams(playResultData);
 
   // 6. Construct Song
   final videoId = bvid ?? 'av$aid';
@@ -344,21 +430,22 @@ Future<BilibiliResolveResult> resolveBilibiliUrl(String input) async {
     artist: Artist(id: 'bili-$ownerMid', name: ownerName),
     duration: Duration(seconds: durationSec),
     isExternal: true,
-    assets: [
-      MediaAsset(
-        id: 'bili-$videoId-video',
-        type: MediaAssetType.video,
-        uri: Uri.parse(streamUrl),
-      ),
-    ],
+    videoMasterClock: streams.audioUrl != null,
+    assets: _streamAssets(
+      videoId: videoId,
+      cid: cid,
+      page: page,
+      videoUrl: streams.videoUrl,
+      audioUrl: streams.audioUrl,
+    ),
   );
 
   return BilibiliResolveResult(
     song: song,
     bvid: videoId,
     cid: cid,
-    quality: quality,
-    qualityDesc: qualityDesc,
+    quality: streams.quality,
+    qualityDesc: streams.qualityDesc,
     pages: pageInfos,
     selectedPage: page,
     ownerName: ownerName,
@@ -382,9 +469,11 @@ Future<Song> resolveBilibiliPage({
     queryParameters: {
       'bvid': bvid,
       'cid': pageInfo.cid.toString(),
-      'fnval': '1',
-      'platform': 'html5',
-      'high_quality': '1',
+      'fnval': '16',
+      'fnver': '0',
+      'qn': '80',
+      'fourk': '0',
+      'try_look': '1',
     },
   );
   final playResult = await _get(playUri);
@@ -410,18 +499,7 @@ Future<Song> resolveBilibiliPage({
   }
 
   final playResultData = playData['data'] as Map<String, dynamic>;
-  final durl = playResultData['durl'] as List<dynamic>?;
-  if (durl == null || durl.isEmpty) {
-    throw BilibiliResolveError(
-      code: 'no_stream',
-      message: '未获取到可播放的流地址',
-    );
-  }
-
-  final streamUrl = (durl[0] as Map<String, dynamic>)['url'] as String?;
-  if (streamUrl == null || streamUrl.isEmpty) {
-    throw BilibiliResolveError(code: 'no_stream', message: '流地址为空');
-  }
+  final streams = _selectPlaybackStreams(playResultData);
 
   return Song(
     id: 'bili-$bvid-${pageInfo.cid}',
@@ -430,12 +508,13 @@ Future<Song> resolveBilibiliPage({
     artist: Artist(id: 'bili-$ownerMid', name: ownerName),
     duration: Duration(seconds: pageInfo.duration),
     isExternal: true,
-    assets: [
-      MediaAsset(
-        id: 'bili-$bvid-video-${pageInfo.page}',
-        type: MediaAssetType.video,
-        uri: Uri.parse(streamUrl),
-      ),
-    ],
+    videoMasterClock: streams.audioUrl != null,
+    assets: _streamAssets(
+      videoId: bvid,
+      cid: pageInfo.cid,
+      page: pageInfo.page,
+      videoUrl: streams.videoUrl,
+      audioUrl: streams.audioUrl,
+    ),
   );
 }
