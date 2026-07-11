@@ -15,6 +15,7 @@ import '../services/playback_service.dart';
 import '../services/playback_slot_manager.dart';
 import '../services/queue_service.dart';
 import '../services/search_service.dart';
+import '../services/settings_service.dart';
 import '../ui/screens/controller_screen.dart';
 import '../ui/theme/kirakara_theme.dart';
 
@@ -36,6 +37,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
   late final LanServer lanServer;
   late final PlaybackAssetCache _assetCache;
   late final PlaybackSlotManager _slotManager;
+  late final SettingsService settingsService;
   late final KirakaraShowService kirakaraShowService;
   late final StageRenderer stageRenderer;
 
@@ -68,6 +70,8 @@ class _KirakaraAppState extends State<KirakaraApp> {
       queueService: queueService,
       assetCache: _assetCache,
     );
+    settingsService = SettingsService()..addListener(_applySettings);
+    unawaited(settingsService.load());
     kirakaraShowService = KirakaraShowService(
       playbackService: playbackService,
       assetCache: _assetCache,
@@ -100,6 +104,10 @@ class _KirakaraAppState extends State<KirakaraApp> {
     }
   }
 
+  void _applySettings() {
+    _slotManager.setPrefetchLookahead(settingsService.prefetchLookahead);
+  }
+
   Future<void> _initializeDisplayOutput() async {
     await displayManager.detectDisplays();
     if (!mounted) return;
@@ -126,6 +134,9 @@ class _KirakaraAppState extends State<KirakaraApp> {
     playbackService.disposeService();
     lanServer.stop();
     _slotManager.dispose();
+    settingsService
+      ..removeListener(_applySettings)
+      ..dispose();
     _assetCache.clear();
     _assetCache.dispose();
     _catalogClient.dispose();
@@ -145,6 +156,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
         playbackService: playbackService,
         assetCache: _assetCache,
         slotManager: _slotManager,
+        settingsService: settingsService,
         displayManager: displayManager,
         kirakaraShowService: kirakaraShowService,
         castService: castService,

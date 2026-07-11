@@ -14,6 +14,7 @@ import '../../services/playback_slot.dart';
 import '../../services/playback_slot_manager.dart';
 import '../../services/queue_service.dart';
 import '../../services/search_service.dart';
+import '../../services/settings_service.dart';
 import '../theme/kirakara_theme.dart';
 import '../widgets/kira_design_canvas.dart';
 import '../widgets/ktv_button.dart';
@@ -29,6 +30,7 @@ class ControllerScreen extends StatefulWidget {
     required this.playbackService,
     required this.assetCache,
     required this.slotManager,
+    required this.settingsService,
     required this.displayManager,
     required this.kirakaraShowService,
     required this.castService,
@@ -41,6 +43,7 @@ class ControllerScreen extends StatefulWidget {
   final PlaybackService playbackService;
   final PlaybackAssetCache assetCache;
   final PlaybackSlotManager slotManager;
+  final SettingsService settingsService;
   final DisplayManager displayManager;
   final KirakaraShowService kirakaraShowService;
   final CastService castService;
@@ -56,7 +59,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
   BrowseMode? _browseMode;
   String _browseInitialQuery = '';
   int _browseSerial = 0;
-  String _announcement = '欢迎使用 Kira Karaoke，本机队列已就绪';
   bool _controllerFullscreen = false;
 
   @override
@@ -78,16 +80,12 @@ class _ControllerScreenState extends State<ControllerScreen> {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _announcement = '手机点歌服务已启动：${widget.lanServer.localUri}';
-      });
+      setState(() {});
     } catch (_) {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _announcement = '手机点歌服务未启动，可在设定中重试';
-      });
+      setState(() {});
     }
   }
 
@@ -101,6 +99,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
             widget.queueService,
             widget.displayManager,
             widget.castService,
+            widget.kirakaraShowService,
+            widget.settingsService,
           ]),
           builder: (context, _) {
             return DecoratedBox(
@@ -116,8 +116,10 @@ class _ControllerScreenState extends State<ControllerScreen> {
               child: Column(
                 children: [
                   _TopBar(
-                    announcement: _announcement,
+                    customAnnouncement:
+                        widget.settingsService.customAnnouncement,
                     playbackService: widget.playbackService,
+                    isBuffering: widget.kirakaraShowService.isBuffering,
                     showSearch: _browseMode == null,
                     controllerFullscreen: _controllerFullscreen,
                     onSearchTap: () => _runSearch(''),
@@ -157,7 +159,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
                             onExit: _closeBrowsePage,
                             onAddSong: _addSong,
                             onBumpSong: _bumpSong,
-                            onAnnouncement: _setAnnouncement,
                           ),
                   ),
                   _BottomBar(
@@ -183,8 +184,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
       _browseMode = BrowseMode.songs;
       _browseInitialQuery = query.trim();
       _browseSerial++;
-      _announcement =
-          _browseInitialQuery.isEmpty ? '打开：歌名点歌' : '搜索：$_browseInitialQuery';
     });
   }
 
@@ -195,9 +194,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
       widget.queueService.addSong(song);
       widget.playbackService.refreshUpNext();
     }
-    setState(() {
-      _announcement = '已加入队列：${song.title}';
-    });
   }
 
   void _bumpSong(Song song) {
@@ -207,9 +203,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
       widget.queueService.bumpToNext(song);
       widget.playbackService.refreshUpNext();
     }
-    setState(() {
-      _announcement = '已顶到下一首：${song.title}';
-    });
   }
 
   void _startSongAfterFrame(Song song) {
@@ -253,7 +246,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
       _browseMode = mode;
       _browseInitialQuery = '';
       _browseSerial++;
-      _announcement = '打开：$title';
     });
   }
 
@@ -261,13 +253,6 @@ class _ControllerScreenState extends State<ControllerScreen> {
     setState(() {
       _browseMode = null;
       _browseInitialQuery = '';
-      _announcement = '已返回点歌首页';
-    });
-  }
-
-  void _setAnnouncement(String value) {
-    setState(() {
-      _announcement = value;
     });
   }
 
@@ -318,8 +303,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
     _showDialogAboveNativePreview<void>(
       builder: (context) {
         return AnimatedBuilder(
-          animation:
-              Listenable.merge([
+          animation: Listenable.merge([
             widget.queueService,
             widget.playbackService,
             widget.assetCache,
@@ -341,7 +325,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
                       _QueueItemRow(
                         index: 0,
                         song: currentItem.song,
-                        subtitle: '${currentItem.song.artist?.name ?? '未知'} · 正在播放',
+                        subtitle:
+                            '${currentItem.song.artist?.name ?? '未知'} · 正在播放',
                         isCurrent: true,
                         progress: widget.assetCache.progressForSong(
                           currentItem.song,
@@ -620,48 +605,10 @@ class _ControllerScreenState extends State<ControllerScreen> {
   void _showSettingsDialog() {
     _showDialogAboveNativePreview<void>(
       builder: (context) {
-        // TODO: add Settings controls for custom announcement text and the
-        // video/stage QR overlay switch. Keep them hidden until the behavior is
-        // wired end-to-end.
-        return _KiraDialog(
-          title: '设定',
-          width: 560,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _StatusLine(
-                icon: Icons.router,
-                label: '手机点歌',
-                value: widget.lanServer.isRunning
-                    ? '已启动：${widget.lanServer.localUri}'
-                    : '未启动',
-              ),
-              const _StatusLine(
-                icon: Icons.volume_up,
-                label: '音频输出',
-                value: '默认设备',
-              ),
-              const _StatusLine(
-                icon: Icons.keyboard,
-                label: '输入方式',
-                value: '触控输入法 / 系统键盘',
-              ),
-              const _StatusLine(
-                icon: Icons.storage,
-                label: '本地缓存',
-                value: '媒体、封面与 KRL 缓存目录',
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                '这里预留通用设置：LAN 服务端口、音频设备、输入法、曲库缓存、系统行为等。投屏和舞台输出放到右上角“投屏”里。',
-                style: TextStyle(
-                  color: KiraColors.muted,
-                  height: 1.55,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
+        return _SettingsDialog(
+          settingsService: widget.settingsService,
+          assetCache: widget.assetCache,
+          lanServer: widget.lanServer,
         );
       },
     );
@@ -691,8 +638,9 @@ class _ControllerScreenState extends State<ControllerScreen> {
 
 class _TopBar extends StatelessWidget {
   const _TopBar({
-    required this.announcement,
+    required this.customAnnouncement,
     required this.playbackService,
+    required this.isBuffering,
     required this.showSearch,
     required this.controllerFullscreen,
     required this.onSearchTap,
@@ -702,8 +650,9 @@ class _TopBar extends StatelessWidget {
     required this.onCast,
   });
 
-  final String announcement;
+  final String customAnnouncement;
   final PlaybackService playbackService;
+  final bool isBuffering;
   final bool showSearch;
   final bool controllerFullscreen;
   final VoidCallback onSearchTap;
@@ -716,10 +665,11 @@ class _TopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = playbackService.state;
     final tickerText = _tickerText(
-      announcement: announcement,
+      customAnnouncement: customAnnouncement,
       current: state.currentSong,
       next: state.upNext?.song,
-      isPaused: state.currentSong != null && !state.isPlaying,
+      mode: state.mode,
+      isBuffering: isBuffering,
     );
     final brandBlock = SizedBox(
       width: 325,
@@ -816,7 +766,7 @@ class _TopBar extends StatelessWidget {
           const SizedBox(width: 15),
           _TopIconButton(
             icon: Icons.settings,
-            tooltip: '设定',
+            tooltip: '设置',
             onPressed: onSettings,
           ),
           const SizedBox(width: 15),
@@ -875,15 +825,22 @@ class _TopBar extends StatelessWidget {
   }
 
   static String _tickerText({
-    required String announcement,
+    required String customAnnouncement,
     required Song? current,
     required Song? next,
-    required bool isPaused,
+    required PlaybackMode mode,
+    required bool isBuffering,
   }) {
+    final custom = customAnnouncement.trim();
     final parts = <String>[
-      announcement.trim().isEmpty ? '欢迎使用 Kira Karaoke' : announcement.trim(),
+      if (custom.isNotEmpty) custom,
       '当前播放：${_songLabel(current, fallback: '等待点歌')}',
-      if (isPaused) '暂停中',
+      if (isBuffering)
+        '播放状态：正在缓冲'
+      else if (current == null || mode == PlaybackMode.stopped)
+        '播放状态：已停止'
+      else if (mode == PlaybackMode.paused)
+        '播放状态：暂停中',
       next == null ? '下一首：暂无，快去点一首吧' : '下一首：${_songLabel(next)}',
     ];
     return parts.join('  ·  ');
@@ -891,7 +848,7 @@ class _TopBar extends StatelessWidget {
 
   static String _songLabel(Song? song, {String fallback = '暂无'}) {
     if (song == null) return fallback;
-    return '${song.artist?.name ?? '未知'} - ${song.title}';
+    return '${song.title} - ${song.artist?.name ?? '未知歌手'}';
   }
 }
 
@@ -921,7 +878,7 @@ class _MarqueeTextState extends State<_MarqueeText>
   @override
   void didUpdateWidget(covariant _MarqueeText oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text || oldWidget.style != widget.style) {
+    if (oldWidget.text != widget.text) {
       _controller
         ..stop()
         ..value = 0;
@@ -970,30 +927,20 @@ class _MarqueeTextState extends State<_MarqueeText>
               animation: _controller,
               builder: (context, _) {
                 final offset = -distance * _controller.value;
-                return Align(
-                  alignment: Alignment.centerLeft,
-                  child: OverflowBox(
-                    alignment: Alignment.centerLeft,
-                    minWidth: 0,
-                    maxWidth: double.infinity,
-                    child: Transform.translate(
-                      offset: Offset(offset, 0),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _MarqueeTextRun(
-                            text: widget.text,
-                            style: widget.style,
-                          ),
-                          const SizedBox(width: gap),
-                          _MarqueeTextRun(
-                            text: widget.text,
-                            style: widget.style,
-                          ),
-                        ],
-                      ),
+                return Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    _MarqueePositionedRun(
+                      offset: offset,
+                      text: widget.text,
+                      style: widget.style,
                     ),
-                  ),
+                    _MarqueePositionedRun(
+                      offset: offset + distance,
+                      text: widget.text,
+                      style: widget.style,
+                    ),
+                  ],
                 );
               },
             ),
@@ -1015,6 +962,30 @@ class _MarqueeTextState extends State<_MarqueeText>
       textScaler: MediaQuery.textScalerOf(context),
     )..layout();
     return painter.width;
+  }
+}
+
+class _MarqueePositionedRun extends StatelessWidget {
+  const _MarqueePositionedRun({
+    required this.offset,
+    required this.text,
+    required this.style,
+  });
+
+  final double offset;
+  final String text;
+  final TextStyle style;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      left: offset,
+      top: 0,
+      bottom: 0,
+      child: Center(
+        child: _MarqueeTextRun(text: text, style: style),
+      ),
+    );
   }
 }
 
@@ -1844,6 +1815,287 @@ class _SongCover extends StatelessWidget {
   }
 }
 
+class _SettingsDialog extends StatefulWidget {
+  const _SettingsDialog({
+    required this.settingsService,
+    required this.assetCache,
+    required this.lanServer,
+  });
+
+  final SettingsService settingsService;
+  final PlaybackAssetCache assetCache;
+  final LanServer lanServer;
+
+  @override
+  State<_SettingsDialog> createState() => _SettingsDialogState();
+}
+
+class _SettingsDialogState extends State<_SettingsDialog> {
+  late final TextEditingController _announcementController;
+  late Future<int> _cacheSize;
+  bool _savingAnnouncement = false;
+  bool _startingLan = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _announcementController = TextEditingController(
+      text: widget.settingsService.customAnnouncement,
+    );
+    _cacheSize = widget.assetCache.cacheSizeBytes();
+  }
+
+  @override
+  void dispose() {
+    _announcementController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveAnnouncement() async {
+    setState(() => _savingAnnouncement = true);
+    await widget.settingsService.setCustomAnnouncement(
+      _announcementController.text,
+    );
+    if (mounted) setState(() => _savingAnnouncement = false);
+  }
+
+  Future<void> _startLanServer() async {
+    setState(() => _startingLan = true);
+    try {
+      await widget.lanServer.start();
+    } finally {
+      if (mounted) setState(() => _startingLan = false);
+    }
+  }
+
+  void _refreshCacheSize() {
+    setState(() => _cacheSize = widget.assetCache.cacheSizeBytes());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _KiraDialog(
+      title: '设置',
+      width: 760,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 720),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SettingsSectionTitle(
+                icon: Icons.campaign_outlined,
+                title: '报幕文字',
+              ),
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _announcementController,
+                      maxLength: 120,
+                      minLines: 1,
+                      maxLines: 2,
+                      onSubmitted: (_) => _saveAnnouncement(),
+                      decoration: const InputDecoration(
+                        hintText: '留空则不显示自定义文字',
+                        filled: true,
+                        fillColor: KiraColors.surface2,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    height: 56,
+                    child: FilledButton.icon(
+                      onPressed: _savingAnnouncement ? null : _saveAnnouncement,
+                      icon: _savingAnnouncement
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.check),
+                      label: const Text('应用'),
+                    ),
+                  ),
+                ],
+              ),
+              const _SettingsDivider(),
+              const _SettingsSectionTitle(
+                icon: Icons.router_outlined,
+                title: '手机点歌服务',
+              ),
+              const SizedBox(height: 12),
+              _SettingsValueRow(
+                label: widget.lanServer.isRunning
+                    ? '已启动：${widget.lanServer.localUri}'
+                    : '未启动',
+                trailing: widget.lanServer.isRunning
+                    ? const Icon(Icons.check_circle, color: KiraColors.teal)
+                    : TextButton.icon(
+                        onPressed: _startingLan ? null : _startLanServer,
+                        icon: _startingLan
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.refresh),
+                        label: const Text('重试'),
+                      ),
+              ),
+              const _SettingsDivider(),
+              const _SettingsSectionTitle(
+                icon: Icons.storage_outlined,
+                title: '媒体缓存',
+              ),
+              const SizedBox(height: 12),
+              _SettingsValueRow(
+                label: '队列预缓存范围',
+                trailing: SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 1, label: Text('1 首')),
+                    ButtonSegment(value: 2, label: Text('2 首')),
+                    ButtonSegment(value: 3, label: Text('3 首')),
+                  ],
+                  selected: {widget.settingsService.prefetchLookahead},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (value) async {
+                    await widget.settingsService
+                        .setPrefetchLookahead(value.first);
+                    if (mounted) setState(() {});
+                  },
+                ),
+              ),
+              const SizedBox(height: 10),
+              _SettingsValueRow(
+                label: '本次运行占用',
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FutureBuilder<int>(
+                      future: _cacheSize,
+                      builder: (context, snapshot) {
+                        return Text(
+                          snapshot.hasData
+                              ? _formatSettingBytes(snapshot.data!)
+                              : '计算中…',
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        );
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: '刷新缓存用量',
+                      onPressed: _refreshCacheSize,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              _SettingsValueRow(
+                label: '缓存目录',
+                trailing: Expanded(
+                  child: SelectableText(
+                    widget.assetCache.cacheDirectoryPath,
+                    maxLines: 1,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      color: KiraColors.muted,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              const _SettingsValueRow(
+                label: '退出应用自动清理',
+                trailing: Icon(Icons.check, color: KiraColors.teal),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _formatSettingBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
+    final mb = kb / 1024;
+    if (mb < 1024) return '${mb.toStringAsFixed(1)} MB';
+    return '${(mb / 1024).toStringAsFixed(2)} GB';
+  }
+}
+
+class _SettingsSectionTitle extends StatelessWidget {
+  const _SettingsSectionTitle({required this.icon, required this.title});
+
+  final IconData icon;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, color: KiraColors.amber),
+        const SizedBox(width: 10),
+        Text(
+          title,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        ),
+      ],
+    );
+  }
+}
+
+class _SettingsValueRow extends StatelessWidget {
+  const _SettingsValueRow({required this.label, required this.trailing});
+
+  final String label;
+  final Widget trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: KiraColors.muted,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(width: 18),
+          const Spacer(),
+          trailing,
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsDivider extends StatelessWidget {
+  const _SettingsDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 20),
+      child: Divider(height: 1, color: KiraColors.line),
+    );
+  }
+}
+
 class _KiraDialog extends StatelessWidget {
   const _KiraDialog({
     required this.title,
@@ -2158,7 +2410,8 @@ class _DownloadStatus extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: progress.isComplete ? KiraColors.teal : KiraColors.amber,
+                  color:
+                      progress.isComplete ? KiraColors.teal : KiraColors.amber,
                   fontSize: 11,
                   fontWeight: FontWeight.w900,
                 ),

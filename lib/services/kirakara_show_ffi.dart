@@ -60,6 +60,7 @@ typedef ResizeNative = Void Function(ShowHostHandle, Uint32, Uint32);
 typedef GetPositionNative = Double Function(ShowHostHandle);
 typedef GetDurationNative = Double Function(ShowHostHandle);
 typedef GetStateNative = Int Function(ShowHostHandle);
+typedef IsBufferingNative = Bool Function(ShowHostHandle);
 typedef GetWidthNative = Uint32 Function(ShowHostHandle);
 typedef GetHeightNative = Uint32 Function(ShowHostHandle);
 
@@ -118,6 +119,7 @@ typedef _Resize = void Function(ShowHostHandle, int, int);
 typedef _GetPosition = double Function(ShowHostHandle);
 typedef _GetDuration = double Function(ShowHostHandle);
 typedef _GetState = int Function(ShowHostHandle);
+typedef _IsBuffering = bool Function(ShowHostHandle);
 typedef _GetWidth = int Function(ShowHostHandle);
 typedef _GetHeight = int Function(ShowHostHandle);
 
@@ -153,6 +155,7 @@ class KirakaraShowFFI {
   late final _GetPosition _getPosition;
   late final _GetDuration _getDuration;
   late final _GetState _getState;
+  _IsBuffering? _isBuffering;
   late final _GetWidth _getWidth;
   late final _GetHeight _getHeight;
 
@@ -213,6 +216,13 @@ class KirakaraShowFFI {
         'show_host_get_duration');
     _getState =
         _dylib.lookupFunction<GetStateNative, _GetState>('show_host_get_state');
+    try {
+      _isBuffering = _dylib.lookupFunction<IsBufferingNative, _IsBuffering>(
+        'show_host_is_buffering',
+      );
+    } on ArgumentError {
+      _isBuffering = null;
+    }
     _getWidth =
         _dylib.lookupFunction<GetWidthNative, _GetWidth>('show_host_get_width');
     _getHeight = _dylib
@@ -306,6 +316,7 @@ class KirakaraShowFFI {
   double get position => _getPosition(_handle);
   double get duration => _getDuration(_handle);
   int get state => _getState(_handle);
+  bool get isBuffering => _isBuffering?.call(_handle) ?? false;
 
   void dispose() {
     _destroy(_handle);

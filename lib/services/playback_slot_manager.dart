@@ -25,7 +25,7 @@ class PlaybackSlotManager extends ChangeNotifier {
 
   final QueueService _queueService;
   final PlaybackAssetCache? _assetCache;
-  static const int _prefetchLookahead = 3;
+  int _prefetchLookahead = 3;
 
   PlaybackSlot? _activeSlot;
   PlaybackSlot? _standbySlot;
@@ -45,6 +45,16 @@ class PlaybackSlotManager extends ChangeNotifier {
       _standbySlot?.state == SlotState.failed ? _standbySlot?.error : null;
 
   PlaybackSlot? get activeSlot => _activeSlot;
+
+  int get prefetchLookahead => _prefetchLookahead;
+
+  void setPrefetchLookahead(int value) {
+    final normalized = value.clamp(1, 3).toInt();
+    if (_prefetchLookahead == normalized) return;
+    _prefetchLookahead = normalized;
+    _maybePrepareNext();
+    notifyListeners();
+  }
 
   // ── 生命周期 ──────────────────────────────────────────────────
 

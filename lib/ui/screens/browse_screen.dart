@@ -25,7 +25,6 @@ class BrowseScreen extends StatefulWidget {
     required this.onExit,
     required this.onAddSong,
     required this.onBumpSong,
-    required this.onAnnouncement,
     this.initialQuery = '',
   });
 
@@ -35,7 +34,6 @@ class BrowseScreen extends StatefulWidget {
   final VoidCallback onExit;
   final ValueChanged<Song> onAddSong;
   final ValueChanged<Song> onBumpSong;
-  final ValueChanged<String> onAnnouncement;
 
   @override
   State<BrowseScreen> createState() => _BrowseScreenState();
@@ -173,7 +171,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
             onBack: widget.onExit,
             onSelected: (category) {
               setState(() => _artistCategory = category);
-              widget.onAnnouncement('筛选歌手：$category');
             },
           ),
         ),
@@ -182,7 +179,9 @@ class _BrowseScreenState extends State<BrowseScreen> {
           child: _ArtistResultPanel(
             artists: artists,
             songCountForArtist: widget.searchService.songCountForArtist,
-            typeLabel: (a) => widget.searchService.labelMaps?.artistTypeLabel(a.type) ?? a.type,
+            typeLabel: (a) =>
+                widget.searchService.labelMaps?.artistTypeLabel(a.type) ??
+                a.type,
             onArtist: _openArtist,
           ),
         ),
@@ -226,7 +225,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
                 _artistSongQuery = '';
               });
               _syncSearchController();
-              widget.onAnnouncement('返回：歌手点歌');
             },
             onSearchChanged: _handleSearchChanged,
           ),
@@ -235,7 +233,9 @@ class _BrowseScreenState extends State<BrowseScreen> {
         Expanded(
           child: _SongResultPanel(
             title: artist.name,
-            subtitle: widget.searchService.labelMaps?.artistTypeLabel(artist.type) ?? artist.type,
+            subtitle:
+                widget.searchService.labelMaps?.artistTypeLabel(artist.type) ??
+                    artist.type,
             songs: artistSongs,
             columns: 1,
             onAddSong: _addSong,
@@ -280,7 +280,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
             onBack: widget.onExit,
             onSelected: (category) {
               setState(() => _activeCategory = category.name);
-              widget.onAnnouncement('分类点歌：${category.name}');
             },
           ),
         ),
@@ -367,7 +366,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
             onBack: widget.onExit,
             onSelected: (name) {
               setState(() => _activeRanking = name);
-              widget.onAnnouncement('排行榜：$name');
             },
           ),
         ),
@@ -407,17 +405,14 @@ class _BrowseScreenState extends State<BrowseScreen> {
       _mode = BrowseMode.artistDetail;
     });
     _syncSearchController();
-    widget.onAnnouncement('打开：${artist.name}');
   }
 
   void _addSong(Song song) {
     widget.onAddSong(song);
-    widget.onAnnouncement('已加入队列：${song.title}');
   }
 
   void _bumpSong(Song song) {
     widget.onBumpSong(song);
-    widget.onAnnouncement('已顶到下一首：${song.title}');
   }
 
   void _switchSearchTab(String tab) {
@@ -430,7 +425,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
       };
     });
     _syncSearchController();
-    widget.onAnnouncement('打开：$_modeTitle');
   }
 
   void _handleSearchChanged(String value) {
@@ -453,7 +447,6 @@ class _BrowseScreenState extends State<BrowseScreen> {
 
   void _handleSongScope(String scope) {
     setState(() => _songScope = scope);
-    widget.onAnnouncement('搜索范围：$scope');
   }
 
   void _handleSearchControllerChanged() {
@@ -463,20 +456,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
     _handleSearchChanged(_searchQueryController.text);
   }
 
-  void _handleSearchSubmit() {
-    widget.onAnnouncement('搜索：${_searchQueryController.text}');
-  }
-
-  String get _modeTitle {
-    return switch (_mode) {
-      BrowseMode.songs => '歌名点歌',
-      BrowseMode.artists => '歌手点歌',
-      BrowseMode.artistDetail => _activeArtist?.name ?? '歌手详情',
-      BrowseMode.categories => '分类点歌',
-      BrowseMode.externalLink => '外链点歌',
-      BrowseMode.ranking => '排行榜',
-    };
-  }
+  void _handleSearchSubmit() {}
 
   String _currentQuery() {
     return switch (_mode) {
@@ -493,7 +473,8 @@ class _BrowseScreenState extends State<BrowseScreen> {
     if (_songScope != '全部') {
       // 通过 DB 关系查分类，不用 song.category（后者只存了首个分类）
       final scopeCategory = CategorySummary(name: _songScope, note: '');
-      return widget.searchService.songsForCategory(scopeCategory, query: _songQuery);
+      return widget.searchService
+          .songsForCategory(scopeCategory, query: _songQuery);
     }
     return widget.searchService.searchSongs(_songQuery);
   }
@@ -989,10 +970,8 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
             style: FilledButton.styleFrom(
               backgroundColor: KiraColors.red,
               foregroundColor: Colors.white,
-              disabledBackgroundColor:
-                  KiraColors.red.withValues(alpha: 0.45),
-              disabledForegroundColor:
-                  Colors.white.withValues(alpha: 0.45),
+              disabledBackgroundColor: KiraColors.red.withValues(alpha: 0.45),
+              disabledForegroundColor: Colors.white.withValues(alpha: 0.45),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
@@ -1010,8 +989,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline,
-                color: KiraColors.red, size: 60),
+            const Icon(Icons.error_outline, color: KiraColors.red, size: 60),
             const SizedBox(height: 15),
             Text(
               _error!,
@@ -1028,8 +1006,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
               onPressed: _reset,
               icon: const Icon(Icons.refresh, size: 25),
               label: const Text('重试',
-                  style: TextStyle(
-                      fontSize: 23, fontWeight: FontWeight.w900)),
+                  style: TextStyle(fontSize: 23, fontWeight: FontWeight.w900)),
               style: FilledButton.styleFrom(
                 backgroundColor: KiraColors.red,
                 foregroundColor: Colors.white,
@@ -1133,17 +1110,14 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
                                 const SizedBox(width: 6),
                             itemBuilder: (context, i) {
                               final pi = r.pages[i];
-                              final isActive =
-                                  pi.page == r.selectedPage;
+                              final isActive = pi.page == r.selectedPage;
                               return Material(
                                 color: isActive
                                     ? KiraColors.red
                                     : const Color(0xff2a2c32),
-                                borderRadius:
-                                    BorderRadius.circular(6),
+                                borderRadius: BorderRadius.circular(6),
                                 child: InkWell(
-                                  borderRadius:
-                                      BorderRadius.circular(6),
+                                  borderRadius: BorderRadius.circular(6),
                                   onTap: isActive || _pageLoading
                                       ? null
                                       : () => _switchPage(i),
@@ -1155,8 +1129,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
                                         ? const SizedBox(
                                             width: 14,
                                             height: 14,
-                                            child:
-                                                CircularProgressIndicator(
+                                            child: CircularProgressIndicator(
                                               strokeWidth: 2,
                                               color: Colors.white,
                                             ),
@@ -1170,8 +1143,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
                                                   ? Colors.white
                                                   : KiraColors.muted,
                                               fontSize: 13,
-                                              fontWeight:
-                                                  FontWeight.w700,
+                                              fontWeight: FontWeight.w700,
                                             ),
                                           ),
                                   ),
@@ -1225,8 +1197,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Icon(Icons.arrow_upward,
-                                      size: 13,
-                                      color: KiraColors.muted),
+                                      size: 13, color: KiraColors.muted),
                                   SizedBox(width: 4),
                                   Text(
                                     '顶歌',
@@ -1306,8 +1277,8 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
         color: const Color(0xff2a2c32),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: const Icon(Icons.play_circle_fill,
-          color: KiraColors.red, size: 36),
+      child:
+          const Icon(Icons.play_circle_fill, color: KiraColors.red, size: 36),
     );
   }
 

@@ -41,12 +41,14 @@ class KirakaraShowService extends ChangeNotifier {
   int _prepareGeneration = 0;
   Duration _enginePosition = Duration.zero;
   Duration _engineDuration = Duration.zero;
+  bool _isBuffering = false;
 
   /// The engine's render surface dimensions.
   int get engineWidth => _ffi?.width ?? 0;
   int get engineHeight => _ffi?.height ?? 0;
   Duration get enginePosition => _enginePosition;
   Duration get engineDuration => _engineDuration;
+  bool get isBuffering => _isBuffering;
   bool get controllerPreviewSuppressed => _controllerPreviewSuppressed;
 
   /// Call this once after the engine DLL is available.
@@ -101,6 +103,7 @@ class KirakaraShowService extends ChangeNotifier {
       _sawEngineProgressForItem = false;
       _enginePosition = Duration.zero;
       _engineDuration = Duration.zero;
+      _setBuffering(false);
       return;
     }
 
@@ -147,6 +150,7 @@ class KirakaraShowService extends ChangeNotifier {
     _lastPlaying = null;
     _enginePosition = Duration.zero;
     _engineDuration = Duration.zero;
+    _setBuffering(true);
 
     _slotManager?.createFallbackActive(item.song.id, item.song);
     _prepareAndLoadAsync(item, generation);
@@ -291,6 +295,7 @@ class KirakaraShowService extends ChangeNotifier {
     final pos = ffi.position;
     final duration = ffi.duration;
     final engineState = ffi.state;
+    _setBuffering(_preparingItemId != null || ffi.isBuffering);
     if (pos.isFinite && pos >= 0) {
       _enginePosition = Duration(milliseconds: (pos * 1000).round());
     }
@@ -403,6 +408,12 @@ class KirakaraShowService extends ChangeNotifier {
   void setAudioClockOffset(Duration offset) {
     final seconds = offset.inMicroseconds / Duration.microsecondsPerSecond;
     _ffi?.setAudioClockOffset(seconds);
+  }
+
+  void _setBuffering(bool value) {
+    if (_isBuffering == value) return;
+    _isBuffering = value;
+    notifyListeners();
   }
 
   // ── Helpers ────────────────────────────────────────────────────

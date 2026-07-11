@@ -17,7 +17,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Kira Karaoke'), findsOneWidget);
-    expect(find.text('设定'), findsOneWidget);
+    expect(find.byTooltip('设置'), findsOneWidget);
     expect(find.text('投屏'), findsOneWidget);
     expect(find.text('主控'), findsNothing);
     expect(find.text('歌名点歌'), findsOneWidget);
@@ -35,6 +35,12 @@ void main() {
       return widget is FittedBox && widget.fit == BoxFit.contain;
     });
     expect(fittedStage, findsOneWidget);
+
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pump();
+    expect(find.text('报幕文字'), findsOneWidget);
+    expect(find.text('媒体缓存'), findsOneWidget);
+    expect(find.text('队列预缓存范围'), findsOneWidget);
   });
 
   testWidgets('browse pages render inside the controller shell', (tester) async {
@@ -53,7 +59,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('搜索歌名、歌手、编号'), findsWidgets);
     expect(find.text('搜索范围'), findsOneWidget);
-    expect(find.text('痛みに慣れてるフリしていた'), findsWidgets);
+    expect(find.text('点歌'), findsWidgets);
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.text('返回').first);

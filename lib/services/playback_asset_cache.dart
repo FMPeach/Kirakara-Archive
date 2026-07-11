@@ -36,6 +36,23 @@ class PlaybackAssetCache extends ChangeNotifier {
   Future<HttpServer>? _streamServerFuture;
   bool _disposed = false;
 
+  String get cacheDirectoryPath => _cacheDir.path;
+
+  Future<int> cacheSizeBytes() async {
+    if (!await _cacheDir.exists()) return 0;
+    var total = 0;
+    await for (final entity in _cacheDir.list(recursive: true)) {
+      if (entity is File) {
+        try {
+          total += await entity.length();
+        } on FileSystemException {
+          // A progressive file may be moving from .part while we inspect it.
+        }
+      }
+    }
+    return total;
+  }
+
   /// 确保歌曲全部 assets 完整下载。完成后回填 [MediaAsset.cachedPath] 和
   /// [song.lyricProject.cachedPath]。
   Future<void> ensureSongAssets(Song song) async {
