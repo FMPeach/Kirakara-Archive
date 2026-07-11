@@ -463,6 +463,7 @@ Future<Song> resolveBilibiliPage({
   required BilibiliPageInfo pageInfo,
   required String ownerName,
   required int ownerMid,
+  required String mainTitle,
 }) async {
   final playUri =
       Uri.parse('https://api.bilibili.com/x/player/playurl').replace(
@@ -503,7 +504,7 @@ Future<Song> resolveBilibiliPage({
 
   return Song(
     id: 'bili-$bvid-${pageInfo.cid}',
-    title: pageInfo.title,
+    title: mainTitle,
     category: '外链',
     artist: Artist(id: 'bili-$ownerMid', name: ownerName),
     duration: Duration(seconds: pageInfo.duration),

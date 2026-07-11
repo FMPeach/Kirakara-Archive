@@ -95,6 +95,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
         pageInfo: target,
         ownerName: r.ownerName,
         ownerMid: r.ownerMid,
+        mainTitle: r.song.title,
       );
       if (!mounted) return;
       setState(() {
@@ -351,47 +352,48 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
                         // ── Page tabs (always visible) ──
                         const SizedBox(height: 10),
                         SizedBox(
-                          height: 30,
+                          height: 36,
                           child: ListView.separated(
                             scrollDirection: Axis.horizontal,
                             itemCount: r.pages.length,
                             separatorBuilder: (_, __) =>
-                                const SizedBox(width: 6),
+                                const SizedBox(width: 8),
                             itemBuilder: (context, i) {
                               final pi = r.pages[i];
                               final isActive = pi.page == r.selectedPage;
+                              final label = 'P${pi.page} ${pi.title}';
                               return Material(
                                 color: isActive
                                     ? KiraColors.red
                                     : const Color(0xff2a2c32),
-                                borderRadius: BorderRadius.circular(6),
+                                borderRadius: BorderRadius.circular(8),
                                 child: InkWell(
-                                  borderRadius: BorderRadius.circular(6),
+                                  borderRadius: BorderRadius.circular(8),
                                   onTap: isActive || _pageLoading
                                       ? null
                                       : () => _switchPage(i),
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(
-                                        horizontal: 10, vertical: 4),
+                                        horizontal: 14, vertical: 6),
                                     alignment: Alignment.center,
                                     child: _pageLoading && isActive
                                         ? const SizedBox(
-                                            width: 14,
-                                            height: 14,
+                                            width: 16,
+                                            height: 16,
                                             child: CircularProgressIndicator(
                                               strokeWidth: 2,
                                               color: Colors.white,
                                             ),
                                           )
                                         : Text(
-                                            pi.title.length > 10
-                                                ? '${pi.title.substring(0, 10)}…'
-                                                : pi.title,
+                                            label.length > 20
+                                                ? '${label.substring(0, 20)}…'
+                                                : label,
                                             style: TextStyle(
                                               color: isActive
                                                   ? Colors.white
                                                   : KiraColors.muted,
-                                              fontSize: 13,
+                                              fontSize: 14,
                                               fontWeight: FontWeight.w700,
                                             ),
                                           ),
