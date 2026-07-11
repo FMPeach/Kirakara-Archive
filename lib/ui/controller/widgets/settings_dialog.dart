@@ -27,7 +27,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     _announcementController = TextEditingController(
       text: widget.settingsService.customAnnouncement,
     );
-    _cacheSize = widget.assetCache.cacheSizeBytes();
+    _cacheSize = _computeCacheSize();
   }
 
   @override
@@ -36,11 +36,19 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     super.dispose();
   }
 
+  Future<int> _computeCacheSize() async {
+    final path = widget.assetCache.cacheDirectoryPath;
+    return await compute(_calcCacheSize, path);
+  }
+
+  void _refreshCacheSize() {
+    setState(() => _cacheSize = _computeCacheSize());
+  }
+
   Future<void> _saveAnnouncement() async {
     setState(() => _savingAnnouncement = true);
-    await widget.settingsService.setCustomAnnouncement(
-      _announcementController.text,
-    );
+    await widget.settingsService
+        .setCustomAnnouncement(_announcementController.text);
     if (mounted) setState(() => _savingAnnouncement = false);
   }
 
@@ -53,155 +61,192 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     }
   }
 
-  void _refreshCacheSize() {
-    setState(() => _cacheSize = widget.assetCache.cacheSizeBytes());
+  Widget _buildAnnouncementSection() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const _SectionHeader(title: '报幕文字', icon: Icons.campaign_outlined),
+      const SizedBox(height: 8),
+      TextField(
+        controller: _announcementController,
+        maxLength: 120,
+        maxLines: 2,
+        style: const TextStyle(color: KiraColors.cream),
+        decoration: InputDecoration(
+          hintText: '留空则不显示自定义文字',
+          hintStyle: const TextStyle(color: KiraColors.muted),
+          border: const OutlineInputBorder(),
+          filled: true,
+          fillColor: KiraColors.surface2,
+          counterStyle: const TextStyle(color: KiraColors.muted),
+        ),
+      ),
+      const SizedBox(height: 8),
+      Align(
+        alignment: Alignment.centerRight,
+        child: FilledButton(
+          onPressed: _savingAnnouncement ? null : _saveAnnouncement,
+          style: FilledButton.styleFrom(
+            backgroundColor: KiraColors.surface2,
+            foregroundColor: KiraColors.cream,
+          ),
+          child: _savingAnnouncement
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: KiraColors.cream))
+              : const Text('应用'),
+        ),
+      ),
+    ]);
+  }
+
+  Widget _buildLanSection() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const _SectionHeader(title: '手机点歌服务', icon: Icons.router_outlined),
+      const SizedBox(height: 4),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: Text(
+          widget.lanServer.isRunning ? '已启动' : '未启动',
+          style: const TextStyle(
+              color: KiraColors.cream, fontWeight: FontWeight.w700),
+        ),
+        subtitle: widget.lanServer.isRunning
+            ? Text(widget.lanServer.localUri?.toString() ?? '',
+                style: const TextStyle(color: KiraColors.teal, fontSize: 12))
+            : null,
+        trailing: widget.lanServer.isRunning
+            ? const Icon(Icons.check_circle, color: KiraColors.teal)
+            : TextButton(
+                onPressed: _startingLan ? null : _startLanServer,
+                child: _startingLan
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('启动',
+                        style: TextStyle(color: KiraColors.amber)),
+              ),
+      ),
+    ]);
+  }
+
+  Widget _buildCacheSection() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const _SectionHeader(title: '媒体缓存', icon: Icons.storage_outlined),
+      const SizedBox(height: 4),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('队列预缓存范围',
+            style: TextStyle(
+                color: KiraColors.muted, fontWeight: FontWeight.w700)),
+        trailing: SegmentedButton<int>(
+          segments: const [
+            ButtonSegment(value: 1, label: Text('1 首')),
+            ButtonSegment(value: 2, label: Text('2 首')),
+            ButtonSegment(value: 3, label: Text('3 首')),
+          ],
+          selected: {widget.settingsService.prefetchLookahead},
+          showSelectedIcon: false,
+          onSelectionChanged: (v) async {
+            await widget.settingsService.setPrefetchLookahead(v.first);
+            if (mounted) setState(() {});
+          },
+        ),
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('缓存用量',
+            style: TextStyle(
+                color: KiraColors.muted, fontWeight: FontWeight.w700)),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          FutureBuilder<int>(
+            future: _cacheSize,
+            builder: (context, snapshot) => Text(
+              snapshot.hasData ? _fmtBytes(snapshot.data!) : '计算中…',
+              style: const TextStyle(
+                  color: KiraColors.cream, fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: '刷新',
+            onPressed: _refreshCacheSize,
+            icon: const Icon(Icons.refresh, size: 20, color: KiraColors.muted),
+          ),
+        ]),
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('缓存目录',
+            style: TextStyle(
+                color: KiraColors.muted, fontWeight: FontWeight.w700)),
+        subtitle: Text(
+          widget.assetCache.cacheDirectoryPath,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: KiraColors.muted, fontSize: 11),
+        ),
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('退出应用自动清理',
+            style: TextStyle(
+                color: KiraColors.muted, fontWeight: FontWeight.w700)),
+        trailing:
+            const Icon(Icons.check_circle_outline, color: KiraColors.teal),
+      ),
+    ]);
   }
 
   @override
   Widget build(BuildContext context) {
-    return _KiraDialog(
-      title: '设置',
-      width: 760,
+    return Dialog(
+      backgroundColor: const Color(0xff17181c),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: const BorderSide(color: KiraColors.lineStrong),
+      ),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 720),
-        child: SingleChildScrollView(
+        constraints: const BoxConstraints(maxWidth: 560),
+        child: Padding(
+          padding: const EdgeInsets.all(26),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const _SettingsSectionTitle(
-                icon: Icons.campaign_outlined,
-                title: '报幕文字',
-              ),
-              const SizedBox(height: 12),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _announcementController,
-                      maxLength: 120,
-                      minLines: 1,
-                      maxLines: 2,
-                      onSubmitted: (_) => _saveAnnouncement(),
-                      decoration: const InputDecoration(
-                        hintText: '留空则不显示自定义文字',
-                        filled: true,
-                        fillColor: KiraColors.surface2,
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    height: 56,
-                    child: FilledButton.icon(
-                      onPressed: _savingAnnouncement ? null : _saveAnnouncement,
-                      icon: _savingAnnouncement
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.check),
-                      label: const Text('应用'),
-                    ),
-                  ),
-                ],
-              ),
-              const _SettingsDivider(),
-              const _SettingsSectionTitle(
-                icon: Icons.router_outlined,
-                title: '手机点歌服务',
-              ),
-              const SizedBox(height: 12),
-              _SettingsValueRow(
-                label: widget.lanServer.isRunning
-                    ? '已启动：${widget.lanServer.localUri}'
-                    : '未启动',
-                trailing: widget.lanServer.isRunning
-                    ? const Icon(Icons.check_circle, color: KiraColors.teal)
-                    : TextButton.icon(
-                        onPressed: _startingLan ? null : _startLanServer,
-                        icon: _startingLan
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.refresh),
-                        label: const Text('重试'),
-                      ),
-              ),
-              const _SettingsDivider(),
-              const _SettingsSectionTitle(
-                icon: Icons.storage_outlined,
-                title: '媒体缓存',
-              ),
-              const SizedBox(height: 12),
-              _SettingsValueRow(
-                label: '队列预缓存范围',
-                trailing: SegmentedButton<int>(
-                  segments: const [
-                    ButtonSegment(value: 1, label: Text('1 首')),
-                    ButtonSegment(value: 2, label: Text('2 首')),
-                    ButtonSegment(value: 3, label: Text('3 首')),
-                  ],
-                  selected: {widget.settingsService.prefetchLookahead},
-                  showSelectedIcon: false,
-                  onSelectionChanged: (value) async {
-                    await widget.settingsService
-                        .setPrefetchLookahead(value.first);
-                    if (mounted) setState(() {});
-                  },
+              Row(children: [
+                const Expanded(
+                  child: Text('设置',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: KiraColors.cream,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w700)),
                 ),
-              ),
-              const SizedBox(height: 10),
-              _SettingsValueRow(
-                label: '本次运行占用',
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    FutureBuilder<int>(
-                      future: _cacheSize,
-                      builder: (context, snapshot) {
-                        return Text(
-                          snapshot.hasData
-                              ? _formatSettingBytes(snapshot.data!)
-                              : '计算中…',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        );
-                      },
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      tooltip: '刷新缓存用量',
-                      onPressed: _refreshCacheSize,
-                      icon: const Icon(Icons.refresh),
-                    ),
-                  ],
+                IconButton(
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close, color: KiraColors.cream),
                 ),
-              ),
-              const SizedBox(height: 10),
-              _SettingsValueRow(
-                label: '缓存目录',
-                trailing: Expanded(
-                  child: SelectableText(
-                    widget.assetCache.cacheDirectoryPath,
-                    maxLines: 1,
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(
-                      color: KiraColors.muted,
-                      fontWeight: FontWeight.w700,
-                    ),
+              ]),
+              const SizedBox(height: 18),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildAnnouncementSection(),
+                      const Divider(height: 32, color: KiraColors.line),
+                      _buildLanSection(),
+                      const Divider(height: 32, color: KiraColors.line),
+                      _buildCacheSection(),
+                    ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              const _SettingsValueRow(
-                label: '退出应用自动清理',
-                trailing: Icon(Icons.check, color: KiraColors.teal),
               ),
             ],
           ),
@@ -210,7 +255,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     );
   }
 
-  static String _formatSettingBytes(int bytes) {
+  static String _fmtBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
     final kb = bytes / 1024;
     if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
@@ -220,63 +265,34 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   }
 }
 
-class _SettingsSectionTitle extends StatelessWidget {
-  const _SettingsSectionTitle({required this.icon, required this.title});
-
-  final IconData icon;
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, required this.icon});
   final String title;
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, color: KiraColors.amber),
-        const SizedBox(width: 10),
-        Text(
-          title,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-        ),
-      ],
-    );
-  }
-}
-
-class _SettingsValueRow extends StatelessWidget {
-  const _SettingsValueRow({required this.label, required this.trailing});
-
-  final String label;
-  final Widget trailing;
-
-  @override
-  Widget build(BuildContext context) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 48),
-      child: Row(
-        children: [
-          Text(
-            label,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(children: [
+        Icon(icon, size: 20, color: KiraColors.amber),
+        const SizedBox(width: 8),
+        Text(title,
             style: const TextStyle(
-              color: KiraColors.muted,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(width: 18),
-          const Spacer(),
-          trailing,
-        ],
-      ),
+                color: KiraColors.amber,
+                fontSize: 13,
+                fontWeight: FontWeight.w700)),
+      ]),
     );
   }
 }
 
-class _SettingsDivider extends StatelessWidget {
-  const _SettingsDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 20),
-      child: Divider(height: 1, color: KiraColors.line),
-    );
+int _calcCacheSize(String path) {
+  var total = 0;
+  final dir = Directory(path);
+  if (!dir.existsSync()) return 0;
+  for (final e in dir.listSync(recursive: true)) {
+    if (e is File) total += e.lengthSync();
   }
+  return total;
 }
