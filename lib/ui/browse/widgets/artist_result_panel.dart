@@ -114,16 +114,12 @@ class _ArtistDetailRail extends StatelessWidget {
   const _ArtistDetailRail({
     required this.artist,
     required this.songCount,
-    required this.searchController,
     required this.onBack,
-    required this.onSearchChanged,
   });
 
   final ArtistSummary artist;
   final int songCount;
-  final TextEditingController searchController;
   final VoidCallback onBack;
-  final ValueChanged<String> onSearchChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -136,15 +132,7 @@ class _ArtistDetailRail extends StatelessWidget {
           children: [
             Row(
               children: [
-                SizedBox(width: 132, child: _BackButton(onPressed: onBack)),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _CompactSearchField(
-                    controller: searchController,
-                    hintText: '在歌手内搜索',
-                    onChanged: onSearchChanged,
-                  ),
-                ),
+                _BackButton(onPressed: onBack),
               ],
             ),
             const SizedBox(height: 22),

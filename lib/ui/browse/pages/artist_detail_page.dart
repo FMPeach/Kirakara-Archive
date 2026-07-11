@@ -16,7 +16,6 @@ extension _ArtistDetailPage on _BrowseScreenState {
           child: _ArtistDetailRail(
             artist: artist,
             songCount: total,
-            searchController: _searchQueryController.textController,
             onBack: () {
               _update(() {
                 _mode = BrowseMode.artists;
@@ -25,7 +24,6 @@ extension _ArtistDetailPage on _BrowseScreenState {
               });
               _syncSearchController();
             },
-            onSearchChanged: _handleSearchChanged,
           ),
         ),
         const SizedBox(width: KiraLayout.sectionGap),
