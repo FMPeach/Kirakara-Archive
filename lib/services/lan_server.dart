@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+
 import '../domain/queue_item.dart';
 import '../domain/song.dart';
 import 'bilibili_resolver.dart';
@@ -248,17 +250,26 @@ class LanServer {
 
   // ── static files ───────────────────────────────────────────
 
-  Future<void> _serveFile(HttpRequest request, String relativePath, String contentType) async {
+  Future<void> _serveFile(HttpRequest request, String assetPath, String contentType) async {
     try {
-      final file = File(relativePath);
-      if (!await file.exists()) {
-        request.response.statusCode = 404;
-        request.response.write('Not found');
-        await request.response.close();
-        return;
+      String content;
+      // Prefer Flutter asset bundle (works in release builds where the
+      // file system path relative to CWD does not exist).
+      try {
+        content = await rootBundle.loadString('$assetPath');
+      } catch (_) {
+        // Fallback: read from file system (dev mode).
+        final file = File(assetPath);
+        if (!await file.exists()) {
+          request.response.statusCode = 404;
+          request.response.write('Not found');
+          await request.response.close();
+          return;
+        }
+        content = await file.readAsString();
       }
       request.response.headers.contentType = ContentType.parse(contentType);
-      await request.response.addStream(file.openRead());
+      request.response.write(content);
       await request.response.close();
     } catch (_) {
       request.response.statusCode = 500;
