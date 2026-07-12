@@ -530,7 +530,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                     icon: Icons.cast,
                     label: '投屏',
                     value: widget.castService.isCasting
-                        ? '已开启 — http://本机IP:12952/live.ts'
+                        ? '正在输出 Stage：${widget.castService.targetName}'
                         : '未投屏',
                   ),
                   const SizedBox(height: 16),
@@ -581,7 +581,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                           onPressed: () {
                             widget.castService.isCasting
                                 ? widget.castService.stopCast()
-                                : widget.castService.startCast();
+                                : widget.castService.startMockCast();
                           },
                           icon: Icon(
                             widget.castService.isCasting
