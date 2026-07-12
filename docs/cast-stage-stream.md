@@ -209,6 +209,7 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   shared MPEG-TS reader stream.
 - Done: native HTTP `/cast/stage.ts` server foundation backed by the shared
   MPEG-TS reader stream.
+- Done: NativeCastBackend lifecycle shell owning the HTTP server and TS stream.
 - Not done: wire H.264/AAC encoder output into MPEG-TS.
 - Not done: DLNA discovery and `SetAVTransportURI`.
 
