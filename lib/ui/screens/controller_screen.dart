@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -26,7 +25,6 @@ import '../theme/kirakara_theme.dart';
 import '../theme/layout_tokens.dart';
 import '../widgets/kira_design_canvas.dart';
 import '../widgets/ktv_button.dart';
-import '../widgets/mock_qr.dart';
 import 'browse_screen.dart';
 import '../stage/stage_screen.dart';
 

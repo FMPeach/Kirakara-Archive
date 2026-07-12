@@ -257,7 +257,7 @@ class LanServer {
       // Prefer Flutter asset bundle (works in release builds where the
       // file system path relative to CWD does not exist).
       try {
-        content = await rootBundle.loadString('$assetPath');
+        content = await rootBundle.loadString(assetPath);
       } catch (_) {
         // Fallback: read from file system (dev mode).
         final file = File(assetPath);
