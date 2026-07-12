@@ -171,7 +171,8 @@ ffmpeg 可以作为开发 fallback，用于临时验证 HTTP MPEG-TS / DLNA 控�
   `/cast/stage.ts`。不要使用 ffmpeg 的 TCP listen 输出口；探测连接会吃掉
   唯一客户端并导致 VLC 卡在加载。
 - ffmpeg 不读取当前歌曲视频/音频，不拥有播放时间轴。
-- 测试 URL：`http://127.0.0.1:7392/cast/stage.ts`。
+- 测试 URL 默认是 `http://127.0.0.1:17392/cast/stage.ts`；如果端口被占用，
+  App 会自动使用后续可用端口，并在投屏弹窗里显示实际 URL。
 
 ## DLNA Control Surface
 

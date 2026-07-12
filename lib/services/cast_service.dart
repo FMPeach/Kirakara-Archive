@@ -43,7 +43,7 @@ class CastService extends ChangeNotifier {
   Future<void> startMpegTsDebugStream(
     KirakaraShowService showService, {
     int rawInputPort = 17391,
-    int httpPort = 7392,
+    int httpPort = 17392,
   }) async {
     await stopCast(showService: showService);
 
@@ -58,13 +58,19 @@ class CastService extends ChangeNotifier {
     _state = CastState.searching;
     _targetName = 'MPEG-TS 初始化中';
     _mpegTsRawInputPort = rawInputPort;
-    _mpegTsUrl = 'http://127.0.0.1:$httpPort/cast/stage.ts';
+    _mpegTsUrl = null;
     _lastError = null;
     notifyListeners();
 
-    await _killOrphanFfmpegs(rawInputPort);
+    await _killOrphanFfmpegsOnPorts([
+      rawInputPort,
+      for (var port = httpPort; port < httpPort + 20; port++) port,
+    ]);
+    late final int boundHttpPort;
     try {
-      await _startMpegTsHttpServer(httpPort);
+      boundHttpPort = await _startMpegTsHttpServer(httpPort);
+      _mpegTsUrl = 'http://127.0.0.1:$boundHttpPort/cast/stage.ts';
+      notifyListeners();
     } catch (error) {
       _targetName = null;
       _mpegTsUrl = null;
@@ -169,23 +175,25 @@ class CastService extends ChangeNotifier {
     }
     await _stopMpegTsHttpServer();
     // Kill any orphaned ffmpeg instances that might hold our ports.
-    await _killOrphanFfmpegs(_mpegTsRawInputPort);
+    await _killOrphanFfmpegsOnPorts([_mpegTsRawInputPort]);
     _targetName = null;
     _mpegTsUrl = null;
     _state = CastState.idle;
     notifyListeners();
   }
 
-  /// Kill any ffmpeg.exe processes listening on our raw BGRA input port.
-  static Future<void> _killOrphanFfmpegs(int rawInputPort) async {
+  /// Kill any ffmpeg.exe processes listening on our cast ports.
+  static Future<void> _killOrphanFfmpegsOnPorts(Iterable<int> ports) async {
     try {
+      final targets = ports.toSet();
+      if (targets.isEmpty) return;
       final result = await Process.run('netstat', ['-ano']);
       final lines = result.stdout.toString().split('\n');
       final pids = <int>{};
       for (final line in lines) {
-        if (!line.contains(':$rawInputPort') || !line.contains('LISTENING')) {
-          continue;
-        }
+        if (!line.contains('LISTENING')) continue;
+        final matchesTarget = targets.any((port) => line.contains(':$port'));
+        if (!matchesTarget) continue;
         final parts = line.trim().split(RegExp(r'\s+'));
         final pid = int.tryParse(parts.last);
         if (pid != null && pid > 0) pids.add(pid);
@@ -246,10 +254,22 @@ class CastService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _startMpegTsHttpServer(int httpPort) async {
-    final server = await HttpServer.bind(InternetAddress.anyIPv4, httpPort);
-    _mpegTsHttpServer = server;
-    unawaited(_serveMpegTsHttp(server));
+  Future<int> _startMpegTsHttpServer(int preferredPort) async {
+    Object? lastError;
+    for (var port = preferredPort; port < preferredPort + 20; port++) {
+      try {
+        final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
+        _mpegTsHttpServer = server;
+        unawaited(_serveMpegTsHttp(server));
+        return port;
+      } catch (error) {
+        lastError = error;
+        debugPrint('CastService: MPEG-TS HTTP port $port unavailable: $error');
+      }
+    }
+    throw StateError(
+      '$preferredPort-${preferredPort + 19} 都不可用：${lastError ?? 'unknown error'}',
+    );
   }
 
   Future<void> _serveMpegTsHttp(HttpServer server) async {
