@@ -23,7 +23,7 @@ flowchart TD
 
     Clock --> VideoDecoder
     Clock --> AudioEngine
-    Clock --> Lyrics["KRL Renderer\n歌词 / QR / 未来报幕"]
+    Clock --> Lyrics["KRL Renderer\n歌词 / Stage Overlay 预留"]
 
     VideoDecoder --> Compositor["StageCompositor\nD3D11 合成"]
     Lyrics --> Compositor
@@ -110,11 +110,13 @@ video texture + transparent overlay texture -> composed stage texture
 StageCompositor 必须维护固定节目画布，例如 1920x1080@30fps 或
 1920x1080@60fps。源视频无论是 720p、1080p、4K、24fps、30fps 还是
 60fps，都只是这个画布里的一个 source：按规则 letterbox / scale 后放入
-画布，再叠加字幕、QR 和未来报幕。Encoder 只看到固定规格的 composed
+画布，再叠加字幕；QR 和报幕后续按统一 Stage overlay 设计接入。
+Encoder 只看到固定规格的 composed
 stage texture，不直接感知源视频分辨率或帧率变化。
 
 最终路线是用 MF Source Reader / Decoder MFT 或等价低级解码链路输出
-D3D11 texture，再把 KRL/QR/报幕渲染到透明 overlay texture，最后合成。
+D3D11 texture，再把 KRL 和后续统一 Stage overlay 渲染到透明 overlay
+texture，最后合成。
 
 允许有一个过渡路线：保留现有窗口输出，同时为 Cast 建立独立 offscreen
 StageCompositor。过渡期可以重复解码当前视频，但它必须完全受 ShowHost
@@ -127,7 +129,7 @@ Cast video 必须来自 ShowHost 主动合成的 Stage 画面：
 
 1. 读取当前歌曲背景视频。
 2. 按 16:9 Stage 输出 letterbox / scale。
-3. 叠加 KRL 歌词、QR、未来报幕和指示层。
+3. 叠加 KRL 歌词；QR、报幕和指示层等后续按统一 Stage overlay 接入。
 4. 输出给 H.264 encoder。
 
 未播放时不能推进视频。暂停时不能推进视频。切歌时优先保持 HTTP / DLNA URL
@@ -187,10 +189,9 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   with D2D DrawBitmap, then allows lyrics to render into the same texture.
 - Done: dev raw-BGRA cast stream is driven by ShowHost state; pause/stop do
   not advance the diagnostic frame.
-- Done: QR placeholder overlay is drawn into the Cast StageCompositor texture,
-  not only the layered subtitle window.
 - Not done: real MF decoded video texture wired into StageCompositor.
-- Not done: real QR payload generation and report/ticker overlay wired into Cast.
+- Deferred: QR and report/ticker overlay are disabled until the second-screen
+  Stage overlay design is unified.
 - Not done: processed PCM tap / ring buffer.
 - Not done: NativeCastBackend.
 - Not done: native video decode / composition / H.264 encode.
