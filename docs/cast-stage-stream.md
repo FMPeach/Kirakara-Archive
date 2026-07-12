@@ -191,6 +191,8 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   not advance the diagnostic frame.
 - Done: transitional MF SourceReader BGRA video frames are driven by ShowHost
   playback time and wired into StageCompositor.
+- Done: dev raw-BGRA fallback output is frame-rate throttled and preserves
+  whole-frame socket ordering with a pending buffer.
 - Deferred: QR and report/ticker overlay are disabled until the second-screen
   Stage overlay design is unified.
 - Done: processed PCM tap / ring buffer boundary in Show audio output path.
