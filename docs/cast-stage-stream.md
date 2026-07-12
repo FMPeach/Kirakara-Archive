@@ -180,8 +180,11 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   App `dev` and Show `main`.
 - Done: this document freezes the cast architecture and forbidden paths.
 - Done: ShowHost current media source / playback revision boundary.
-- Not done: StageCompositor feasibility proof.
-- Not done: transparent offscreen Stage overlay / composed texture for cast.
+- Done: Show fixed-canvas StageCompositor proof:
+  1920x1080 canvas, source letterbox rect, transparent overlay texture, and
+  native D3D/DXGI/D2D handles.
+- Not done: real video texture + overlay texture composition.
+- Not done: transparent offscreen Stage overlay wired into Cast.
 - Not done: processed PCM tap / ring buffer.
 - Not done: NativeCastBackend.
 - Not done: native video decode / composition / H.264 encode.
