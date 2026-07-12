@@ -79,7 +79,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
       slotManager: _slotManager,
     )..start();
     displayManager = DisplayManager();
-    castService = CastService();
+    castService = CastService(showService: kirakaraShowService);
     lanServer = LanServer(
       queueService: queueService,
       searchService: searchService,

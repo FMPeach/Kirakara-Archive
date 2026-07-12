@@ -391,6 +391,14 @@ class KirakaraShowService extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool startCastStream(int port) {
+    return _ffi?.startCastStream(port) ?? false;
+  }
+
+  void stopCastStream() {
+    _ffi?.stopCastStream();
+  }
+
   void setControllerQrRect({
     required bool visible,
     required int x,
