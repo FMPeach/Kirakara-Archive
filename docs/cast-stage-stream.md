@@ -192,7 +192,7 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
 - Not done: real MF decoded video texture wired into StageCompositor.
 - Deferred: QR and report/ticker overlay are disabled until the second-screen
   Stage overlay design is unified.
-- Not done: processed PCM tap / ring buffer.
+- Done: processed PCM tap / ring buffer boundary in Show audio output path.
 - Not done: NativeCastBackend.
 - Not done: native video decode / composition / H.264 encode.
 - Not done: processed PCM to AAC encode.
