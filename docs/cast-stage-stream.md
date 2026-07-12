@@ -207,7 +207,9 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   reset handling.
 - Done: NativeCastStream bridge for writing encoded H.264/AAC frames into a
   shared MPEG-TS reader stream.
-- Not done: wire H.264/AAC encoder output into MPEG-TS and HTTP `/cast/stage.ts`.
+- Done: native HTTP `/cast/stage.ts` server foundation backed by the shared
+  MPEG-TS reader stream.
+- Not done: wire H.264/AAC encoder output into MPEG-TS.
 - Not done: DLNA discovery and `SetAVTransportURI`.
 
 ## Verification Requirements
