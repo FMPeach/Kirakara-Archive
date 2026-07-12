@@ -166,7 +166,10 @@ ffmpeg 可以作为开发 fallback，用于临时验证 HTTP MPEG-TS / DLNA 控�
 
 - App 的投屏弹窗可以启动一个本机 MPEG-TS 测试流，方便用 VLC 验证。
 - ffmpeg 只接收 ShowHost 已合成的 raw BGRA Stage frame，并编码为 H.264
-  MPEG-TS over HTTP。
+  MPEG-TS。
+- ffmpeg 的 MPEG-TS 输出写到 `pipe:1`，由 App 内置 HTTP server 转发到
+  `/cast/stage.ts`。不要使用 ffmpeg 的 TCP listen 输出口；探测连接会吃掉
+  唯一客户端并导致 VLC 卡在加载。
 - ffmpeg 不读取当前歌曲视频/音频，不拥有播放时间轴。
 - 测试 URL：`http://127.0.0.1:7392/cast/stage.ts`。
 
@@ -220,6 +223,8 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
 - Done: NativeCastBackend lifecycle shell owning the HTTP server and TS stream.
 - Done: App dev MPEG-TS test button using ShowHost raw-BGRA output and ffmpeg
   as an explicit encoder/HTTP fallback for VLC testing.
+- Done: dev fallback repaired to use ffmpeg `pipe:1` plus App HTTP relay, and
+  raw-BGRA socket flushing is capped to avoid blocking the render loop.
 - Not done: wire H.264/AAC encoder output into MPEG-TS.
 - Not done: DLNA discovery and `SetAVTransportURI`.
 

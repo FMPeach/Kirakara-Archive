@@ -16,7 +16,13 @@ class CastService extends ChangeNotifier {
   CastState _state = CastState.idle;
   String? _targetName;
   Process? _mpegTsProcess;
+  HttpServer? _mpegTsHttpServer;
+  StreamSubscription<List<int>>? _ffmpegStdoutSub;
+  StreamSubscription<String>? _ffmpegStderrSub;
+  final Set<HttpResponse> _mpegTsClients = <HttpResponse>{};
+  KirakaraShowService? _activeShowService;
   String? _mpegTsUrl;
+  int _mpegTsRawInputPort = 17391;
   String? _lastError;
 
   CastState get state => _state;
@@ -51,9 +57,22 @@ class CastService extends ChangeNotifier {
 
     _state = CastState.searching;
     _targetName = 'MPEG-TS 初始化中';
+    _mpegTsRawInputPort = rawInputPort;
     _mpegTsUrl = 'http://127.0.0.1:$httpPort/cast/stage.ts';
     _lastError = null;
     notifyListeners();
+
+    await _killOrphanFfmpegs(rawInputPort);
+    try {
+      await _startMpegTsHttpServer(httpPort);
+    } catch (error) {
+      _targetName = null;
+      _mpegTsUrl = null;
+      _state = CastState.idle;
+      _lastError = 'MPEG-TS HTTP 服务启动失败：$error';
+      notifyListeners();
+      rethrow;
+    }
 
     final args = <String>[
       '-hide_banner',
@@ -88,11 +107,15 @@ class CastService extends ChangeNotifier {
       '60',
       '-sc_threshold',
       '0',
+      '-flush_packets',
+      '1',
+      '-muxdelay',
+      '0',
+      '-muxpreload',
+      '0',
       '-f',
       'mpegts',
-      '-listen',
-      '1',
-      'http://0.0.0.0:$httpPort/cast/stage.ts',
+      'pipe:1',
     ];
 
     late final Process process;
@@ -107,6 +130,7 @@ class CastService extends ChangeNotifier {
       rethrow;
     }
     _mpegTsProcess = process;
+    _activeShowService = showService;
     _pipeFfmpegLogs(process);
     unawaited(_watchFfmpegExit(process));
 
@@ -131,7 +155,8 @@ class CastService extends ChangeNotifier {
   }
 
   Future<void> stopCast({KirakaraShowService? showService}) async {
-    showService?.stopCastStream();
+    (showService ?? _activeShowService)?.stopCastStream();
+    _activeShowService = null;
     final process = _mpegTsProcess;
     _mpegTsProcess = null;
     if (process != null) {
@@ -139,13 +164,43 @@ class CastService extends ChangeNotifier {
       try {
         await process.exitCode.timeout(const Duration(seconds: 2));
       } on TimeoutException {
-        // Process.kill on Windows can lag if ffmpeg is inside socket teardown.
+        // Process.kill on Windows can lag.
       }
     }
+    await _stopMpegTsHttpServer();
+    // Kill any orphaned ffmpeg instances that might hold our ports.
+    await _killOrphanFfmpegs(_mpegTsRawInputPort);
     _targetName = null;
     _mpegTsUrl = null;
     _state = CastState.idle;
     notifyListeners();
+  }
+
+  /// Kill any ffmpeg.exe processes listening on our raw BGRA input port.
+  static Future<void> _killOrphanFfmpegs(int rawInputPort) async {
+    try {
+      final result = await Process.run('netstat', ['-ano']);
+      final lines = result.stdout.toString().split('\n');
+      final pids = <int>{};
+      for (final line in lines) {
+        if (!line.contains(':$rawInputPort') || !line.contains('LISTENING')) {
+          continue;
+        }
+        final parts = line.trim().split(RegExp(r'\s+'));
+        final pid = int.tryParse(parts.last);
+        if (pid != null && pid > 0) pids.add(pid);
+      }
+      for (final pid in pids) {
+        try {
+          final taskResult = await Process.run(
+            'tasklist', ['/FI', 'PID eq $pid', '/FO', 'CSV', '/NH']);
+          if (taskResult.stdout.toString().contains('ffmpeg.exe')) {
+            Process.killPid(pid);
+            debugPrint('CastService: killed orphaned ffmpeg PID $pid');
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
   }
 
   @override
@@ -153,6 +208,11 @@ class CastService extends ChangeNotifier {
     final process = _mpegTsProcess;
     _mpegTsProcess = null;
     process?.kill();
+    _mpegTsHttpServer?.close(force: true);
+    for (final client in List<HttpResponse>.of(_mpegTsClients)) {
+      client.close();
+    }
+    _mpegTsClients.clear();
     super.dispose();
   }
 
@@ -165,11 +225,8 @@ class CastService extends ChangeNotifier {
       notifyListeners();
     }
 
-    process.stderr
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen(capture);
-    process.stdout
+    _ffmpegStdoutSub = process.stdout.listen(_broadcastMpegTsChunk);
+    _ffmpegStderrSub = process.stderr
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen(capture);
@@ -179,11 +236,72 @@ class CastService extends ChangeNotifier {
     final code = await process.exitCode;
     if (!identical(_mpegTsProcess, process)) return;
     _mpegTsProcess = null;
+    _activeShowService?.stopCastStream();
+    _activeShowService = null;
+    await _stopMpegTsHttpServer();
     _lastError = 'ffmpeg 已退出：$code';
     _targetName = null;
     _mpegTsUrl = null;
     _state = CastState.idle;
     notifyListeners();
+  }
+
+  Future<void> _startMpegTsHttpServer(int httpPort) async {
+    final server = await HttpServer.bind(InternetAddress.anyIPv4, httpPort);
+    _mpegTsHttpServer = server;
+    unawaited(_serveMpegTsHttp(server));
+  }
+
+  Future<void> _serveMpegTsHttp(HttpServer server) async {
+    try {
+      await for (final request in server) {
+        if (request.method != 'GET' || request.uri.path != '/cast/stage.ts') {
+          request.response.statusCode = HttpStatus.notFound;
+          await request.response.close();
+          continue;
+        }
+
+        final response = request.response;
+        response.headers.contentType = ContentType('video', 'MP2T');
+        response.headers.set(HttpHeaders.cacheControlHeader, 'no-store');
+        response.headers.chunkedTransferEncoding = true;
+        _mpegTsClients.add(response);
+        unawaited(response.done.whenComplete(() {
+          _mpegTsClients.remove(response);
+        }));
+      }
+    } catch (_) {
+      // Closing the server during cast shutdown can end the request stream.
+    }
+  }
+
+  Future<void> _stopMpegTsHttpServer() async {
+    await _ffmpegStdoutSub?.cancel();
+    await _ffmpegStderrSub?.cancel();
+    _ffmpegStdoutSub = null;
+    _ffmpegStderrSub = null;
+
+    final server = _mpegTsHttpServer;
+    _mpegTsHttpServer = null;
+    if (server != null) {
+      await server.close(force: true);
+    }
+    for (final client in List<HttpResponse>.of(_mpegTsClients)) {
+      await client.close();
+    }
+    _mpegTsClients.clear();
+  }
+
+  void _broadcastMpegTsChunk(List<int> chunk) {
+    if (_mpegTsClients.isEmpty) return;
+    for (final client in List<HttpResponse>.of(_mpegTsClients)) {
+      try {
+        client.add(chunk);
+      } catch (_) {
+        _mpegTsClients.remove(client);
+        unawaited(client.close());
+      }
+    }
   }
 
   static String? _findFfmpeg() {
