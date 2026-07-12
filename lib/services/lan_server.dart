@@ -158,6 +158,7 @@ class LanServer {
         _json(request, 404, {'error': 'song_not_found'});
       } else {
         final item = _queueService.addSong(song, requestedBy: '手机点歌');
+        _onQueueChanged();
         _json(request, 200, {'queueId': item.id});
       }
       return;
@@ -167,7 +168,7 @@ class LanServer {
     if (method == 'DELETE' && path.startsWith('/api/queue/')) {
       final id = path.substring('/api/queue/'.length);
       _queueService.remove(id);
-      _playbackService.refreshUpNext();
+      _onQueueChanged();
       _json(request, 200, {'ok': true});
       return;
     }
@@ -176,7 +177,7 @@ class LanServer {
     if (method == 'POST' && path.startsWith('/api/queue/bump/')) {
       final id = path.substring('/api/queue/bump/'.length);
       _queueService.bumpItemToNext(id);
-      _playbackService.refreshUpNext();
+      _onQueueChanged();
       _json(request, 200, {'ok': true});
       return;
     }
@@ -298,6 +299,19 @@ class LanServer {
     }
   }
 
+  // ── queue sync ────────────────────────────────────────────
+
+  /// Called after any API that mutates the queue.  Refreshes the
+  /// up-next preview and auto-starts playback when the player is idle.
+  void _onQueueChanged() {
+    _playbackService.refreshUpNext();
+    final state = _playbackService.state;
+    // Auto-start: nothing playing now, but queue has songs ready.
+    if (state.currentSong == null && _queueService.items.isNotEmpty) {
+      _playbackService.next();
+    }
+  }
+
   // ── resolve ──────────────────────────────────────────────
 
   Future<void> _handleResolve(HttpRequest request) async {
@@ -326,6 +340,7 @@ class LanServer {
           mainTitle: result.song.title,
         );
         final item = _queueService.addSong(song, requestedBy: '手机点歌');
+        _onQueueChanged();
         _json(request, 200, {
           'queueId': item.id,
           'title': song.title,
