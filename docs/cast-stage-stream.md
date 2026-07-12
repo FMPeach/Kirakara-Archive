@@ -187,8 +187,10 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   with D2D DrawBitmap, then allows lyrics to render into the same texture.
 - Done: dev raw-BGRA cast stream is driven by ShowHost state; pause/stop do
   not advance the diagnostic frame.
+- Done: QR placeholder overlay is drawn into the Cast StageCompositor texture,
+  not only the layered subtitle window.
 - Not done: real MF decoded video texture wired into StageCompositor.
-- Not done: QR/report overlay wired into Cast.
+- Not done: real QR payload generation and report/ticker overlay wired into Cast.
 - Not done: processed PCM tap / ring buffer.
 - Not done: NativeCastBackend.
 - Not done: native video decode / composition / H.264 encode.
