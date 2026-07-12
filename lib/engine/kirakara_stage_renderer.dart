@@ -159,6 +159,7 @@ class _KirakaraNativeStageWidgetState extends State<_KirakaraNativeStageWidget>
     if (renderObject is! RenderBox || !renderObject.hasSize) return;
 
     final designSize = renderObject.size;
+    final dpr = MediaQuery.of(context).devicePixelRatio;
     final topLeft = renderObject.localToGlobal(Offset.zero);
     final bottomRight = renderObject.localToGlobal(
       Offset(designSize.width, designSize.height),
@@ -178,10 +179,10 @@ class _KirakaraNativeStageWidgetState extends State<_KirakaraNativeStageWidget>
     final stageLeft = topLeft.dx + (paintedWidth - stageWidth) / 2;
     final stageTop = topLeft.dy + (paintedHeight - stageHeight) / 2;
     final rect = _NativePreviewRect(
-      x: stageLeft.round(),
-      y: stageTop.round(),
-      width: stageWidth.round().clamp(1, 16384),
-      height: stageHeight.round().clamp(1, 16384),
+      x: (stageLeft * dpr).round(),
+      y: (stageTop * dpr).round(),
+      width: (stageWidth * dpr).round().clamp(1, 16384),
+      height: (stageHeight * dpr).round().clamp(1, 16384),
     );
     if (rect != _lastRect) {
       _lastRect = rect;
@@ -215,10 +216,10 @@ class _KirakaraNativeStageWidgetState extends State<_KirakaraNativeStageWidget>
     const qrDesignTop = 90.0;
     final qrSize = (qrDesignSize * ((scaleX + scaleY) / 2)).round();
     final qrRect = _NativePreviewRect(
-      x: ((designSize.width - qrDesignRight - qrDesignSize) * scaleX).round(),
-      y: (qrDesignTop * scaleY).round(),
-      width: qrSize.clamp(1, 4096),
-      height: qrSize.clamp(1, 4096),
+      x: ((designSize.width - qrDesignRight - qrDesignSize) * scaleX * dpr).round(),
+      y: (qrDesignTop * scaleY * dpr).round(),
+      width: (qrSize * dpr).round().clamp(1, 4096),
+      height: (qrSize * dpr).round().clamp(1, 4096),
     );
     if (qrRect != _lastQrRect) {
       _lastQrRect = qrRect;
