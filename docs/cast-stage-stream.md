@@ -189,12 +189,13 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   with D2D DrawBitmap, then allows lyrics to render into the same texture.
 - Done: dev raw-BGRA cast stream is driven by ShowHost state; pause/stop do
   not advance the diagnostic frame.
-- Not done: real MF decoded video texture wired into StageCompositor.
+- Done: transitional MF SourceReader BGRA video frames are driven by ShowHost
+  playback time and wired into StageCompositor.
 - Deferred: QR and report/ticker overlay are disabled until the second-screen
   Stage overlay design is unified.
 - Done: processed PCM tap / ring buffer boundary in Show audio output path.
 - Not done: NativeCastBackend.
-- Not done: native video decode / composition / H.264 encode.
+- Not done: decoder-backed D3D11 video texture / H.264 encode.
 - Not done: processed PCM to AAC encode.
 - Not done: MPEG-TS muxer.
 - Not done: DLNA discovery and `SetAVTransportURI`.
