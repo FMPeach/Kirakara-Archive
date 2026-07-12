@@ -531,6 +531,18 @@ class _ControllerScreenState extends State<ControllerScreen> {
                         ? '正在输出 Stage：${widget.castService.targetName}'
                         : '未投屏',
                   ),
+                  if (widget.castService.mpegTsUrl != null)
+                    _StatusLine(
+                      icon: Icons.link,
+                      label: '测试流',
+                      value: widget.castService.mpegTsUrl!,
+                    ),
+                  if (widget.castService.lastError != null)
+                    _StatusLine(
+                      icon: Icons.error_outline,
+                      label: '状态',
+                      value: widget.castService.lastError!,
+                    ),
                   const SizedBox(height: 16),
                   Row(
                     children: [
@@ -576,18 +588,19 @@ class _ControllerScreenState extends State<ControllerScreen> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: FilledButton.icon(
-                          onPressed: () {
-                            widget.castService.isCasting
-                                ? widget.castService.stopCast()
-                                : widget.castService.startMockCast();
-                          },
+                          onPressed:
+                              widget.castService.state == CastState.searching
+                                  ? null
+                                  : _toggleMpegTsDebugStream,
                           icon: Icon(
                             widget.castService.isCasting
                                 ? Icons.cast_connected
-                                : Icons.cast,
+                                : Icons.settings_input_antenna,
                           ),
                           label: Text(
-                            widget.castService.isCasting ? '停止投屏' : 'Mock 投屏',
+                            widget.castService.isCasting
+                                ? '停止 MPEG-TS'
+                                : 'MPEG-TS 测试流',
                           ),
                         ),
                       ),
@@ -600,6 +613,32 @@ class _ControllerScreenState extends State<ControllerScreen> {
         );
       },
     );
+  }
+
+  Future<void> _toggleMpegTsDebugStream() async {
+    try {
+      if (widget.castService.isCasting) {
+        await widget.castService.stopCast(
+          showService: widget.kirakaraShowService,
+        );
+        return;
+      }
+      await widget.castService.startMpegTsDebugStream(
+        widget.kirakaraShowService,
+      );
+      if (!mounted) return;
+      final url = widget.castService.mpegTsUrl;
+      if (url != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('VLC 打开网络串流：$url')),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('MPEG-TS 启动失败：$error')),
+      );
+    }
   }
 
   Future<void> _openPhysicalStageOutput() async {
