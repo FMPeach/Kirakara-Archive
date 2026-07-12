@@ -201,7 +201,8 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
 - Not done: NativeCastBackend.
 - Not done: decoder-backed D3D11 video texture / H.264 encode.
 - Not done: processed PCM to AAC encode.
-- Not done: MPEG-TS muxer.
+- Done: native MPEG-TS muxer foundation for PAT/PMT/PES/PTS/PCR packets.
+- Not done: wire H.264/AAC encoder output into MPEG-TS and HTTP `/cast/stage.ts`.
 - Not done: DLNA discovery and `SetAVTransportURI`.
 
 ## Verification Requirements
