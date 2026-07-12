@@ -183,8 +183,12 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
 - Done: Show fixed-canvas StageCompositor proof:
   1920x1080 canvas, source letterbox rect, transparent overlay texture, and
   native D3D/DXGI/D2D handles.
-- Not done: real video texture + overlay texture composition.
-- Not done: transparent offscreen Stage overlay wired into Cast.
+- Done: StageCompositor scales BGRA/D3D texture sources into the fixed canvas
+  with D2D DrawBitmap, then allows lyrics to render into the same texture.
+- Done: dev raw-BGRA cast stream is driven by ShowHost state; pause/stop do
+  not advance the diagnostic frame.
+- Not done: real MF decoded video texture wired into StageCompositor.
+- Not done: QR/report overlay wired into Cast.
 - Not done: processed PCM tap / ring buffer.
 - Not done: NativeCastBackend.
 - Not done: native video decode / composition / H.264 encode.
