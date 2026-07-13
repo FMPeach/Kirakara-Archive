@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../domain/queue_item.dart';
 import '../domain/song.dart';
 import 'bilibili_resolver.dart';
+import 'lan_address_resolver.dart';
 import 'playback_service.dart';
 import 'queue_service.dart';
 import 'search_service.dart';
@@ -31,42 +32,9 @@ class LanServer {
     return Uri.parse('http://$_lanIp:${_server!.port}');
   }
 
-  /// 多网卡环境下优选非回环、非虚拟网卡的 LAN IPv4。
-  static Future<String?> _detectLanIp() async {
-    try {
-      final interfaces = await NetworkInterface.list();
-      String? best;
-      for (final iface in interfaces) {
-        for (final addr in iface.addresses) {
-          if (addr.type != InternetAddressType.IPv4) continue;
-          final ip = addr.address;
-          if (ip == '127.0.0.1') continue;
-          // 排除虚拟网卡和 VPN
-          final name = iface.name.toLowerCase();
-          if (name.contains('virtual') || name.contains('vmware') ||
-              name.contains('virtualbox') || name.contains('hyper-v') ||
-              name.contains('vpn') || name.contains('loopback') ||
-              name.contains('bluetooth') || name.contains('tunnel')) {
-            continue;
-          }
-          // 优选以太网 / Wi-Fi
-          if (name.contains('ethernet') || name.contains('wi-fi') ||
-              name.contains('wlan') || name.contains('en') ||
-              name.contains('eth')) {
-            return ip;
-          }
-          best ??= ip;
-        }
-      }
-      return best;
-    } catch (_) {
-      return null;
-    }
-  }
-
   Future<void> start({int port = 7391}) async {
     if (_server != null) return;
-    _lanIp = await _detectLanIp();
+    _lanIp = await LanAddressResolver.detectIpv4();
     _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
     _server!.listen(_handleRequest);
   }

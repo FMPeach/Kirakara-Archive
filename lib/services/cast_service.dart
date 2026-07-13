@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'kirakara_show_service.dart';
+import 'lan_address_resolver.dart';
 
 enum CastState {
   idle,
@@ -43,6 +44,16 @@ class CastService extends ChangeNotifier {
     _lastError = null;
     notifyListeners();
 
+    final lanIp = await LanAddressResolver.detectIpv4();
+    if (lanIp == null) {
+      const message = '未找到可用的实体局域网 IPv4，请检查 Wi-Fi 或网线连接';
+      _targetName = null;
+      _state = CastState.idle;
+      _lastError = message;
+      notifyListeners();
+      throw StateError(message);
+    }
+
     final started = showService.startCastStream(0);
     final port = started ? showService.castStreamPort : 0;
     if (!started || port == 0) {
@@ -56,7 +67,7 @@ class CastService extends ChangeNotifier {
     }
 
     _activeShowService = showService;
-    _mpegTsUrl = 'http://127.0.0.1:$port/cast/stage.ts';
+    _mpegTsUrl = 'http://$lanIp:$port/cast/stage.ts';
     _targetName = 'MPEG-TS · $_mpegTsUrl';
     _state = CastState.casting;
     notifyListeners();
