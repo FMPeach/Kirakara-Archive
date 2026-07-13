@@ -101,6 +101,14 @@ PlaybackSession 只同步 source、play/pause、timeline revision 和 seek 位�
 时钟消费队列中的现成纹理。编码端直接接收 CastStageRenderer 的合成纹理，MF
 没有任何捕获 Stage、抓窗口或把合成结果读回 CPU 的接口。
 
+Windows native backend 不能绑定开发机厂商。它按当前 Stage D3D adapter 动态
+枚举兼容的硬件 H.264 MFT；NVIDIA、Intel Quick Sync、AMD、Qualcomm 等都只是
+可能的实现。1920x1080@60 是最高输出 profile，能力不足时可协商 1080p30 等
+保守 profile。若当前设备不存在兼容的 GPU converter / hardware encoder，UI
+明确标记 Cast 不可用；禁止静默退回窗口捕获、CPU 像素回读或 ffmpeg。
+MF/D3D11 只存在于 Windows backend，不能泄漏进跨平台 CastService 和
+StageProgramState；Android 后端后续独立实现。
+
 ## Current Show Pipeline
 
 当前 Show 的实际显示管线仍然是窗口层叠：
