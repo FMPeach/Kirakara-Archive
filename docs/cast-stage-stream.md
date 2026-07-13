@@ -187,10 +187,17 @@ CastBackend 不能重新读取 vocal / inst 文件，也不能偷用背景视频
 ## Runtime Encoder Policy
 
 Cast 的正式运行路径已经改为全原生链路：ShowHost 主动合成 D3D11 Stage
-texture，兼容当前 D3D adapter 的硬件 H.264 MFT 直接消费该 texture；App
-处理后的 PCM 由系统 AAC-LC MFT 编码，再与视频复用为 MPEG-TS。App 和
-ShowHost 的 Cast 运行时不启动、打包或依赖 ffmpeg，也不存在 raw-BGRA
-socket/pipe fallback。
+texture，优先由兼容当前 D3D adapter 的硬件 H.264 MFT 直接消费。启动顺序为
+1080p60 hardware、1080p30 hardware、1080p30 software。软件兜底仍在 GPU
+完成 BGRA 到 NV12，只把最终 NV12 帧回读给 Windows 系统 H.264 MFT；队列
+来不及处理时丢弃 Cast 输出帧，不允许累积直播延迟。当前时间线成功提交首帧
+后，偶发视频丢帧只保持上一画面，不能打断连续音频；切歌后则重新等待新视频
+时间线首帧，防止音频抢跑。App 处理后的 PCM 由系统 AAC-LC MFT 编码，再与
+视频复用为 MPEG-TS。
+
+App 和 ShowHost 的 Cast 运行时不启动、打包或依赖 ffmpeg，也不存在 raw-BGRA
+socket/pipe fallback。软件编码回退是系统 Media Foundation 路径，不是另一个
+第三方编码器分发包。
 
 ffmpeg / ffprobe 只允许作为开发机上的离线码流诊断工具，例如检查测试抓包的
 codec、PTS 和静音区间；它们不参与 App 的播放、合成、编码、HTTP 服务或分发。
@@ -233,7 +240,8 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
 - Done: processed PCM tap / ring buffer boundary in Show audio output path.
 - Done: NativeCastBackend owns native HTTP and the shared MPEG-TS stream.
 - Done: fixed-canvas composed D3D11 Stage texture feeds a dynamically selected
-  hardware H.264 MFT without CPU readback.
+  hardware H.264 MFT without CPU readback, with a bounded 1080p30 Windows
+  software H.264 fallback that reads back only converted NV12 frames.
 - Done: final App PCM after track selection, volume, key shift and key fade is
   normalized to 48 kHz stereo, encoded as AAC-LC, wrapped in ADTS and muxed
   into the same continuous MPEG-TS. Background-video audio is never used.
@@ -246,7 +254,7 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
 - Done: native HTTP `/cast/stage.ts` server foundation backed by the shared
   MPEG-TS reader stream.
 - Done: App MPEG-TS test button starts the native ShowHost Cast stream and
-  displays its dynamically allocated localhost URL; no Dart relay is used.
+  displays its dynamically allocated physical-LAN URL; no Dart relay is used.
 - Done: native H.264 and AAC output are wired into one continuous MPEG-TS.
 - Verified: real HTTP/progressive background source plus local processed audio
   produced H.264 Main 1920x1080@60 and AAC-LC 48 kHz stereo. AAC PTS stayed
