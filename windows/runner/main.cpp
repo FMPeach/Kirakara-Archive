@@ -6,6 +6,29 @@
 #include "ime_bridge.h"
 #include "utils.h"
 
+namespace {
+
+class ScopedExecutionState {
+ public:
+  ScopedExecutionState()
+      : active_(::SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED |
+                                          ES_DISPLAY_REQUIRED) != 0) {}
+
+  ~ScopedExecutionState() {
+    if (active_) {
+      ::SetThreadExecutionState(ES_CONTINUOUS);
+    }
+  }
+
+  ScopedExecutionState(const ScopedExecutionState&) = delete;
+  ScopedExecutionState& operator=(const ScopedExecutionState&) = delete;
+
+ private:
+  bool active_ = false;
+};
+
+}  // namespace
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
   // Attach to console when present (e.g., 'flutter run') or create a
@@ -34,6 +57,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   }
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
+
+  // Keep the controller and every attached stage display awake while the app
+  // is running. The previous execution state is restored on every exit path.
+  ScopedExecutionState execution_state;
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
