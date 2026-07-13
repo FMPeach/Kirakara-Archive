@@ -801,15 +801,15 @@ void main() {
     await videoStarted.future.timeout(const Duration(seconds: 1));
 
     expect(client.fullVideoRequests, 1);
-    expect(client.notFoundRequests, 0);
+    expect(client.notFoundRequests, 1); // cover 404, handled gracefully
 
     releaseVideo.complete();
     for (var i = 0; i < 20 && !cache.progressForSong(song).isComplete; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 25));
     }
     final progress = cache.progressForSong(song);
-    expect(progress.assetCount, 3);
-    expect(progress.completeAssets, 3);
+    expect(progress.assetCount, 4); // video + vocal + lyric + cover
+    expect(progress.completeAssets, 4);
     expect(progress.isComplete, isTrue);
   });
 

@@ -828,7 +828,7 @@ class PlaybackAssetCache extends ChangeNotifier {
   bool _isAudio(MediaAssetType type) =>
       type == MediaAssetType.vocal || type == MediaAssetType.accompaniment;
 
-  bool _isPlaybackAsset(MediaAsset asset) => asset.type != MediaAssetType.cover;
+  bool _isPlaybackAsset(MediaAsset asset) => true; // include cover — 404 handled gracefully
 
   void _notifyProgressListeners() {
     if (!_disposed) notifyListeners();
