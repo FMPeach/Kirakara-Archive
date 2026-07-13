@@ -45,6 +45,7 @@ class PlaybackSlotManager extends ChangeNotifier {
       _standbySlot?.state == SlotState.failed ? _standbySlot?.error : null;
 
   PlaybackSlot? get activeSlot => _activeSlot;
+  PlaybackSlot? get standbySlot => _standbySlot;
 
   int get prefetchLookahead => _prefetchLookahead;
 

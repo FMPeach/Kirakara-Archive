@@ -39,6 +39,8 @@ class KirakaraShowService extends ChangeNotifier {
   bool _applyingEnginePosition = false;
   bool _controllerPreviewSuppressed = false;
   int _prepareGeneration = 0;
+  String? _nativePreparedSongId;
+  int? _nativePreparedSlotGeneration;
   Duration _enginePosition = Duration.zero;
   Duration _engineDuration = Duration.zero;
   bool _isBuffering = false;
@@ -62,7 +64,9 @@ class KirakaraShowService extends ChangeNotifier {
       return;
     }
     _playbackService.addListener(_syncWithPlayback);
+    _slotManager?.addListener(_syncPreparedSlot);
     _syncWithPlayback();
+    _syncPreparedSlot();
     _startFramePoller();
   }
 
@@ -70,12 +74,39 @@ class KirakaraShowService extends ChangeNotifier {
   Future<void> dispose() async {
     if (_started) {
       _playbackService.removeListener(_syncWithPlayback);
+      _slotManager?.removeListener(_syncPreparedSlot);
       _framePoller?.cancel();
       _started = false;
     }
     _ffi?.dispose();
     _ffi = null;
     super.dispose();
+  }
+
+  void _syncPreparedSlot() {
+    final ffi = _ffi;
+    final slot = _slotManager?.standbySlot;
+    if (ffi == null || slot == null || !slot.isReady) return;
+    if (_nativePreparedSongId == slot.songId &&
+        _nativePreparedSlotGeneration == slot.generation) {
+      return;
+    }
+    final song = slot.song;
+    final videoPath = slot.videoPath;
+    if (song == null || videoPath == null) return;
+    if (!song.isExternal && slot.krlPath == null) return;
+
+    final accepted = ffi.prepareNext(
+      videoPath,
+      lyricPath: song.isExternal ? null : slot.krlPath,
+      vocalPath: slot.vocalPath,
+      accompanimentPath: slot.instPath,
+      videoMasterClock: song.videoMasterClock,
+    );
+    if (accepted) {
+      _nativePreparedSongId = slot.songId;
+      _nativePreparedSlotGeneration = slot.generation;
+    }
   }
 
   // ── Playback sync ──────────────────────────────────────────────

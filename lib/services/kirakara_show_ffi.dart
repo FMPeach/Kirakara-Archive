@@ -24,6 +24,14 @@ typedef LoadWithClockNative = Bool Function(
   Pointer<Utf16>,
   Int32,
 );
+typedef PrepareNextNative = Bool Function(
+  ShowHostHandle,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Int32,
+);
 typedef PlayNative = Void Function(ShowHostHandle);
 typedef PauseNative = Void Function(ShowHostHandle);
 typedef StopNative = Void Function(ShowHostHandle);
@@ -79,6 +87,14 @@ typedef _Load = bool Function(
   Pointer<Utf16>,
 );
 typedef _LoadWithClock = bool Function(
+  ShowHostHandle,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  int,
+);
+typedef _PrepareNext = bool Function(
   ShowHostHandle,
   Pointer<Utf16>,
   Pointer<Utf16>,
@@ -144,6 +160,7 @@ class KirakaraShowFFI {
   late final _Destroy _destroy;
   late final _Load _load;
   _LoadWithClock? _loadWithClock;
+  _PrepareNext? _prepareNext;
   late final _Play _play;
   late final _Pause _pause;
   late final _Stop _stop;
@@ -184,6 +201,13 @@ class KirakaraShowFFI {
               'show_host_load_with_clock');
     } on ArgumentError {
       _loadWithClock = null;
+    }
+    try {
+      _prepareNext = _dylib.lookupFunction<PrepareNextNative, _PrepareNext>(
+        'show_host_prepare_next',
+      );
+    } on ArgumentError {
+      _prepareNext = null;
     }
     _play = _dylib.lookupFunction<PlayNative, _Play>('show_host_play');
     _pause = _dylib.lookupFunction<PauseNative, _Pause>('show_host_pause');
@@ -283,6 +307,36 @@ class KirakaraShowFFI {
         _height = _getHeight(_handle);
       }
       return ok;
+    } finally {
+      calloc.free(video);
+      calloc.free(lyric);
+      calloc.free(vocal);
+      calloc.free(accompaniment);
+    }
+  }
+
+  bool prepareNext(
+    String videoPath, {
+    String? lyricPath,
+    String? vocalPath,
+    String? accompanimentPath,
+    bool videoMasterClock = false,
+  }) {
+    final prepareNext = _prepareNext;
+    if (prepareNext == null) return false;
+    final video = videoPath.toNativeUtf16();
+    final lyric = (lyricPath ?? '').toNativeUtf16();
+    final vocal = (vocalPath ?? '').toNativeUtf16();
+    final accompaniment = (accompanimentPath ?? '').toNativeUtf16();
+    try {
+      return prepareNext(
+        _handle,
+        video,
+        lyric,
+        vocal,
+        accompaniment,
+        videoMasterClock ? 1 : 0,
+      );
     } finally {
       calloc.free(video);
       calloc.free(lyric);

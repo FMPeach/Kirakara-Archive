@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
@@ -18,11 +19,24 @@ class CastService extends ChangeNotifier {
   CastService({
     DlnaDiscoveryService? discoveryService,
     DlnaControlPoint? controlPoint,
+    Duration receiverMonitorInterval = const Duration(seconds: 2),
+    int receiverFailureThreshold = 3,
+    int receiverStoppedThreshold = 2,
   })  : _discoveryService = discoveryService ?? DlnaDiscoveryService(),
-        _controlPoint = controlPoint ?? const DlnaControlPoint();
+        _controlPoint = controlPoint ?? const DlnaControlPoint(),
+        _receiverMonitorInterval = receiverMonitorInterval,
+        _receiverFailureThreshold = receiverFailureThreshold,
+        _receiverStoppedThreshold = receiverStoppedThreshold {
+    assert(receiverMonitorInterval > Duration.zero);
+    assert(receiverFailureThreshold > 0);
+    assert(receiverStoppedThreshold > 0);
+  }
 
   final DlnaDiscoveryService _discoveryService;
   final DlnaControlPoint _controlPoint;
+  final Duration _receiverMonitorInterval;
+  final int _receiverFailureThreshold;
+  final int _receiverStoppedThreshold;
 
   bool _isEnabled = false;
   bool _isDiscovering = false;
@@ -35,6 +49,10 @@ class CastService extends ChangeNotifier {
   String? _lastError;
   int _discoveryGeneration = 0;
   int _sessionGeneration = 0;
+  Timer? _receiverMonitor;
+  bool _receiverPollInFlight = false;
+  int _receiverPollFailures = 0;
+  int _receiverStoppedPolls = 0;
 
   bool get isEnabled => _isEnabled;
   bool get isDiscovering => _isDiscovering;
@@ -123,6 +141,7 @@ class CastService extends ChangeNotifier {
       );
       if (generation != _sessionGeneration) return;
       _state = CastState.casting;
+      _startReceiverMonitor(device, generation);
       notifyListeners();
     } catch (error) {
       if (generation != _sessionGeneration) return;
@@ -175,6 +194,7 @@ class CastService extends ChangeNotifier {
 
   Future<void> stopCast({KirakaraShowService? showService}) async {
     _sessionGeneration++;
+    _cancelReceiverMonitor();
     final device = _activeDevice;
     if (device != null) {
       try {
@@ -206,10 +226,88 @@ class CastService extends ChangeNotifier {
     return Uri.parse('http://$localAddress:$port/cast/stage.ts');
   }
 
+  void _startReceiverMonitor(DlnaDevice device, int generation) {
+    _cancelReceiverMonitor();
+    _receiverPollFailures = 0;
+    _receiverStoppedPolls = 0;
+    _receiverMonitor = Timer.periodic(
+      _receiverMonitorInterval,
+      (_) => unawaited(_pollReceiver(device, generation)),
+    );
+  }
+
+  Future<void> _pollReceiver(DlnaDevice device, int generation) async {
+    if (_receiverPollInFlight ||
+        generation != _sessionGeneration ||
+        _state != CastState.casting ||
+        _activeDevice?.id != device.id) {
+      return;
+    }
+    _receiverPollInFlight = true;
+    try {
+      final transportState = await _controlPoint.getTransportState(device);
+      if (generation != _sessionGeneration || _activeDevice?.id != device.id) {
+        return;
+      }
+      _receiverPollFailures = 0;
+      if (transportState == DlnaTransportState.stopped ||
+          transportState == DlnaTransportState.noMedia) {
+        _receiverStoppedPolls++;
+        if (_receiverStoppedPolls >= _receiverStoppedThreshold) {
+          _finishRemoteDisconnect(generation, '投屏设备已断开连接');
+        }
+      } else {
+        _receiverStoppedPolls = 0;
+      }
+    } catch (error) {
+      if (generation != _sessionGeneration || _activeDevice?.id != device.id) {
+        return;
+      }
+      if (error is! SocketException &&
+          error is! TimeoutException &&
+          error is! HttpException) {
+        // Some older renderers can play a URI but reject GetTransportInfo.
+        // Disable monitoring instead of tearing down a working stream.
+        _cancelReceiverMonitor();
+        debugPrint('DLNA receiver monitoring is unavailable: $error');
+        return;
+      }
+      _receiverStoppedPolls = 0;
+      _receiverPollFailures++;
+      if (_receiverPollFailures >= _receiverFailureThreshold) {
+        _finishRemoteDisconnect(generation, '无法连接投屏设备，投屏已断开');
+      }
+    } finally {
+      _receiverPollInFlight = false;
+    }
+  }
+
+  void _finishRemoteDisconnect(int generation, String message) {
+    if (generation != _sessionGeneration) return;
+    _sessionGeneration++;
+    _cancelReceiverMonitor();
+    _activeShowService?.stopCastStream();
+    _activeShowService = null;
+    _activeDevice = null;
+    _targetName = null;
+    _mpegTsUrl = null;
+    _state = CastState.idle;
+    _lastError = message;
+    notifyListeners();
+  }
+
+  void _cancelReceiverMonitor() {
+    _receiverMonitor?.cancel();
+    _receiverMonitor = null;
+    _receiverPollFailures = 0;
+    _receiverStoppedPolls = 0;
+  }
+
   @override
   void dispose() {
     _discoveryGeneration++;
     _sessionGeneration++;
+    _cancelReceiverMonitor();
     _activeShowService?.stopCastStream();
     _activeShowService = null;
     super.dispose();

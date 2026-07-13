@@ -248,6 +248,63 @@ void main() {
       expect(show.startCalls, 1);
       expect(show.stopCalls, greaterThanOrEqualTo(2));
     });
+
+    test('cleans up locally when the receiver stops the transport', () async {
+      final device = _device();
+      final control = _FakeControlPoint()
+        ..transportStates.addAll(const [
+          DlnaTransportState.playing,
+          DlnaTransportState.stopped,
+          DlnaTransportState.stopped,
+        ]);
+      final show = _FakeShowService();
+      final service = CastService(
+        discoveryService: _FakeDiscoveryService([device]),
+        controlPoint: control,
+        receiverMonitorInterval: const Duration(milliseconds: 5),
+      );
+      addTearDown(service.dispose);
+
+      await service.enableCastMode();
+      await service.connectToDevice(device, show);
+      expect(service.isCasting, isTrue);
+
+      for (var i = 0; i < 40 && service.isCasting; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+
+      expect(service.state, CastState.idle);
+      expect(service.isEnabled, isTrue);
+      expect(service.activeDevice, isNull);
+      expect(service.mpegTsUrl, isNull);
+      expect(service.lastError, contains('已断开'));
+      expect(show.stopCalls, greaterThanOrEqualTo(2));
+    });
+
+    test('keeps casting when transport monitoring is unsupported', () async {
+      final device = _device();
+      final control = _FakeControlPoint()
+        ..transportError = const DlnaSoapException(
+          action: 'GetTransportInfo',
+          statusCode: 500,
+          message: '401 · Invalid Action',
+        );
+      final show = _FakeShowService();
+      final service = CastService(
+        discoveryService: _FakeDiscoveryService([device]),
+        controlPoint: control,
+        receiverMonitorInterval: const Duration(milliseconds: 5),
+      );
+      addTearDown(service.dispose);
+
+      await service.enableCastMode();
+      await service.connectToDevice(device, show);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(service.isCasting, isTrue);
+      expect(service.activeDevice, device);
+      expect(service.lastError, isNull);
+    });
   });
 
   test('display selection survives refresh while the display remains',
@@ -332,6 +389,8 @@ class _FakeControlPoint extends DlnaControlPoint {
   Object? connectError;
   Uri? lastStreamUri;
   int stopCalls = 0;
+  final List<DlnaTransportState> transportStates = [];
+  Object? transportError;
 
   @override
   Future<void> setTransportUriAndPlay(
@@ -348,6 +407,14 @@ class _FakeControlPoint extends DlnaControlPoint {
   @override
   Future<void> stop(DlnaDevice device) async {
     stopCalls++;
+  }
+
+  @override
+  Future<DlnaTransportState> getTransportState(DlnaDevice device) async {
+    final error = transportError;
+    if (error != null) throw error;
+    if (transportStates.isEmpty) return DlnaTransportState.playing;
+    return transportStates.removeAt(0);
   }
 }
 

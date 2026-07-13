@@ -21,6 +21,15 @@ class DlnaSoapException implements Exception {
   String toString() => '$action failed ($statusCode): $message';
 }
 
+enum DlnaTransportState {
+  playing,
+  paused,
+  transitioning,
+  stopped,
+  noMedia,
+  unknown,
+}
+
 class DlnaControlPoint {
   const DlnaControlPoint();
 
@@ -88,6 +97,40 @@ class DlnaControlPoint {
       'Stop',
       const {'InstanceID': '0'},
     );
+  }
+
+  Future<DlnaTransportState> getTransportState(DlnaDevice device) async {
+    final response = await _invoke(
+      device,
+      device.avTransport,
+      'GetTransportInfo',
+      const {'InstanceID': '0'},
+    );
+    final document = XmlDocument.parse(response);
+    final value = document.descendants
+        .whereType<XmlElement>()
+        .where((element) => element.name.local == 'CurrentTransportState')
+        .map((element) => element.innerText.trim())
+        .firstOrNull;
+    return parseTransportState(value);
+  }
+
+  static DlnaTransportState parseTransportState(String? value) {
+    switch (value?.trim().toUpperCase()) {
+      case 'PLAYING':
+        return DlnaTransportState.playing;
+      case 'PAUSED_PLAYBACK':
+      case 'PAUSED_RECORDING':
+        return DlnaTransportState.paused;
+      case 'TRANSITIONING':
+        return DlnaTransportState.transitioning;
+      case 'STOPPED':
+        return DlnaTransportState.stopped;
+      case 'NO_MEDIA_PRESENT':
+        return DlnaTransportState.noMedia;
+      default:
+        return DlnaTransportState.unknown;
+    }
   }
 
   Future<List<String>> getSinkProtocolInfo(DlnaDevice device) async {
