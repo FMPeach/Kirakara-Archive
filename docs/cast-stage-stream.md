@@ -95,6 +95,12 @@ encoder 直接消费 CastStageRenderer 的 texture。Stage 节目帧由 renderer
 错误路线：它们会把已显示的东西再抠回来，容易阻塞，也会绕开真正的 Stage
 输出架构。
 
+解码端也不采用“每个 Stage 输出时刻向 MF 请求一帧”的 pull/frame-at 模型。
+PlaybackSession 只同步 source、play/pause、timeline revision 和 seek 位置；MF
+解码线程顺序产出一个小型 D3D11 texture 队列，CastStageRenderer 按权威 Stage
+时钟消费队列中的现成纹理。编码端直接接收 CastStageRenderer 的合成纹理，MF
+没有任何捕获 Stage、抓窗口或把合成结果读回 CPU 的接口。
+
 ## Current Show Pipeline
 
 当前 Show 的实际显示管线仍然是窗口层叠：
@@ -168,7 +174,8 @@ CastBackend 不能重新读取 vocal / inst 文件，也不能偷用背景视频
 
 ffmpeg 只能作为 native 编码链打通前的临时开发 fallback，用于验证 HTTP
 MPEG-TS / DLNA 控制面。它不能成为最终运行时依赖，也不能独立读取当前视频
-并自行推进时间轴。native H.264/AAC 接通后删除这条 fallback。
+并自行推进时间轴。native H.264/AAC 接通后删除这条 fallback；最终发行包和
+运行路径均不包含或调用 ffmpeg。
 
 如果 fallback 存在，必须满足：
 
@@ -218,6 +225,11 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   not advance the diagnostic frame.
 - Removed: the transitional synchronous MF SourceReader BGRA `frame_at` path.
   It still pulled CPU frames and cannot be the production Cast video source.
+- Done: MF video decode now runs sequentially on a worker into a bounded queue
+  of decoder-output D3D11 textures. PlaybackSession synchronizes source,
+  timeline revision, position and play/pause state; CastStageRenderer consumes
+  queued textures without asking MF to capture a Stage frame. Real probes cover
+  the bundled Nanatsukaze, Ikari and Agony MP4 files, including seek invalidation.
 - Done: dev raw-BGRA fallback output is frame-rate throttled and preserves
   whole-frame socket ordering with a pending buffer.
 - Done: dev raw-BGRA fallback socket/pacing state is isolated in a sink class
@@ -226,7 +238,7 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   Stage overlay design is unified.
 - Done: processed PCM tap / ring buffer boundary in Show audio output path.
 - Not done: NativeCastBackend.
-- Not done: decoder-backed D3D11 video texture / H.264 encode.
+- Not done: feed the composed D3D11 Stage texture to native H.264 encode.
 - Not done: processed PCM to AAC encode.
 - Done: native MPEG-TS muxer foundation for PAT/PMT/PES/PTS/PCR packets.
 - Done: AAC ADTS packetizer foundation for wrapping encoded AAC frames.
