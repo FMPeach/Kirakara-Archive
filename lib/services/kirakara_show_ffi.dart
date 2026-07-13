@@ -64,6 +64,7 @@ typedef IsBufferingNative = Bool Function(ShowHostHandle);
 typedef GetWidthNative = Uint32 Function(ShowHostHandle);
 typedef GetHeightNative = Uint32 Function(ShowHostHandle);
 typedef StartCastStreamNative = Bool Function(ShowHostHandle, Uint16);
+typedef GetCastStreamPortNative = Uint16 Function(ShowHostHandle);
 typedef StopCastStreamNative = Void Function(ShowHostHandle);
 
 // ── Dart function signatures ──────────────────────────────────────
@@ -125,6 +126,7 @@ typedef _IsBuffering = bool Function(ShowHostHandle);
 typedef _GetWidth = int Function(ShowHostHandle);
 typedef _GetHeight = int Function(ShowHostHandle);
 typedef _StartCastStream = bool Function(ShowHostHandle, int);
+typedef _GetCastStreamPort = int Function(ShowHostHandle);
 typedef _StopCastStream = void Function(ShowHostHandle);
 
 // ── KirakaraShowFFI ───────────────────────────────────────────────
@@ -163,6 +165,7 @@ class KirakaraShowFFI {
   late final _GetWidth _getWidth;
   late final _GetHeight _getHeight;
   _StartCastStream? _startCastStream;
+  _GetCastStreamPort? _getCastStreamPort;
   _StopCastStream? _stopCastStream;
 
   int _width = 0;
@@ -236,12 +239,16 @@ class KirakaraShowFFI {
     try {
       _startCastStream =
           _dylib.lookupFunction<StartCastStreamNative, _StartCastStream>(
-        'show_host_start_cast_stream');
+              'show_host_start_cast_stream');
       _stopCastStream =
           _dylib.lookupFunction<StopCastStreamNative, _StopCastStream>(
-        'show_host_stop_cast_stream');
+              'show_host_stop_cast_stream');
+      _getCastStreamPort =
+          _dylib.lookupFunction<GetCastStreamPortNative, _GetCastStreamPort>(
+              'show_host_get_cast_stream_port');
     } on ArgumentError {
       _startCastStream = null;
+      _getCastStreamPort = null;
       _stopCastStream = null;
     }
 
@@ -337,6 +344,7 @@ class KirakaraShowFFI {
 
   bool startCastStream(int port) =>
       _startCastStream?.call(_handle, port) ?? false;
+  int get castStreamPort => _getCastStreamPort?.call(_handle) ?? 0;
   void stopCastStream() => _stopCastStream?.call(_handle);
 
   void dispose() {

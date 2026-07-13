@@ -395,6 +395,8 @@ class KirakaraShowService extends ChangeNotifier {
     return _ffi?.startCastStream(port) ?? false;
   }
 
+  int get castStreamPort => _ffi?.castStreamPort ?? 0;
+
   void stopCastStream() {
     _ffi?.stopCastStream();
   }

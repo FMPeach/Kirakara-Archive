@@ -109,6 +109,12 @@ Windows native backend 不能绑定开发机厂商。它按当前 Stage D3D adap
 MF/D3D11 只存在于 Windows backend，不能泄漏进跨平台 CastService 和
 StageProgramState；Android 后端后续独立实现。
 
+Cast 按电视直播处理，不能把歌曲时间轴当成编码时间轴。Stage content clock
+允许暂停、seek、倒退和切歌；Cast transport clock 从开启投流到停止投流只允许
+单调前进。暂停时持续编码同一张合成帧，seek/重唱只改变后续节目纹理内容，不能
+重置 H.264/AAC/MPEG-TS 的 PTS。这里消费的是 Stage 合成后的 GPU texture，
+不是捕获 StageWindow、桌面或 Flutter HWND。
+
 ## Current Show Pipeline
 
 当前 Show 的实际显示管线仍然是窗口层叠：
@@ -178,31 +184,16 @@ Cast audio 必须来自 Show 音频处理链之后的 PCM。它必须已经应�
 CastBackend 不能重新读取 vocal / inst 文件，也不能偷用背景视频自带音轨。
 否则 DLNA 听到的声音会和房间实际播放不一致。
 
-## Fallback Policy
+## Runtime Encoder Policy
 
-ffmpeg 只能作为 native 编码链打通前的临时开发 fallback，用于验证 HTTP
-MPEG-TS / DLNA 控制面。它不能成为最终运行时依赖，也不能独立读取当前视频
-并自行推进时间轴。native H.264/AAC 接通后删除这条 fallback；最终发行包和
-运行路径均不包含或调用 ffmpeg。
+Cast 的正式运行路径已经改为全原生链路：ShowHost 主动合成 D3D11 Stage
+texture，兼容当前 D3D adapter 的硬件 H.264 MFT 直接消费该 texture；App
+处理后的 PCM 由系统 AAC-LC MFT 编码，再与视频复用为 MPEG-TS。App 和
+ShowHost 的 Cast 运行时不启动、打包或依赖 ffmpeg，也不存在 raw-BGRA
+socket/pipe fallback。
 
-如果 fallback 存在，必须满足：
-
-- 默认关闭或显式标记为 dev-only。
-- 不冒充最终 NativeCastBackend。
-- 不绕过 ShowHost PlaybackSession。
-- 不绕过 Show 音频处理链。
-
-当前 dev fallback：
-
-- App 的投屏弹窗可以启动一个本机 MPEG-TS 测试流，方便用 VLC 验证。
-- ffmpeg 只接收 ShowHost 已合成的 raw BGRA Stage frame，并编码为 H.264
-  MPEG-TS。
-- ffmpeg 的 MPEG-TS 输出写到 `pipe:1`，由 App 内置 HTTP server 转发到
-  `/cast/stage.ts`。不要使用 ffmpeg 的 TCP listen 输出口；探测连接会吃掉
-  唯一客户端并导致 VLC 卡在加载。
-- ffmpeg 不读取当前歌曲视频/音频，不拥有播放时间轴。
-- 测试 URL 默认是 `http://127.0.0.1:17392/cast/stage.ts`；如果端口被占用，
-  App 会自动使用后续可用端口，并在投屏弹窗里显示实际 URL。
+ffmpeg / ffprobe 只允许作为开发机上的离线码流诊断工具，例如检查测试抓包的
+codec、PTS 和静音区间；它们不参与 App 的播放、合成、编码、HTTP 服务或分发。
 
 ## DLNA Control Surface
 
@@ -229,8 +220,7 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   native D3D/DXGI/D2D handles.
 - Done: StageCompositor scales BGRA/D3D texture sources into the fixed canvas
   with D2D DrawBitmap, then allows lyrics to render into the same texture.
-- Done: dev raw-BGRA cast stream is driven by ShowHost state; pause/stop do
-  not advance the diagnostic frame.
+- Removed: old raw-BGRA socket/pipe Cast fallback and its sink implementation.
 - Removed: the transitional synchronous MF SourceReader BGRA `frame_at` path.
   It still pulled CPU frames and cannot be the production Cast video source.
 - Done: MF video decode now runs sequentially on a worker into a bounded queue
@@ -238,16 +228,15 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   timeline revision, position and play/pause state; CastStageRenderer consumes
   queued textures without asking MF to capture a Stage frame. Real probes cover
   the bundled Nanatsukaze, Ikari and Agony MP4 files, including seek invalidation.
-- Done: dev raw-BGRA fallback output is frame-rate throttled and preserves
-  whole-frame socket ordering with a pending buffer.
-- Done: dev raw-BGRA fallback socket/pacing state is isolated in a sink class
-  so Host commands no longer own fallback transport details.
 - Deferred: QR and report/ticker overlay are disabled until the second-screen
   Stage overlay design is unified.
 - Done: processed PCM tap / ring buffer boundary in Show audio output path.
-- Not done: NativeCastBackend.
-- Not done: feed the composed D3D11 Stage texture to native H.264 encode.
-- Not done: processed PCM to AAC encode.
+- Done: NativeCastBackend owns native HTTP and the shared MPEG-TS stream.
+- Done: fixed-canvas composed D3D11 Stage texture feeds a dynamically selected
+  hardware H.264 MFT without CPU readback.
+- Done: final App PCM after track selection, volume, key shift and key fade is
+  normalized to 48 kHz stereo, encoded as AAC-LC, wrapped in ADTS and muxed
+  into the same continuous MPEG-TS. Background-video audio is never used.
 - Done: native MPEG-TS muxer foundation for PAT/PMT/PES/PTS/PCR packets.
 - Done: AAC ADTS packetizer foundation for wrapping encoded AAC frames.
 - Done: MPEG-TS stream buffer foundation for HTTP readers and slow-reader
@@ -256,12 +245,13 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   shared MPEG-TS reader stream.
 - Done: native HTTP `/cast/stage.ts` server foundation backed by the shared
   MPEG-TS reader stream.
-- Done: NativeCastBackend lifecycle shell owning the HTTP server and TS stream.
-- Done: App dev MPEG-TS test button using ShowHost raw-BGRA output and ffmpeg
-  as an explicit encoder/HTTP fallback for VLC testing.
-- Done: dev fallback repaired to use ffmpeg `pipe:1` plus App HTTP relay, and
-  raw-BGRA socket flushing is capped to avoid blocking the render loop.
-- Not done: wire H.264/AAC encoder output into MPEG-TS.
+- Done: App MPEG-TS test button starts the native ShowHost Cast stream and
+  displays its dynamically allocated localhost URL; no Dart relay is used.
+- Done: native H.264 and AAC output are wired into one continuous MPEG-TS.
+- Verified: real HTTP/progressive background source plus local processed audio
+  produced H.264 Main 1920x1080@60 and AAC-LC 48 kHz stereo. AAC PTS stayed
+  monotonic through key change, track switch, pause and resume; pause emitted
+  continuous silence instead of stopping transport.
 - Not done: DLNA discovery and `SetAVTransportURI`.
 
 ## Verification Requirements

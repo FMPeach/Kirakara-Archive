@@ -351,7 +351,13 @@ void main() {
   test('LAN search returns catalog index without duration metadata', () async {
     final search = _testSearch();
     final queue = QueueService();
-    final server = LanServer(queueService: queue, searchService: search);
+    final playback = PlaybackService(queueService: queue);
+    final server = LanServer(
+      queueService: queue,
+      searchService: search,
+      playbackService: playback,
+    );
+    addTearDown(playback.disposeService);
     addTearDown(server.stop);
 
     await server.start(port: 0);
