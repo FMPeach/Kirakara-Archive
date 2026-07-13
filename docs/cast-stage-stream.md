@@ -13,7 +13,9 @@ DLNA / Cast 开启时，Controller Screen 不显示 Stage 预览。TS 投流和�
 必须互斥：`physicalDisplay` 模式占用物理第二屏，`tsStream` 模式占用编码直播流。
 二者抢同一个 Stage 输出槽，不能同时开启。
 
-TS 投流要复用的是双屏异显背后的 Stage 大屏渲染链路，而不是录第二屏窗口。
+TS 投流要复用的是双屏异显背后的 Stage 节目模型、播放状态、画布和 overlay
+语义，而不是录第二屏窗口。允许在更底层分成两套渲染流程：物理双屏保留
+现有低延迟窗口渲染，TS 使用适合固定画布、离屏合成和编码的 Cast 渲染流程。
 如果 Cast 通过第二屏 HWND / 字幕 HWND / 隐藏窗口取帧，就会把窗口层级、DPI、
 字幕 viewport 和坐标系问题带进 TS 流。
 
@@ -23,26 +25,17 @@ TS 投流要复用的是双屏异显背后的 Stage 大屏渲染链路，而不�
 flowchart TD
     Flutter["Flutter Controller UI\n点歌 / 队列 / 设置 / 控制"] -->|commands only| Session["ShowHost PlaybackSession\n唯一播放权威"]
 
-    Session --> Clock["PlaybackClock\nplay / pause / seek / load / next / buffering"]
-    Session --> Source["CurrentMediaSource\nvideo / krl / vocal / inst / clockMode"]
+    Session --> Program["StageProgramState\nsource / clock / KRL / canvas / overlay layout"]
+    Session --> AudioEngine["Show Audio Engine\n原唱/伴奏 / 音量 / Key / Fade"]
+    Program --> StageLease["StageOutputLease\n互斥输出槽"]
 
-    Source --> VideoDecoder["Native Video Decoder\nMF Source Reader / Decoder MFT / D3D11"]
-    Source --> AudioEngine["Show Audio Engine\n原唱/伴奏 / 音量 / Key / Fade"]
+    StageLease --> PhysicalRenderer["PhysicalStageRenderer\n现有低延迟窗口渲染"]
+    PhysicalRenderer --> StageWindow["Second Screen Stage\n双屏异显"]
+    PhysicalRenderer --> Preview["Controller Preview\n本机预览"]
 
-    Clock --> VideoDecoder
-    Clock --> AudioEngine
-    Clock --> Lyrics["KRL Renderer\n歌词 / Stage Overlay 预留"]
-
-    VideoDecoder --> Compositor["StageProgramRenderer / StageCompositor\n固定节目画布 D3D11 合成"]
-    Lyrics --> Compositor
+    StageLease --> CastRenderer["CastStageRenderer\n固定画布 / 离屏视频+字幕合成"]
+    CastRenderer --> CastVideo["Cast Video Encoder\nH.264 hardware"]
     AudioEngine --> AudioTap["Processed PCM Tap\n处理后 PCM"]
-
-    Compositor --> StageLease["StageOutputLease\n互斥输出槽"]
-    StageLease --> StagePresenter["StageWindowPresenter\nphysicalDisplay 模式"]
-    StagePresenter --> StageWindow["Second Screen Stage\n双屏异显"]
-    StageLease --> CastPresenter["CastStreamPresenter\ntsStream 模式"]
-    CastPresenter --> CastVideo["Cast Video Encoder\nH.264 hardware"]
-    Compositor --> Preview["Controller Preview\n本机预览 / TS 时暂停"]
     AudioTap --> CastAudio["Cast Audio Encoder\nAAC"]
 
     CastVideo --> Mux["MPEG-TS Muxer"]
@@ -95,9 +88,12 @@ Media Foundation 可以用于 native 媒体管线：
 - audio encode：AAC encoder MFT。
 - D3D11 device / DXGI texture flow.
 
-Media Foundation 不应该用于从窗口或预览框取帧。`TransferVideoFrame` /
-窗口 readback 属于已经验证过的错误路线：它会把已显示的东西再抠回来，
-既容易阻塞，也会绕开真正的 Stage 输出架构。
+Media Foundation 只负责解复用、解码和编码：decoder 直接产出 D3D11 texture，
+encoder 直接消费 CastStageRenderer 的 texture。Stage 节目帧由 renderer 主动
+合成。MF 不应该用于从窗口、预览框或已经渲染的 surface 取帧。
+`TransferVideoFrame`、同步 `frame_at`、CPU BGRA readback 都属于已经验证过的
+错误路线：它们会把已显示的东西再抠回来，容易阻塞，也会绕开真正的 Stage
+输出架构。
 
 ## Current Show Pipeline
 
@@ -127,14 +123,16 @@ StageCompositor 必须维护固定节目画布，例如 1920x1080@30fps 或
 Encoder 只看到固定规格的 composed
 stage texture，不直接感知源视频分辨率或帧率变化。
 
-最终路线是用 MF Source Reader / Decoder MFT 或等价低级解码链路输出
+最终路线是用 MF media source / decoder MFT 或等价低级解码链路直接输出
 D3D11 texture，再把 KRL 和后续统一 Stage overlay 渲染到透明 overlay
-texture，最后合成。
+texture，最后合成。这里的 texture 是 decoder output，不是从 HWND、swap chain
+或已经显示的画面抓回来的帧。
 
-允许有一个过渡路线：保留现有窗口输出作为 `physicalDisplay` presenter，
-同时为 TS 建立 `tsStream` presenter。二者必须互斥。过渡期可以重复解码
-当前视频，但它必须完全受 ShowHost PlaybackSession 控制，不能自己推进时间轴。
-这个重复解码只应被记录为临时技术债，后续需要收敛到统一 Stage 输出。
+物理双屏保留现有窗口输出作为 `physicalDisplay` renderer，同时为 TS 建立
+`tsStream` Cast renderer。二者必须互斥。Cast renderer 可以独立解码当前视频，
+但它必须完全受 ShowHost PlaybackSession 控制，不能自己推进时间轴。共享的是
+StageProgramState、画布、歌词和 overlay 语义，不要求两个 renderer 共用同一张
+GPU texture。
 
 ## Cast Video
 
@@ -168,8 +166,9 @@ CastBackend 不能重新读取 vocal / inst 文件，也不能偷用背景视频
 
 ## Fallback Policy
 
-ffmpeg 可以作为开发 fallback，用于临时验证 HTTP MPEG-TS / DLNA 控制面。
-它不能成为默认生产链路，也不能独立读取当前视频并自行推进时间轴。
+ffmpeg 只能作为 native 编码链打通前的临时开发 fallback，用于验证 HTTP
+MPEG-TS / DLNA 控制面。它不能成为最终运行时依赖，也不能独立读取当前视频
+并自行推进时间轴。native H.264/AAC 接通后删除这条 fallback。
 
 如果 fallback 存在，必须满足：
 
@@ -217,8 +216,8 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
   with D2D DrawBitmap, then allows lyrics to render into the same texture.
 - Done: dev raw-BGRA cast stream is driven by ShowHost state; pause/stop do
   not advance the diagnostic frame.
-- Done: transitional MF SourceReader BGRA video frames are driven by ShowHost
-  playback time and wired into StageCompositor.
+- Removed: the transitional synchronous MF SourceReader BGRA `frame_at` path.
+  It still pulled CPU frames and cannot be the production Cast video source.
 - Done: dev raw-BGRA fallback output is frame-rate throttled and preserves
   whole-frame socket ordering with a pending buffer.
 - Done: dev raw-BGRA fallback socket/pacing state is isolated in a sink class
