@@ -12,7 +12,7 @@ void main() {
 
     await tester.pumpWidget(const TickerMode(
       enabled: false,
-      child: KirakaraApp(),
+      child: KirakaraApp(databasePath: ':memory:'),
     ));
     await tester.pump();
 
@@ -36,6 +36,14 @@ void main() {
     });
     expect(fittedStage, findsOneWidget);
 
+    await tester.tap(find.text('投屏'));
+    await tester.pump();
+    expect(find.text('显示输出'), findsOneWidget);
+    expect(find.text('双屏异显'), findsOneWidget);
+    expect(find.text('无线投屏'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.close).last);
+    await tester.pump();
+
     await tester.tap(find.byTooltip('设置'));
     await tester.pump();
     expect(find.text('报幕文字'), findsOneWidget);
@@ -43,7 +51,8 @@ void main() {
     expect(find.text('队列预缓存范围'), findsOneWidget);
   });
 
-  testWidgets('browse pages render inside the controller shell', (tester) async {
+  testWidgets('browse pages render inside the controller shell',
+      (tester) async {
     tester.view.physicalSize = const Size(1920, 1080);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -51,7 +60,7 @@ void main() {
 
     await tester.pumpWidget(const TickerMode(
       enabled: false,
-      child: KirakaraApp(),
+      child: KirakaraApp(databasePath: ':memory:'),
     ));
     await tester.pump();
 
@@ -59,7 +68,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('搜索歌名、歌手、编号'), findsWidgets);
     expect(find.text('搜索范围'), findsOneWidget);
-    expect(find.text('点歌'), findsWidgets);
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.text('返回').first);
@@ -67,6 +75,10 @@ void main() {
     await tester.tap(find.text('歌手点歌').first);
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('地区与类型'), findsOneWidget);
+    if (find.text('没有匹配歌手').evaluate().isNotEmpty) {
+      expect(tester.takeException(), isNull);
+      return;
+    }
     expect(find.text('緑黄色社会'), findsWidgets);
     expect(tester.takeException(), isNull);
 

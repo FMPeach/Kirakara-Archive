@@ -7,6 +7,7 @@ class _TopBar extends StatelessWidget {
     required this.isBuffering,
     required this.showSearch,
     required this.controllerFullscreen,
+    required this.isCasting,
     required this.onSearchTap,
     required this.onQr,
     required this.onSettings,
@@ -19,6 +20,7 @@ class _TopBar extends StatelessWidget {
   final bool isBuffering;
   final bool showSearch;
   final bool controllerFullscreen;
+  final bool isCasting;
   final VoidCallback onSearchTap;
   final VoidCallback onQr;
   final VoidCallback onSettings;
@@ -144,7 +146,8 @@ class _TopBar extends StatelessWidget {
           _TopTextButton(
             icon: Icons.cast,
             width: 115,
-            label: '投屏',
+            label: isCasting ? '投屏中' : '投屏',
+            active: isCasting,
             onPressed: onCast,
           ),
         ],
@@ -487,12 +490,14 @@ class _TopTextButton extends StatelessWidget {
     required this.label,
     required this.onPressed,
     this.width = 98,
+    this.active = false,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onPressed;
   final double width;
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
@@ -503,11 +508,14 @@ class _TopTextButton extends StatelessWidget {
         onPressed: onPressed,
         style: FilledButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 10),
-          backgroundColor: KiraColors.surface2,
-          foregroundColor: KiraColors.cream,
+          backgroundColor:
+              active ? const Color(0x1fdd3e38) : KiraColors.surface2,
+          foregroundColor: active ? const Color(0xffff827d) : KiraColors.cream,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
-            side: const BorderSide(color: KiraColors.line),
+            side: BorderSide(
+              color: active ? const Color(0x6bdd3e38) : KiraColors.line,
+            ),
           ),
         ),
         child: Row(

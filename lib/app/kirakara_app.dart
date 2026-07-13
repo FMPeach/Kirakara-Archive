@@ -21,7 +21,12 @@ import '../ui/shell/controller_shell.dart';
 import '../ui/theme/kirakara_theme.dart';
 
 class KirakaraApp extends StatefulWidget {
-  const KirakaraApp({super.key});
+  const KirakaraApp({
+    super.key,
+    required this.databasePath,
+  });
+
+  final String databasePath;
 
   @override
   State<KirakaraApp> createState() => _KirakaraAppState();
@@ -45,7 +50,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
   @override
   void initState() {
     super.initState();
-    _localDb = LocalDatabase();
+    _localDb = LocalDatabase(dbPath: widget.databasePath);
     _localDb.open(); // 同步打开，确保 SearchService 可用
     _catalogClient = HttpCatalogClient(
       baseUrl: Uri.parse('http://localhost:7392'),
@@ -132,6 +137,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
 
   @override
   void dispose() {
+    castService.dispose();
     unawaited(kirakaraShowService.dispose());
     playbackService.disposeService();
     lanServer.stop();

@@ -57,7 +57,7 @@ class DisplayInfo {
     return DisplayInfo(
       id: rawId == null || rawId.isEmpty ? 'display-$index' : rawId,
       name: rawName == null || rawName.isEmpty
-          ? (isPrimary ? '主控屏' : '舞台屏 $index')
+          ? (isPrimary ? '主控屏' : '显示器 $index')
           : rawName,
       isPrimary: isPrimary,
       left: readInt('left', 0),
@@ -79,20 +79,31 @@ class DisplayManager extends ChangeNotifier {
   List<DisplayInfo> _displays;
   DisplayMode _mode = DisplayMode.singleScreen;
   bool _stagePreviewVisible = false;
+  String? _selectedStageDisplayId;
 
   List<DisplayInfo> get displays => List.unmodifiable(_displays);
+  List<DisplayInfo> get stageDisplays => List.unmodifiable(
+        _displays.where(
+          (display) => !display.isPrimary && display.isValidStageTarget,
+        ),
+      );
   DisplayMode get mode => _mode;
-  bool get hasPhysicalStageDisplay => _displays.length > 1;
+  bool get hasPhysicalStageDisplay => stageDisplays.isNotEmpty;
   bool get stagePreviewVisible => _stagePreviewVisible;
   DisplayInfo get controllerDisplay => _displays.firstWhere(
         (display) => display.isPrimary,
         orElse: () => _displays.first,
       );
   DisplayInfo? get stageDisplay {
-    for (final display in _displays) {
-      if (!display.isPrimary && display.isValidStageTarget) return display;
+    final candidates = stageDisplays;
+    if (candidates.isEmpty) return null;
+    final selectedId = _selectedStageDisplayId;
+    if (selectedId != null) {
+      for (final display in candidates) {
+        if (display.id == selectedId) return display;
+      }
     }
-    return null;
+    return candidates.first;
   }
 
   Future<void> detectDisplays() async {
@@ -103,10 +114,28 @@ class DisplayManager extends ChangeNotifier {
       if (display.isValidStageTarget) displays.add(display);
     }
     _displays = displays.isEmpty ? [DisplayInfo.primaryFallback()] : displays;
+    final candidates = stageDisplays;
+    if (candidates.isEmpty) {
+      _selectedStageDisplayId = null;
+    } else if (!candidates.any(
+      (display) => display.id == _selectedStageDisplayId,
+    )) {
+      _selectedStageDisplayId = candidates.first.id;
+    }
     if (_mode == DisplayMode.dualScreen && !hasPhysicalStageDisplay) {
       _mode = DisplayMode.singleScreen;
     }
     notifyListeners();
+  }
+
+  void selectStageDisplay(String displayId) {
+    for (final display in stageDisplays) {
+      if (display.id != displayId) continue;
+      if (_selectedStageDisplayId == display.id) return;
+      _selectedStageDisplayId = display.id;
+      notifyListeners();
+      return;
+    }
   }
 
   Future<void> openStageWindow({bool preview = true}) async {

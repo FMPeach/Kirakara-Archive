@@ -60,7 +60,7 @@ Stage Screen:
 - pure 16:9 KTV output
 - no ordering UI, search UI, settings UI, or queue UI
 - driven by `PlaybackService` and `StageRenderer`
-- future host for KiraKara-Show native texture / C++ renderer
+- hosted by the KiraKara-Show native renderer on Windows
 
 Phone Screen:
 
@@ -82,7 +82,16 @@ Dual-screen mode:
 - primary display hosts Controller Screen.
 - secondary display hosts a fullscreen Stage Screen.
 - `DisplayManager` owns display detection and user preference.
-- `StageWindowHost` is the future native multi-window boundary.
+- KiraKara-Show owns the native Stage window and render surfaces.
+
+Wireless Cast mode:
+
+- mutually exclusive with physical dual-screen output
+- uses the same ShowHost playback authority and Stage program semantics
+- renders a fixed 1920x1080 offscreen Stage texture instead of capturing a
+  Controller or Stage HWND
+- streams H.264 plus processed AAC audio as continuous MPEG-TS; pause, replay,
+  seek, and next change program content without replacing the receiver URL
 
 Debug mode:
 
@@ -99,5 +108,5 @@ Debug mode:
   sync
 - `CacheService` mock state -> persistent index cache plus disposable playback
   asset cache
-- `DisplayManager` mock display list -> Windows / Android native display APIs
-- `CastService` mock state -> DLNA / cast output pipeline
+- `DisplayManager` Windows display enumeration -> Android display backend
+- `CastService` Windows DLNA control point -> Android DLNA control backend

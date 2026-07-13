@@ -268,6 +268,13 @@
       flex: 0 0 auto;
     }
 
+    .top-btn.output-active {
+      border-color: rgba(221, 62, 56, 0.42);
+      background: rgba(221, 62, 56, 0.12);
+      color: #ff827d;
+      font-size: 14px;
+    }
+
     .top-btn:hover,
     .icon-btn:hover,
     .remote-btn:hover,
@@ -1807,6 +1814,280 @@
       font-weight: 900;
     }
 
+    /* ── MD3 显示输出面板 ── */
+    .output-modal {
+      width: 560px;
+      padding: 0;
+      overflow: hidden;
+      background: #1b1c20;
+    }
+
+    .output-modal .modal-head {
+      min-height: 72px;
+      margin: 0;
+      padding: 12px 16px 12px 24px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .output-modal .modal-head h2 {
+      font-size: 24px;
+    }
+
+    .output-modal .modal-close {
+      width: 44px;
+      height: 44px;
+      background: transparent;
+    }
+
+    .output-modal .modal-body {
+      padding: 4px 0 8px;
+    }
+
+    .output-setting {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .output-setting:last-child {
+      border-bottom: 0;
+    }
+
+    .output-setting-row {
+      min-height: 72px;
+      display: grid;
+      grid-template-columns: 46px minmax(0, 1fr) 52px;
+      align-items: center;
+      gap: 14px;
+      padding: 10px 24px;
+    }
+
+    .output-setting.active .output-setting-row {
+      background: rgba(221, 62, 56, 0.035);
+    }
+
+    .output-leading {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--surface-2);
+      color: var(--soft);
+    }
+
+    .output-leading i {
+      width: 23px;
+      height: 23px;
+    }
+
+    .output-setting.active .output-leading {
+      background: rgba(221, 62, 56, 0.14);
+      color: #ff827d;
+    }
+
+    .output-setting-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .output-setting-copy strong,
+    .output-setting-copy span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .output-setting-copy strong {
+      color: var(--cream);
+      font-size: 16px;
+    }
+
+    .output-setting-copy span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .md3-switch {
+      width: 52px;
+      height: 32px;
+      position: relative;
+      border-radius: 18px;
+      border: 2px solid #76777e;
+      background: #303137;
+      transition: background 150ms ease, border-color 150ms ease;
+    }
+
+    .md3-switch span {
+      width: 16px;
+      height: 16px;
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      border-radius: 50%;
+      background: #bfc0c6;
+      transition: width 150ms ease, height 150ms ease, transform 150ms ease, background 150ms ease;
+    }
+
+    .md3-switch.active {
+      border-color: var(--red);
+      background: var(--red);
+    }
+
+    .md3-switch.active span {
+      width: 24px;
+      height: 24px;
+      top: 2px;
+      left: 4px;
+      transform: translateX(18px);
+      background: #fff;
+    }
+
+    .output-detail {
+      margin-left: 84px;
+      padding: 0 24px 16px 0;
+    }
+
+    .output-detail-head {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .output-detail-head strong {
+      color: var(--soft);
+      font-size: 13px;
+    }
+
+    .output-refresh {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--soft);
+    }
+
+    .output-refresh:hover {
+      background: rgba(255, 255, 255, 0.07);
+    }
+
+    .output-refresh:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .output-refresh i {
+      width: 20px;
+      height: 20px;
+    }
+
+    .output-refresh.scanning i,
+    .output-option-state.scanning i {
+      animation: outputSpin 0.9s linear infinite;
+    }
+
+    @keyframes outputSpin {
+      to { transform: rotate(360deg); }
+    }
+
+    .output-option-list {
+      border-top: 1px solid var(--line);
+    }
+
+    .output-option {
+      width: 100%;
+      min-height: 58px;
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 7px 4px;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+      text-align: left;
+    }
+
+    .output-option:hover:not(:disabled),
+    .output-option:focus-visible {
+      background: rgba(255, 255, 255, 0.045);
+      outline: 0;
+    }
+
+    .output-option:last-child {
+      border-bottom: 0;
+    }
+
+    .output-option-icon {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--surface-2);
+      color: var(--muted);
+    }
+
+    .output-option-icon i {
+      width: 19px;
+      height: 19px;
+    }
+
+    .output-option.selected .output-option-icon {
+      background: rgba(34, 197, 155, 0.12);
+      color: #55ddb8;
+    }
+
+    .output-option-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .output-option-copy strong,
+    .output-option-copy span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .output-option-copy strong {
+      color: var(--soft);
+      font-size: 14px;
+    }
+
+    .output-option-copy span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .output-option-state {
+      min-width: 62px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .output-option-state i {
+      width: 17px;
+      height: 17px;
+    }
+
+    .output-option.selected .output-option-state {
+      color: #55ddb8;
+    }
+
     /* ── 外链点歌 ── */
     .external-link-layout {
       grid-template-columns: minmax(0, 1fr) 390px;
@@ -2047,7 +2328,7 @@
         </label>
         <button class="top-btn" id="qrTop"><i data-lucide="qr-code"></i></button>
         <button class="top-btn" id="settingsBtn"><i data-lucide="settings"></i>设定</button>
-        <button class="top-btn" id="windowsBtn"><i data-lucide="monitor"></i>主控</button>
+        <button class="top-btn" id="outputBtn"><i data-lucide="cast"></i><span>投屏</span></button>
       </div>
     </header>
 
@@ -2320,6 +2601,23 @@
     let categoryQuery = "";
     let browserMode = "";
     let activeRanking = "热门榜";
+    let outputMode = "none";
+    let selectedStageDisplay = "hdmi";
+    let displayScanning = false;
+    let castScanning = false;
+    let castState = "idle";
+    let activeCastDevice = "";
+    let displayTimer = 0;
+    let castTimer = 0;
+    const stageDisplays = [
+      { id: "hdmi", name: "HDMI 显示器", detail: "1920×1080 · 60Hz", icon: "tv" },
+      { id: "virtual", name: "虚拟显示器", detail: "1920×1080 · 60Hz", icon: "monitor" },
+    ];
+    const castDevices = [
+      { id: "living-room", name: "客厅电视", detail: "LG webOS TV · DLNA", icon: "tv" },
+      { id: "bedroom", name: "卧室电视", detail: "Xiaomi TV · DLNA", icon: "monitor" },
+      { id: "projector", name: "KTV 投影", detail: "Android TV · DLNA", icon: "projector" },
+    ];
     const rankingCategories = [
       { name: "热门榜", icon: "flame", note: "全站点歌次数排行" },
       { name: "新歌榜", icon: "sparkles", note: "近期新增歌曲排行" },
@@ -2490,6 +2788,210 @@
           <button class="modal-action" data-close-modal>关闭</button>
         </div>`
       );
+    }
+
+    function isOutputPanelVisible() {
+      return $("modal").classList.contains("show")
+        && $("modalBox").classList.contains("output-modal");
+    }
+
+    function resetWirelessOutput() {
+      clearTimeout(castTimer);
+      castScanning = false;
+      castState = "idle";
+      activeCastDevice = "";
+    }
+
+    function updateOutputButton() {
+      const active = outputMode !== "none";
+      const connected = outputMode === "cast" && castState === "connected";
+      const label = outputMode === "dual" ? "双屏中" : connected ? "投屏中" : "投屏";
+      const icon = outputMode === "dual" ? "monitor-up" : "cast";
+      $("outputBtn").classList.toggle("output-active", active);
+      $("outputBtn").innerHTML = `<i data-lucide="${icon}"></i><span>${label}</span>`;
+      setIcons();
+    }
+
+    function renderOutputPanel() {
+      const dualActive = outputMode === "dual";
+      const castActive = outputMode === "cast";
+
+      const dualDetail = dualActive ? `
+        <div class="output-detail">
+          <div class="output-detail-head">
+            <strong>${displayScanning ? "正在刷新显示器…" : "选择显示器"}</strong>
+            <button class="output-refresh ${displayScanning ? "scanning" : ""}" id="displayRefresh" aria-label="刷新显示器" title="刷新显示器" ${displayScanning ? "disabled" : ""}>
+              <i data-lucide="refresh-cw"></i>
+            </button>
+          </div>
+          <div class="output-option-list">
+            ${stageDisplays.map((display) => {
+              const selected = display.id === selectedStageDisplay;
+              return `
+                <button class="output-option ${selected ? "selected" : ""}" data-stage-display="${display.id}" ${selected ? "disabled" : ""}>
+                  <span class="output-option-icon"><i data-lucide="${display.icon}"></i></span>
+                  <span class="output-option-copy">
+                    <strong>${escapeHtml(display.name)}</strong>
+                    <span>${escapeHtml(display.detail)}</span>
+                  </span>
+                  <span class="output-option-state">${selected ? '<i data-lucide="check"></i>显示中' : ""}</span>
+                </button>
+              `;
+            }).join("")}
+          </div>
+        </div>
+      ` : "";
+
+      const castDetail = castActive ? `
+        <div class="output-detail">
+          <div class="output-detail-head">
+            <strong>${castScanning ? "正在搜索设备…" : "可用设备"}</strong>
+            <button class="output-refresh ${castScanning ? "scanning" : ""}" id="castRefresh" aria-label="重新搜索设备" title="重新搜索设备" ${castScanning || castState === "connecting" ? "disabled" : ""}>
+              <i data-lucide="refresh-cw"></i>
+            </button>
+          </div>
+          <div class="output-option-list">
+            ${castDevices.map((device) => {
+              const selected = device.id === activeCastDevice;
+              const connecting = selected && castState === "connecting";
+              const connected = selected && castState === "connected";
+              const state = connecting
+                ? '<span class="output-option-state scanning"><i data-lucide="loader-circle"></i>连接中</span>'
+                : connected
+                  ? '<span class="output-option-state"><i data-lucide="check"></i>投屏中</span>'
+                  : '<span class="output-option-state"></span>';
+              return `
+                <button class="output-option ${selected ? "selected" : ""}" data-cast-device="${device.id}" ${connecting ? "disabled" : ""} aria-label="${connected ? "断开 " : "连接 "}${escapeHtml(device.name)}">
+                  <span class="output-option-icon"><i data-lucide="${device.icon}"></i></span>
+                  <span class="output-option-copy">
+                    <strong>${escapeHtml(device.name)}</strong>
+                    <span>${escapeHtml(device.detail)}</span>
+                  </span>
+                  ${state}
+                </button>
+              `;
+            }).join("")}
+          </div>
+        </div>
+      ` : "";
+
+      showModal("显示输出", `
+        <section class="output-setting ${dualActive ? "active" : ""}">
+          <div class="output-setting-row">
+            <span class="output-leading"><i data-lucide="panels-top-left"></i></span>
+            <span class="output-setting-copy">
+              <strong>双屏异显</strong>
+            </span>
+            <button class="md3-switch ${dualActive ? "active" : ""}" id="dualOutputSwitch" role="switch" aria-checked="${dualActive}" aria-label="双屏异显">
+              <span></span>
+            </button>
+          </div>
+          ${dualDetail}
+        </section>
+        <section class="output-setting ${castActive ? "active" : ""}">
+          <div class="output-setting-row">
+            <span class="output-leading"><i data-lucide="cast"></i></span>
+            <span class="output-setting-copy">
+              <strong>无线投屏</strong>
+            </span>
+            <button class="md3-switch ${castActive ? "active" : ""}" id="castOutputSwitch" role="switch" aria-checked="${castActive}" aria-label="无线投屏">
+              <span></span>
+            </button>
+          </div>
+          ${castDetail}
+        </section>
+      `);
+      $("modalBox").classList.add("output-modal");
+      setIcons();
+
+      $("dualOutputSwitch").addEventListener("click", () => {
+        clearTimeout(displayTimer);
+        displayScanning = false;
+        const enable = outputMode !== "dual";
+        if (enable) resetWirelessOutput();
+        outputMode = enable ? "dual" : "none";
+        $("announce").textContent = enable ? "双屏异显已开启" : "双屏异显已关闭";
+        updateOutputButton();
+        renderOutputPanel();
+      });
+
+      $("castOutputSwitch").addEventListener("click", () => {
+        clearTimeout(displayTimer);
+        displayScanning = false;
+        const enable = outputMode !== "cast";
+        resetWirelessOutput();
+        outputMode = enable ? "cast" : "none";
+        $("announce").textContent = enable ? "无线投屏已开启" : "无线投屏已关闭";
+        updateOutputButton();
+        renderOutputPanel();
+      });
+
+      const displayRefresh = $("displayRefresh");
+      if (displayRefresh) {
+        displayRefresh.addEventListener("click", () => {
+          displayScanning = true;
+          renderOutputPanel();
+          clearTimeout(displayTimer);
+          displayTimer = window.setTimeout(() => {
+            displayScanning = false;
+            $("announce").textContent = "显示器列表已刷新";
+            if (isOutputPanelVisible()) renderOutputPanel();
+          }, 900);
+        });
+      }
+
+      document.querySelectorAll("[data-stage-display]").forEach((button) => {
+        button.addEventListener("click", () => {
+          selectedStageDisplay = button.dataset.stageDisplay;
+          const display = stageDisplays.find((item) => item.id === selectedStageDisplay);
+          $("announce").textContent = `显示器已切换到：${display.name}`;
+          renderOutputPanel();
+        });
+      });
+
+      const castRefresh = $("castRefresh");
+      if (castRefresh) {
+        castRefresh.addEventListener("click", () => {
+          castScanning = true;
+          renderOutputPanel();
+          clearTimeout(castTimer);
+          castTimer = window.setTimeout(() => {
+            castScanning = false;
+            $("announce").textContent = "投屏设备列表已刷新";
+            if (isOutputPanelVisible()) renderOutputPanel();
+          }, 900);
+        });
+      }
+
+      document.querySelectorAll("[data-cast-device]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const device = castDevices.find((item) => item.id === button.dataset.castDevice);
+          const disconnecting = activeCastDevice === button.dataset.castDevice
+            && castState === "connected";
+
+          clearTimeout(castTimer);
+          if (disconnecting) {
+            castState = "idle";
+            activeCastDevice = "";
+            $("announce").textContent = `已断开：${device.name}`;
+            updateOutputButton();
+            renderOutputPanel();
+            return;
+          }
+
+          activeCastDevice = button.dataset.castDevice;
+          castScanning = false;
+          castState = "connecting";
+          $("announce").textContent = `正在连接：${device.name}`;
+          renderOutputPanel();
+          castTimer = window.setTimeout(() => {
+            castState = "connected";
+            $("announce").textContent = `正在投屏到：${device.name}`;
+            updateOutputButton();
+            if (isOutputPanelVisible()) renderOutputPanel();
+          }, 1100);
+        });
+      });
     }
 
     function renderBackControl() {
@@ -3130,8 +3632,8 @@
     $("settingsBtn").addEventListener("click", () => {
       openModal("设定", "房间编号、音频输出、点歌端口、歌词显示和系统控制集中在这里。");
     });
-    $("windowsBtn").addEventListener("click", () => {
-      openModal("Windows 主控", "这里可以切换窗口、打开系统音量或回到桌面控制。");
+    $("outputBtn").addEventListener("click", () => {
+      renderOutputPanel();
     });
     $("modalClose").addEventListener("click", closeModal);
     $("modalBody").addEventListener("click", (event) => {
@@ -3184,6 +3686,7 @@
     setSong(0);
     setKey(key);
     setVolume(volume);
+    updateOutputButton();
     setIcons();
   </script>
 </body>

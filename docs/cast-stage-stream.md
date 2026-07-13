@@ -5,9 +5,10 @@ Controller UI 的镜像，也不是从预览窗口或第二屏窗口捕获画面
 内置的 KTV 专用 OBS：所有 source 都由 Kirakara Show / ShowHost 主动提供，
 然后合成、编码、推流。
 
-本文描述的是目标架构和阶段边界，不表示当前代码已经拥有完整
-StageCompositor。当前 ShowHost 已经是播放状态权威；真正缺口是把现有
-窗口叠层输出改造成主动合成输出。
+本文同时描述当前 Windows 实现和后续跨平台边界。当前 ShowHost 已经是
+播放状态权威，Cast 路径已经拥有固定 1920x1080 画布的主动离屏合成、
+H.264/AAC 编码和 MPEG-TS 输出；物理双屏仍保留低延迟窗口渲染路径。
+QR 与滚动报幕 overlay 暂缓，等待与物理双屏统一设计。
 
 DLNA / Cast 开启时，Controller Screen 不显示 Stage 预览。TS 投流和双屏异显
 必须互斥：`physicalDisplay` 模式占用物理第二屏，`tsStream` 模式占用编码直播流。
@@ -115,38 +116,32 @@ Cast 按电视直播处理，不能把歌曲时间轴当成编码时间轴。Sta
 重置 H.264/AAC/MPEG-TS 的 PTS。这里消费的是 Stage 合成后的 GPU texture，
 不是捕获 StageWindow、桌面或 Flutter HWND。
 
-## Current Show Pipeline
+## Current Show Pipelines
 
-当前 Show 的实际显示管线仍然是窗口层叠：
+当前物理双屏的低延迟显示管线仍然是窗口层叠：
 
 ```text
 MF Media Engine -> stage HWND / swap chain
 LyricRenderer   -> independent WS_EX_LAYERED subtitle window
 ```
 
-视频和字幕目前靠窗口 Z-order 组合，不是同一张 texture。DLNA / Cast 如果
-直接从这些窗口取画面，就会回到窗口捕获路线，也会继续受到 Flutter 弹窗、
-窗口层级和桌面焦点影响。TS 投流可以复用 Stage 大屏渲染链路，但必须通过
-`StageOutputLease.tsStream` 互斥抢占输出槽，不能和 `physicalDisplay`
-双屏异显同时开启。
-
-因此 StageCompositor 是投屏路线的核心阻塞项。它需要得到：
+视频和字幕在物理双屏上仍靠窗口 Z-order 组合。Cast 不读取这些 HWND；它通过
+`StageOutputLease.tsStream` 互斥抢占输出槽，并使用独立的主动离屏管线：
 
 ```text
-video texture + transparent overlay texture -> composed stage texture
+MF decoder texture + KRL overlay texture -> composed 1920x1080 stage texture
+                                            -> H.264 + AAC -> MPEG-TS
 ```
 
-StageCompositor 必须维护固定节目画布，例如 1920x1080@30fps 或
-1920x1080@60fps。源视频无论是 720p、1080p、4K、24fps、30fps 还是
-60fps，都只是这个画布里的一个 source：按规则 letterbox / scale 后放入
-画布，再叠加字幕；QR 和报幕后续按统一 Stage overlay 设计接入。
-Encoder 只看到固定规格的 composed
-stage texture，不直接感知源视频分辨率或帧率变化。
+CastStageRenderer 维护固定 1920x1080 节目画布。源视频无论是 720p、1080p、
+4K、24fps、30fps 还是 60fps，都只是这个画布里的一个 source：按规则
+letterbox / scale 后放入画布，再叠加字幕；QR 和报幕后续按统一 Stage overlay
+设计接入。Encoder 只看到固定规格的 composed stage texture，不直接感知
+源视频分辨率或帧率变化。
 
-最终路线是用 MF media source / decoder MFT 或等价低级解码链路直接输出
-D3D11 texture，再把 KRL 和后续统一 Stage overlay 渲染到透明 overlay
-texture，最后合成。这里的 texture 是 decoder output，不是从 HWND、swap chain
-或已经显示的画面抓回来的帧。
+当前 Cast 路线用 MF media source / decoder MFT 直接输出 D3D11 texture，再把
+KRL 渲染到透明 overlay texture，最后合成。这里的 texture 是 decoder output，
+不是从 HWND、swap chain 或已经显示的画面抓回来的帧。
 
 物理双屏保留现有窗口输出作为 `physicalDisplay` renderer，同时为 TS 建立
 `tsStream` Cast renderer。二者必须互斥。Cast renderer 可以独立解码当前视频，
@@ -204,17 +199,19 @@ codec、PTS 和静音区间；它们不参与 App 的播放、合成、编码、
 
 ## DLNA Control Surface
 
-DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子集，但仍然要把
-这些模块当成真实边界：
+DLNA 控制面不是单个 URL 推送按钮。当前 Windows 版本已经实现并验证以下边界：
 
-- SSDP discovery：M-SEARCH / NOTIFY。
+- SSDP active discovery：从实体局域网网卡发送 M-SEARCH，排除 TUN、VPN、
+  VMware 等虚拟网卡。
 - device description：解析 device.xml 和 service URL。
 - ConnectionManager：`GetProtocolInfo`。
-- AVTransport：`SetAVTransportURI` / `Play` / `Pause` / `Seek`。
-- RenderingControl：`SetVolume`。
+- AVTransport：`SetAVTransportURI` / `Play` / `Stop`。
+- HTTP transport：支持电视的 `HEAD` 探测与持续 `GET /cast/stage.ts`。
 
-可以评估 libupnp、Platinum 或自写最小子集。协议层不能反过来拥有播放状态；
-它只把电视端控制映射回 ShowHost 命令。
+Cast 是连续直播，因此应用内 Pause / Seek / 重唱 / 切歌不会向电视发送
+AVTransport Pause / Seek，也不会替换 URL；这些命令只改变 ShowHost 的节目内容。
+音量同样由 Show 处理后 PCM 控制，不使用 RenderingControl 修改电视音量。
+协议层不能反过来拥有播放状态。
 
 ## Phase Checklist
 
@@ -252,15 +249,26 @@ DLNA 控制面不是单个 URL 推送按钮。第一版可以做最小可用子�
 - Done: NativeCastStream bridge for writing encoded H.264/AAC frames into a
   shared MPEG-TS reader stream.
 - Done: native HTTP `/cast/stage.ts` server foundation backed by the shared
-  MPEG-TS reader stream.
-- Done: App MPEG-TS test button starts the native ShowHost Cast stream and
-  displays its dynamically allocated physical-LAN URL; no Dart relay is used.
+  MPEG-TS reader stream, including DLNA-style HEAD probing headers.
+- Done: App output panel discovers real MediaRenderer devices, reads their
+  device description and sink protocol capabilities, starts the native
+  ShowHost Cast stream, and sends SetAVTransportURI + Play. Clicking the active
+  device sends Stop and disconnects while leaving wireless casting enabled.
+- Done: physical second-screen output and wireless Cast are mutually exclusive;
+  the top action only displays `投屏中` after a receiver accepts the stream.
 - Done: native H.264 and AAC output are wired into one continuous MPEG-TS.
 - Verified: real HTTP/progressive background source plus local processed audio
   produced H.264 Main 1920x1080@60 and AAC-LC 48 kHz stereo. AAC PTS stayed
   monotonic through key change, track switch, pause and resume; pause emitted
   continuous silence instead of stopping transport.
-- Not done: DLNA discovery and `SetAVTransportURI`.
+- Verified: a Windows Media Player MediaRenderer on another LAN computer was
+  discovered over the physical WLAN, accepted the stable TS URL, opened an HTTP
+  connection, and displayed the composed background video plus KRL lyrics.
+- Verified: application pause kept the HTTP connection established; resume
+  continued the program, and device-row disconnect closed the connection.
+- Verified: replay/seek-to-zero and next-song switching both kept the same
+  HTTP listener and receiver TCP session; neither operation replaced the
+  external Stage URL or asked the receiver to reconnect.
 
 ## Verification Requirements
 

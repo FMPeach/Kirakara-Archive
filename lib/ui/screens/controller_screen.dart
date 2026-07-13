@@ -9,6 +9,7 @@ import '../../domain/playback_state.dart';
 import '../../domain/song.dart';
 import '../../engine/stage_renderer.dart';
 import '../../services/cast_service.dart';
+import '../../services/dlna/dlna_device.dart';
 import '../../services/display_manager.dart';
 import '../../services/kirakara_show_service.dart';
 import '../../services/lan_server.dart';
@@ -33,6 +34,7 @@ part '../controller/home/home_screen.dart';
 part '../controller/widgets/bottom_bar.dart';
 part '../controller/widgets/settings_dialog.dart';
 part '../controller/widgets/dialog_widgets.dart';
+part '../controller/widgets/output_dialog.dart';
 
 class ControllerScreen extends StatefulWidget {
   const ControllerScreen({
@@ -135,6 +137,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                     isBuffering: widget.kirakaraShowService.isBuffering,
                     showSearch: _browseMode == null,
                     controllerFullscreen: _controllerFullscreen,
+                    isCasting: widget.castService.isCasting,
                     onSearchTap: () => _runSearch(''),
                     onQr: _showQrDialog,
                     onSettings: _showSettingsDialog,
@@ -459,7 +462,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: const Center(
-                    child: Icon(Icons.wifi_off, size: 48, color: KiraColors.muted),
+                    child:
+                        Icon(Icons.wifi_off, size: 48, color: KiraColors.muted),
                   ),
                 ),
               const SizedBox(height: 18),
@@ -497,216 +501,76 @@ class _ControllerScreenState extends State<ControllerScreen> {
 
   void _showCastDialog() {
     _showDialogAboveNativePreview<void>(
-      builder: (context) {
-        return AnimatedBuilder(
-          animation:
-              Listenable.merge([widget.displayManager, widget.castService]),
-          builder: (context, _) {
-            final isDualStage =
-                widget.displayManager.mode == DisplayMode.dualScreen;
-            final isPreviewStage =
-                widget.displayManager.mode == DisplayMode.previewWindow;
-            final hasStageOutput = isDualStage || isPreviewStage;
-            final castBusy = widget.castService.state != CastState.idle;
-            final stageDisplay = widget.displayManager.stageDisplay;
-            return _KiraDialog(
-              title: '投屏与舞台输出',
-              width: 620,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _StatusLine(
-                    icon: Icons.monitor,
-                    label: '舞台输出',
-                    value: _displayModeLabel(widget.displayManager.mode),
-                  ),
-                  _StatusLine(
-                    icon: Icons.desktop_windows,
-                    label: '显示器',
-                    value: stageDisplay == null
-                        ? '未检测到第二屏'
-                        : '${stageDisplay.name} · ${stageDisplay.sizeLabel}',
-                  ),
-                  _StatusLine(
-                    icon: Icons.cast,
-                    label: '投屏',
-                    value: widget.castService.isCasting
-                        ? '正在输出 Stage：${widget.castService.targetName}'
-                        : '未投屏',
-                  ),
-                  if (widget.castService.mpegTsUrl != null)
-                    _StatusLine(
-                      icon: Icons.link,
-                      label: '测试流',
-                      value: widget.castService.mpegTsUrl!,
-                    ),
-                  if (widget.castService.lastError != null)
-                    _StatusLine(
-                      icon: Icons.error_outline,
-                      label: '状态',
-                      value: widget.castService.lastError!,
-                    ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: isDualStage
-                              ? _closeStageOutput
-                              : castBusy || stageDisplay == null
-                                  ? null
-                                  : _openPhysicalStageOutput,
-                          icon: Icon(
-                            isDualStage
-                                ? Icons.close_fullscreen
-                                : castBusy
-                                    ? Icons.block
-                                    : Icons.connected_tv,
-                          ),
-                          label: Text(
-                            isDualStage
-                                ? '关闭第二屏'
-                                : castBusy
-                                    ? 'TS 投流占用中'
-                                    : '打开第二屏',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: isPreviewStage
-                              ? _closeStageOutput
-                              : castBusy
-                                  ? null
-                                  : _openDebugStageWindow,
-                          icon: Icon(
-                            castBusy && !isPreviewStage
-                                ? Icons.block
-                                : Icons.screenshot_monitor,
-                          ),
-                          label: Text(
-                            isPreviewStage
-                                ? '关闭调试窗'
-                                : castBusy
-                                    ? 'TS 投流占用中'
-                                    : '调试窗口',
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: _refreshDisplays,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('刷新显示器'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FilledButton.icon(
-                          onPressed: widget.castService.state ==
-                                  CastState.searching
-                              ? null
-                              : hasStageOutput && !widget.castService.isCasting
-                                  ? null
-                                  : _toggleMpegTsDebugStream,
-                          icon: Icon(
-                            widget.castService.isCasting
-                                ? Icons.cast_connected
-                                : hasStageOutput
-                                    ? Icons.block
-                                    : Icons.settings_input_antenna,
-                          ),
-                          label: Text(
-                            widget.castService.isCasting
-                                ? '停止 MPEG-TS'
-                                : hasStageOutput
-                                    ? '先关闭舞台输出'
-                                : 'MPEG-TS 测试流',
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+      builder: (context) => _OutputDialog(
+        displayManager: widget.displayManager,
+        castService: widget.castService,
+        onDualChanged: _setDualOutputEnabled,
+        onCastChanged: _setCastModeEnabled,
+        onDisplaySelected: _selectStageDisplay,
+        onRefreshDisplays: _refreshDisplays,
+        onCastDevicePressed: _toggleCastDevice,
+      ),
     );
   }
 
-  Future<void> _toggleMpegTsDebugStream() async {
-    try {
-      if (widget.castService.isCasting) {
-        await widget.castService.stopCast(
-          showService: widget.kirakaraShowService,
-        );
-        return;
-      }
-      if (_hasStageOutput) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('请先关闭第二屏或调试窗口，再开启 MPEG-TS')),
-        );
-        return;
-      }
-      await widget.castService.startMpegTsDebugStream(
-        widget.kirakaraShowService,
+  Future<void> _setDualOutputEnabled(bool enabled) async {
+    if (!enabled) {
+      await _closeStageOutput();
+      return;
+    }
+    if (widget.castService.isEnabled) {
+      await widget.castService.disableCastMode(
+        showService: widget.kirakaraShowService,
       );
-      if (!mounted) return;
-      final url = widget.castService.mpegTsUrl;
-      if (url != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('VLC 打开网络串流：$url')),
-        );
-      }
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('MPEG-TS 启动失败：$error')),
+    }
+    await _openPhysicalStageOutput();
+  }
+
+  Future<void> _setCastModeEnabled(bool enabled) async {
+    if (!enabled) {
+      await widget.castService.disableCastMode(
+        showService: widget.kirakaraShowService,
       );
+      return;
+    }
+    if (_hasStageOutput) await _closeStageOutput();
+    await widget.castService.enableCastMode();
+  }
+
+  Future<void> _selectStageDisplay(DisplayInfo display) async {
+    widget.displayManager.selectStageDisplay(display.id);
+    if (widget.displayManager.mode == DisplayMode.dualScreen) {
+      _applyPhysicalDisplayRect(display);
     }
   }
 
-  Future<void> _openPhysicalStageOutput() async {
-    if (widget.castService.state != CastState.idle) {
-      _showStageOutputLeaseSnackBar();
-      return;
-    }
-    final display = widget.displayManager.stageDisplay;
-    if (display == null) return;
+  Future<void> _toggleCastDevice(DlnaDevice device) async {
+    if (_hasStageOutput) await _closeStageOutput();
+    await widget.castService.connectToDevice(
+      device,
+      widget.kirakaraShowService,
+    );
+  }
+
+  void _applyPhysicalDisplayRect(DisplayInfo display) {
     widget.kirakaraShowService.setStageWindowRect(
       x: display.left,
       y: display.top,
       width: display.width,
       height: display.height,
     );
-    await widget.displayManager.openStageWindow(preview: false);
-    widget.kirakaraShowService.setStageWindowVisible(true);
   }
 
-  Future<void> _openDebugStageWindow() async {
-    if (widget.castService.state != CastState.idle) {
+  Future<void> _openPhysicalStageOutput() async {
+    if (widget.castService.isEnabled ||
+        widget.castService.state != CastState.idle) {
       _showStageOutputLeaseSnackBar();
       return;
     }
-    final display = widget.displayManager.controllerDisplay;
-    const width = 960;
-    const height = 540;
-    widget.kirakaraShowService.setStageWindowRect(
-      x: display.left + 80,
-      y: display.top + 80,
-      width: width,
-      height: height,
-    );
-    await widget.displayManager.openStageWindow(preview: true);
+    final display = widget.displayManager.stageDisplay;
+    if (display == null) return;
+    _applyPhysicalDisplayRect(display);
+    await widget.displayManager.openStageWindow(preview: false);
     widget.kirakaraShowService.setStageWindowVisible(true);
   }
 
@@ -722,15 +586,19 @@ class _ControllerScreenState extends State<ControllerScreen> {
   void _showStageOutputLeaseSnackBar() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('MPEG-TS 投流正在占用 Stage 输出，请先停止投流')),
+      const SnackBar(content: Text('无线投屏正在占用显示输出，请先停止投屏')),
     );
   }
 
   Future<void> _refreshDisplays() async {
     await widget.displayManager.detectDisplays();
-    if (widget.displayManager.stageDisplay == null &&
+    final display = widget.displayManager.stageDisplay;
+    if (display == null &&
         widget.displayManager.mode == DisplayMode.singleScreen) {
       widget.kirakaraShowService.setStageWindowVisible(false);
+    } else if (display != null &&
+        widget.displayManager.mode == DisplayMode.dualScreen) {
+      _applyPhysicalDisplayRect(display);
     }
   }
 
@@ -757,13 +625,5 @@ class _ControllerScreenState extends State<ControllerScreen> {
     ).whenComplete(() {
       showService.setControllerPreviewSuppressed(false);
     });
-  }
-
-  static String _displayModeLabel(DisplayMode mode) {
-    return switch (mode) {
-      DisplayMode.singleScreen => '单屏控制台',
-      DisplayMode.dualScreen => '双屏异显',
-      DisplayMode.previewWindow => '调试预览窗口',
-    };
   }
 }
