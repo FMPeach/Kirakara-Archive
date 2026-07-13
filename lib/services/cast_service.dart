@@ -119,7 +119,7 @@ class CastService extends ChangeNotifier {
       '12000k',
       '-f',
       'mpegts',
-      'tcp://127.0.0.1:$httpPort?listen=1',
+      'pipe:1',
     ];
 
     late final Process process;

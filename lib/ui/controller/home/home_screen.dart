@@ -3,16 +3,19 @@ part of '../../screens/controller_screen.dart';
 class _LeftPane extends StatelessWidget {
   const _LeftPane({
     required this.playbackService,
+    required this.castService,
     required this.stageRenderer,
   });
 
   final PlaybackService playbackService;
+  final CastService castService;
   final StageRenderer stageRenderer;
 
   @override
   Widget build(BuildContext context) {
     final state = playbackService.state;
     final song = state.currentSong;
+    final castActive = castService.state != CastState.idle;
     return LayoutBuilder(
       builder: (context, constraints) {
         const songStripHeight = 148.0;
@@ -49,11 +52,14 @@ class _LeftPane extends StatelessWidget {
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
-                          StageScreen(
-                            playbackService: playbackService,
-                            stageRenderer: stageRenderer,
-                          ),
-                          if (!state.isPlaying)
+                          if (castActive)
+                            _CastStagePlaceholder(castService: castService)
+                          else
+                            StageScreen(
+                              playbackService: playbackService,
+                              stageRenderer: stageRenderer,
+                            ),
+                          if (!castActive && !state.isPlaying)
                             Center(
                               child: FilledButton(
                                 onPressed: playbackService.play,
@@ -170,6 +176,55 @@ class _LeftPane extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+class _CastStagePlaceholder extends StatelessWidget {
+  const _CastStagePlaceholder({
+    required this.castService,
+  });
+
+  final CastService castService;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = castService.mpegTsUrl;
+    final isStarting = castService.state == CastState.searching;
+    return DecoratedBox(
+      decoration: const BoxDecoration(color: Colors.black),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.cast_connected,
+              color: KiraColors.amber,
+              size: 64,
+            ),
+            const SizedBox(height: 18),
+            const Text(
+              'Stage 正在投屏输出',
+              style: TextStyle(
+                color: KiraColors.cream,
+                fontSize: 30,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 9),
+            Text(
+              isStarting ? '正在准备输出链路' : url ?? '主控预览已暂停',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: KiraColors.muted,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -516,7 +571,7 @@ class _SongCover extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: hasCover
           ? Image.file(
-              File(coverPath!),
+              File(coverPath),
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) =>
                   _CoverPlaceholder(song: song, size: size),

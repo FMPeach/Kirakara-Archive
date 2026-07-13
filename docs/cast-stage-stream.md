@@ -9,6 +9,14 @@ Controller UI 的镜像，也不是从预览窗口或第二屏窗口捕获画面
 StageCompositor。当前 ShowHost 已经是播放状态权威；真正缺口是把现有
 窗口叠层输出改造成主动合成输出。
 
+DLNA / Cast 开启时，Controller Screen 不显示 Stage 预览。TS 投流和双屏异显
+必须互斥：`physicalDisplay` 模式占用物理第二屏，`tsStream` 模式占用编码直播流。
+二者抢同一个 Stage 输出槽，不能同时开启。
+
+TS 投流要复用的是双屏异显背后的 Stage 大屏渲染链路，而不是录第二屏窗口。
+如果 Cast 通过第二屏 HWND / 字幕 HWND / 隐藏窗口取帧，就会把窗口层级、DPI、
+字幕 viewport 和坐标系问题带进 TS 流。
+
 ## Architecture
 
 ```mermaid
@@ -25,13 +33,16 @@ flowchart TD
     Clock --> AudioEngine
     Clock --> Lyrics["KRL Renderer\n歌词 / Stage Overlay 预留"]
 
-    VideoDecoder --> Compositor["StageCompositor\nD3D11 合成"]
+    VideoDecoder --> Compositor["StageProgramRenderer / StageCompositor\n固定节目画布 D3D11 合成"]
     Lyrics --> Compositor
     AudioEngine --> AudioTap["Processed PCM Tap\n处理后 PCM"]
 
-    Compositor --> Preview["Controller Preview\n本机预览"]
-    Compositor --> StageWindow["Second Screen Stage\n双屏异显"]
-    Compositor --> CastVideo["Cast Video Encoder\nH.264 hardware"]
+    Compositor --> StageLease["StageOutputLease\n互斥输出槽"]
+    StageLease --> StagePresenter["StageWindowPresenter\nphysicalDisplay 模式"]
+    StagePresenter --> StageWindow["Second Screen Stage\n双屏异显"]
+    StageLease --> CastPresenter["CastStreamPresenter\ntsStream 模式"]
+    CastPresenter --> CastVideo["Cast Video Encoder\nH.264 hardware"]
+    Compositor --> Preview["Controller Preview\n本机预览 / TS 时暂停"]
     AudioTap --> CastAudio["Cast Audio Encoder\nAAC"]
 
     CastVideo --> Mux["MPEG-TS Muxer"]
@@ -99,7 +110,9 @@ LyricRenderer   -> independent WS_EX_LAYERED subtitle window
 
 视频和字幕目前靠窗口 Z-order 组合，不是同一张 texture。DLNA / Cast 如果
 直接从这些窗口取画面，就会回到窗口捕获路线，也会继续受到 Flutter 弹窗、
-窗口层级和桌面焦点影响。
+窗口层级和桌面焦点影响。TS 投流可以复用 Stage 大屏渲染链路，但必须通过
+`StageOutputLease.tsStream` 互斥抢占输出槽，不能和 `physicalDisplay`
+双屏异显同时开启。
 
 因此 StageCompositor 是投屏路线的核心阻塞项。它需要得到：
 
@@ -118,10 +131,10 @@ stage texture，不直接感知源视频分辨率或帧率变化。
 D3D11 texture，再把 KRL 和后续统一 Stage overlay 渲染到透明 overlay
 texture，最后合成。
 
-允许有一个过渡路线：保留现有窗口输出，同时为 Cast 建立独立 offscreen
-StageCompositor。过渡期可以重复解码当前视频，但它必须完全受 ShowHost
-PlaybackSession 控制，不能自己推进时间轴。这个重复解码只应被记录为临时
-技术债，后续需要收敛到统一 Stage 输出。
+允许有一个过渡路线：保留现有窗口输出作为 `physicalDisplay` presenter，
+同时为 TS 建立 `tsStream` presenter。二者必须互斥。过渡期可以重复解码
+当前视频，但它必须完全受 ShowHost PlaybackSession 控制，不能自己推进时间轴。
+这个重复解码只应被记录为临时技术债，后续需要收敛到统一 Stage 输出。
 
 ## Cast Video
 
@@ -131,6 +144,9 @@ Cast video 必须来自 ShowHost 主动合成的 Stage 画面：
 2. 按 16:9 Stage 输出 letterbox / scale。
 3. 叠加 KRL 歌词；QR、报幕和指示层等后续按统一 Stage overlay 接入。
 4. 输出给 H.264 encoder。
+
+启动 Cast video 前，App 必须确认没有物理第二屏或调试 StageWindow 正在占用
+Stage 输出槽；如果已经占用，TS 开关禁用或要求用户先关闭该输出。
 
 未播放时不能推进视频。暂停时不能推进视频。切歌时优先保持 HTTP / DLNA URL
 稳定，可以重复最后一帧或输出 idle frame，等新源 ready 后继续输出 SPS/PPS
