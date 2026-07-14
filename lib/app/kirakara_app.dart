@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../data/catalog/catalog_client.dart';
 import '../data/local_db/local_database.dart';
@@ -24,9 +26,11 @@ class KirakaraApp extends StatefulWidget {
   const KirakaraApp({
     super.key,
     required this.databasePath,
+    this.cacheDirectoryPath,
   });
 
   final String databasePath;
+  final String? cacheDirectoryPath;
 
   @override
   State<KirakaraApp> createState() => _KirakaraAppState();
@@ -55,8 +59,13 @@ class _KirakaraAppState extends State<KirakaraApp> {
     _catalogClient = HttpCatalogClient(
       baseUrl: Uri.parse('http://localhost:7392'),
     );
+    final cacheRoot = Directory(
+      widget.cacheDirectoryPath ??
+          p.join(Directory.systemTemp.path, 'Kirakara_Cache'),
+    );
     _assetCache = PlaybackAssetCache(
       baseUrl: 'http://localhost:7392',
+      cacheRoot: cacheRoot,
     );
 
     // 先用 fallback 数据初始化 SearchService，等同步完成后再刷新
@@ -76,7 +85,9 @@ class _KirakaraAppState extends State<KirakaraApp> {
       queueService: queueService,
       assetCache: _assetCache,
     );
-    settingsService = SettingsService()..addListener(_applySettings);
+    settingsService = SettingsService(
+      initialCacheDirectoryPath: cacheRoot.path,
+    )..addListener(_applySettings);
     unawaited(settingsService.load());
     kirakaraShowService = KirakaraShowService(
       playbackService: playbackService,

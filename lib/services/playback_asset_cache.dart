@@ -16,13 +16,63 @@ class PlaybackAssetCache extends ChangeNotifier {
   PlaybackAssetCache({
     required String baseUrl,
     Directory? cacheDir,
+    Directory? cacheRoot,
     http.Client? httpClient,
     http.Client? mediaHttpClient,
-  })  : _baseUri = Uri.parse(baseUrl.endsWith('/') ? baseUrl : '$baseUrl/'),
-        _cacheDir =
-            cacheDir ?? Directory.systemTemp.createTempSync('kirakara_cache_'),
+  })  : assert(cacheDir == null || cacheRoot == null),
+        _baseUri = Uri.parse(baseUrl.endsWith('/') ? baseUrl : '$baseUrl/'),
+        _cacheDir = cacheDir ?? _createSessionCacheDirectory(cacheRoot),
         _http = httpClient ?? http.Client(),
         _mediaHttp = mediaHttpClient ?? http.Client();
+
+  static Directory _createSessionCacheDirectory(Directory? cacheRoot) {
+    final root = cacheRoot ??
+        Directory(p.join(Directory.systemTemp.path, 'Kirakara_Cache'));
+    final directory = Directory(
+      p.join(root.path, 'session_$pid'),
+    );
+    // A PID can be reused after an abnormal exit. The Windows runner also
+    // removes abandoned session directories, but clearing our own path here
+    // keeps this constructor safe on every platform.
+    if (directory.existsSync()) {
+      try {
+        directory.deleteSync(recursive: true);
+      } on FileSystemException {
+        // If another resource is still releasing, creation below can reuse the
+        // directory and the runner will perform the final cleanup on exit.
+      }
+    }
+    directory.createSync(recursive: true);
+    _writeSessionMarker(directory);
+    return directory;
+  }
+
+  static void _writeSessionMarker(Directory directory) {
+    try {
+      File(
+        p.join(
+          Directory.systemTemp.path,
+          'kirakara_cache_session_$pid.path',
+        ),
+      ).writeAsStringSync(directory.absolute.path, flush: true);
+    } on FileSystemException {
+      // Dart cleanup still runs; the Windows runner marker is an extra guard.
+    }
+  }
+
+  static void _deleteSessionMarker() {
+    try {
+      final marker = File(
+        p.join(
+          Directory.systemTemp.path,
+          'kirakara_cache_session_$pid.path',
+        ),
+      );
+      if (marker.existsSync()) marker.deleteSync();
+    } on FileSystemException {
+      // The native runner also removes the marker after engine shutdown.
+    }
+  }
 
   final Uri _baseUri;
   final Directory _cacheDir;
@@ -828,7 +878,8 @@ class PlaybackAssetCache extends ChangeNotifier {
   bool _isAudio(MediaAssetType type) =>
       type == MediaAssetType.vocal || type == MediaAssetType.accompaniment;
 
-  bool _isPlaybackAsset(MediaAsset asset) => true; // include cover — 404 handled gracefully
+  bool _isPlaybackAsset(MediaAsset asset) =>
+      true; // include cover — 404 handled gracefully
 
   void _notifyProgressListeners() {
     if (!_disposed) notifyListeners();
@@ -836,11 +887,19 @@ class PlaybackAssetCache extends ChangeNotifier {
 
   /// 清理所有缓存文件。
   void clear() {
+    var deleted = !_cacheDir.existsSync();
     try {
       if (_cacheDir.existsSync()) {
         _cacheDir.deleteSync(recursive: true);
       }
+      deleted = !_cacheDir.existsSync();
     } catch (_) {}
+    // Native decoders can still own media handles while the Flutter widget
+    // tree is shutting down. Keep the marker in that case so the Windows
+    // runner can retry after the engine has been destroyed.
+    if (deleted) {
+      _deleteSessionMarker();
+    }
   }
 
   @override

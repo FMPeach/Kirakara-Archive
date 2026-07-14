@@ -374,6 +374,38 @@ void main() {
     expect(song.containsKey('durationSeconds'), isFalse);
   });
 
+  test('playback cache scopes a custom root to the current app session',
+      () async {
+    final cacheRoot =
+        await Directory.systemTemp.createTemp('kirakara_cache_root_test_');
+    final marker = File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}'
+      'kirakara_cache_session_$pid.path',
+    );
+    final session = Directory(
+      '${cacheRoot.path}${Platform.pathSeparator}session_$pid',
+    );
+    addTearDown(() {
+      if (marker.existsSync()) marker.deleteSync();
+      if (cacheRoot.existsSync()) cacheRoot.deleteSync(recursive: true);
+    });
+
+    final cache = PlaybackAssetCache(
+      baseUrl: 'http://catalog.test',
+      cacheRoot: cacheRoot,
+    );
+    addTearDown(cache.dispose);
+
+    expect(session.existsSync(), isTrue);
+    expect(marker.existsSync(), isTrue);
+    expect((await marker.readAsString()).trim(), session.absolute.path);
+
+    cache.clear();
+    expect(session.existsSync(), isFalse);
+    expect(marker.existsSync(), isFalse);
+    expect(cacheRoot.existsSync(), isTrue);
+  });
+
   test('playback cache waits for audio and lyrics but not video', () async {
     final videoStarted = Completer<void>();
     final releaseVideo = Completer<void>();
