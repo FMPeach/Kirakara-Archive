@@ -34,6 +34,7 @@ class KirakaraShowService extends ChangeNotifier {
   int? _lastVolume;
   int? _lastKey;
   String? _lastCompletedItemId;
+  String? _seamlessTransitionItemId;
   bool _sawEngineProgressForItem = false;
   bool _started = false;
   bool _applyingEnginePosition = false;
@@ -123,6 +124,7 @@ class KirakaraShowService extends ChangeNotifier {
 
     if (item == null) {
       _prepareGeneration++;
+      _seamlessTransitionItemId = null;
       ffi.stop();
       _loadedSongId = null;
       _loadedItemId = null;
@@ -161,11 +163,17 @@ class KirakaraShowService extends ChangeNotifier {
 
   /// 热路径：尝试 slot swap；失败则走异步下载 + 加载。
   void _trySlotSwapOrPrepare(QueueItem item) {
+    final seamlessTransition = _seamlessTransitionItemId == item.id;
+    _seamlessTransitionItemId = null;
     final slot = _slotManager?.consumeStandby(item.song.id);
     if (slot != null) {
       _prepareGeneration++;
       _preparingItemId = null;
-      _loadFromSlot(slot, item);
+      _loadFromSlot(
+        slot,
+        item,
+        seamlessTransition: seamlessTransition,
+      );
       return;
     }
 
@@ -173,7 +181,11 @@ class KirakaraShowService extends ChangeNotifier {
     final generation = ++_prepareGeneration;
     _preparingItemId = item.id;
 
-    _ffi?.pause();
+    if (seamlessTransition) {
+      _ffi?.pause();
+    } else {
+      _ffi?.stop();
+    }
     _loadedSongId = null;
     _loadedItemId = null;
     _sawEngineProgressForItem = false;
@@ -184,11 +196,19 @@ class KirakaraShowService extends ChangeNotifier {
     _setBuffering(true);
 
     _slotManager?.createFallbackActive(item.song.id, item.song);
-    _prepareAndLoadAsync(item, generation);
+    _prepareAndLoadAsync(
+      item,
+      generation,
+      seamlessTransition: seamlessTransition,
+    );
   }
 
   /// 从已预热 slot 加载（同步，极快）。不调用 stop，避免歌词闪回第一帧。
-  void _loadFromSlot(PlaybackSlot slot, QueueItem item) {
+  void _loadFromSlot(
+    PlaybackSlot slot,
+    QueueItem item, {
+    required bool seamlessTransition,
+  }) {
     final ffi = _ffi;
     if (ffi == null) return;
     if (!slot.isReady || slot.videoPath == null) return;
@@ -206,6 +226,7 @@ class KirakaraShowService extends ChangeNotifier {
       vocalPath: slot.vocalPath,
       accompanimentPath: slot.instPath,
       videoMasterClock: item.song.videoMasterClock,
+      seamlessTransition: seamlessTransition,
     );
     if (!loaded) return;
 
@@ -225,7 +246,11 @@ class KirakaraShowService extends ChangeNotifier {
   }
 
   /// 异步下载 + 加载（慢路径，仅 standby 未命中时用）。
-  Future<void> _prepareAndLoadAsync(QueueItem item, int generation) async {
+  Future<void> _prepareAndLoadAsync(
+    QueueItem item,
+    int generation, {
+    required bool seamlessTransition,
+  }) async {
     try {
       final isExternal = item.song.isExternal;
 
@@ -267,6 +292,7 @@ class KirakaraShowService extends ChangeNotifier {
         vocalPath: vocalPath,
         accompanimentPath: accompanimentPath,
         videoMasterClock: item.song.videoMasterClock,
+        seamlessTransition: seamlessTransition,
       );
       if (!loaded) {
         return;
@@ -553,6 +579,7 @@ class KirakaraShowService extends ChangeNotifier {
     _applyingEnginePosition = true;
     try {
       _playbackService.next();
+      _seamlessTransitionItemId = _playbackService.state.currentItem?.id;
     } finally {
       _applyingEnginePosition = false;
     }

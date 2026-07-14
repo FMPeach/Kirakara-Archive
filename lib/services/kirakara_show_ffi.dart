@@ -24,6 +24,15 @@ typedef LoadWithClockNative = Bool Function(
   Pointer<Utf16>,
   Int32,
 );
+typedef LoadWithOptionsNative = Bool Function(
+  ShowHostHandle,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Int32,
+  Int32,
+);
 typedef PrepareNextNative = Bool Function(
   ShowHostHandle,
   Pointer<Utf16>,
@@ -94,6 +103,15 @@ typedef _LoadWithClock = bool Function(
   Pointer<Utf16>,
   int,
 );
+typedef _LoadWithOptions = bool Function(
+  ShowHostHandle,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  Pointer<Utf16>,
+  int,
+  int,
+);
 typedef _PrepareNext = bool Function(
   ShowHostHandle,
   Pointer<Utf16>,
@@ -160,6 +178,7 @@ class KirakaraShowFFI {
   late final _Destroy _destroy;
   late final _Load _load;
   _LoadWithClock? _loadWithClock;
+  _LoadWithOptions? _loadWithOptions;
   _PrepareNext? _prepareNext;
   late final _Play _play;
   late final _Pause _pause;
@@ -201,6 +220,14 @@ class KirakaraShowFFI {
               'show_host_load_with_clock');
     } on ArgumentError {
       _loadWithClock = null;
+    }
+    try {
+      _loadWithOptions =
+          _dylib.lookupFunction<LoadWithOptionsNative, _LoadWithOptions>(
+        'show_host_load_with_options',
+      );
+    } on ArgumentError {
+      _loadWithOptions = null;
     }
     try {
       _prepareNext = _dylib.lookupFunction<PrepareNextNative, _PrepareNext>(
@@ -285,23 +312,35 @@ class KirakaraShowFFI {
     String? vocalPath,
     String? accompanimentPath,
     bool videoMasterClock = false,
+    bool seamlessTransition = false,
   }) {
     final video = videoPath.toNativeUtf16();
     final lyric = (lyricPath ?? '').toNativeUtf16();
     final vocal = (vocalPath ?? '').toNativeUtf16();
     final accompaniment = (accompanimentPath ?? '').toNativeUtf16();
     try {
+      final loadWithOptions = _loadWithOptions;
       final loadWithClock = _loadWithClock;
-      final ok = loadWithClock == null
-          ? _load(_handle, video, lyric, vocal, accompaniment)
-          : loadWithClock(
+      final ok = loadWithOptions != null
+          ? loadWithOptions(
               _handle,
               video,
               lyric,
               vocal,
               accompaniment,
               videoMasterClock ? 1 : 0,
-            );
+              seamlessTransition ? 1 : 0,
+            )
+          : loadWithClock != null
+              ? loadWithClock(
+                  _handle,
+                  video,
+                  lyric,
+                  vocal,
+                  accompaniment,
+                  videoMasterClock ? 1 : 0,
+                )
+              : _load(_handle, video, lyric, vocal, accompaniment);
       if (ok) {
         _width = _getWidth(_handle);
         _height = _getHeight(_handle);
