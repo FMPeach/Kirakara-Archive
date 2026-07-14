@@ -17,7 +17,6 @@ class _SettingsDialog extends StatefulWidget {
 
 class _SettingsDialogState extends State<_SettingsDialog> {
   late final TextEditingController _announcementController;
-  late final TextEditingController _cacheDirectoryController;
   late Future<int> _cacheSize;
   bool _savingAnnouncement = false;
   bool _savingCacheDirectory = false;
@@ -29,16 +28,12 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     _announcementController = TextEditingController(
       text: widget.settingsService.customAnnouncement,
     );
-    _cacheDirectoryController = TextEditingController(
-      text: widget.settingsService.cacheDirectoryPath,
-    );
     _cacheSize = _computeCacheSize();
   }
 
   @override
   void dispose() {
     _announcementController.dispose();
-    _cacheDirectoryController.dispose();
     super.dispose();
   }
 
@@ -58,16 +53,20 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     if (mounted) setState(() => _savingAnnouncement = false);
   }
 
-  Future<void> _saveCacheDirectory() async {
-    final path = _cacheDirectoryController.text.trim();
-    if (path.isEmpty) return;
+  Future<void> _changeCacheDirectory() async {
     setState(() => _savingCacheDirectory = true);
     try {
+      final path = await FilePicker.getDirectoryPath(
+        dialogTitle: '选择缓存目录',
+        initialDirectory: widget.settingsService.cacheDirectoryPath,
+        lockParentWindow: Platform.isWindows,
+      );
+      if (path == null || path.trim().isEmpty) return;
       final directory = Directory(path).absolute;
       directory.createSync(recursive: true);
-      _cacheDirectoryController.text = directory.path;
       await widget.settingsService.setCacheDirectoryPath(directory.path);
       if (mounted) {
+        setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('缓存目录将在下次启动时生效')),
         );
@@ -208,46 +207,27 @@ class _SettingsDialogState extends State<_SettingsDialog> {
           ),
         ]),
       ),
-      const SizedBox(height: 8),
-      Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        Expanded(
-          child: TextField(
-            controller: _cacheDirectoryController,
-            style: const TextStyle(color: KiraColors.cream, fontSize: 13),
-            decoration: const InputDecoration(
-              labelText: '缓存目录',
-              hintText: r'D:\Kirakara_Cache',
-              border: OutlineInputBorder(),
-              filled: true,
-              fillColor: KiraColors.surface2,
-            ),
-          ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('缓存目录',
+            style: TextStyle(
+                color: KiraColors.muted, fontWeight: FontWeight.w700)),
+        subtitle: Text(
+          widget.settingsService.cacheDirectoryPath,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: KiraColors.muted, fontSize: 11),
         ),
-        const SizedBox(width: 8),
-        FilledButton(
-          onPressed: _savingCacheDirectory ? null : _saveCacheDirectory,
-          style: FilledButton.styleFrom(
-            backgroundColor: KiraColors.surface2,
-            foregroundColor: KiraColors.cream,
-          ),
+        trailing: TextButton(
+          onPressed: _savingCacheDirectory ? null : _changeCacheDirectory,
           child: _savingCacheDirectory
               ? const SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: KiraColors.cream,
-                  ),
+                  child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('应用'),
+              : const Text('更改…'),
         ),
-      ]),
-      const SizedBox(height: 4),
-      Text(
-        '当前会话：${widget.assetCache.cacheDirectoryPath}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: KiraColors.muted, fontSize: 11),
       ),
       ListTile(
         contentPadding: EdgeInsets.zero,
