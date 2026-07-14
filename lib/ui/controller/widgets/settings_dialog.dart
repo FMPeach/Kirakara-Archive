@@ -218,8 +218,12 @@ class _SettingsDialogState extends State<_SettingsDialog> {
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(color: KiraColors.muted, fontSize: 11),
         ),
-        trailing: TextButton(
+        trailing: FilledButton(
           onPressed: _savingCacheDirectory ? null : _changeCacheDirectory,
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(84, 40),
+            padding: const EdgeInsets.symmetric(horizontal: 18),
+          ),
           child: _savingCacheDirectory
               ? const SizedBox(
                   width: 16,
