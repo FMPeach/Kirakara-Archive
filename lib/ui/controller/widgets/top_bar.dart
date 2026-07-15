@@ -58,13 +58,16 @@ class _TopBar extends StatelessWidget {
           Expanded(
             child: Align(
               alignment: Alignment.centerLeft,
-              child: Image.asset(
-                'assets/branding/wordmark.png',
-                height: 46,
-                fit: BoxFit.contain,
-                alignment: Alignment.centerLeft,
-                filterQuality: FilterQuality.high,
-                semanticLabel: 'Kira Karaoke',
+              child: Transform.translate(
+                offset: const Offset(0, 4),
+                child: Image.asset(
+                  'assets/branding/wordmark.png',
+                  height: 40,
+                  fit: BoxFit.contain,
+                  alignment: Alignment.centerLeft,
+                  filterQuality: FilterQuality.high,
+                  semanticLabel: 'Kira Karaoke',
+                ),
               ),
             ),
           ),
