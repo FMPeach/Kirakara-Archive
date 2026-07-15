@@ -55,34 +55,17 @@ class _TopBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 15),
-          const Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Kira Karaoke',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 25,
-                    height: 1,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                SizedBox(height: 6),
-                Text(
-                  '家庭 KTV / 实时歌词系统',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: KiraColors.muted,
-                    fontSize: 15,
-                    height: 1,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Image.asset(
+                'assets/branding/wordmark.png',
+                height: 46,
+                fit: BoxFit.contain,
+                alignment: Alignment.centerLeft,
+                filterQuality: FilterQuality.high,
+                semanticLabel: 'Kira Karaoke',
+              ),
             ),
           ),
         ],

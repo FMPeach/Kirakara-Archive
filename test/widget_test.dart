@@ -16,7 +16,14 @@ void main() {
     ));
     await tester.pump();
 
-    expect(find.text('Kira Karaoke'), findsOneWidget);
+    final wordmark = find.byWidgetPredicate((widget) {
+      return widget is Image &&
+          widget.image is AssetImage &&
+          (widget.image as AssetImage).assetName ==
+              'assets/branding/wordmark.png' &&
+          widget.semanticLabel == 'Kira Karaoke';
+    });
+    expect(wordmark, findsOneWidget);
     expect(find.byTooltip('设置'), findsOneWidget);
     expect(find.text('投屏'), findsOneWidget);
     expect(find.text('主控'), findsNothing);
