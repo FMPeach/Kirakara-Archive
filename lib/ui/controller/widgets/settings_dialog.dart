@@ -221,6 +221,10 @@ class _SettingsDialogState extends State<_SettingsDialog> {
         trailing: FilledButton(
           onPressed: _savingCacheDirectory ? null : _changeCacheDirectory,
           style: FilledButton.styleFrom(
+            backgroundColor: KiraColors.surface3,
+            foregroundColor: KiraColors.cream,
+            side: const BorderSide(color: KiraColors.lineStrong),
+            elevation: 0,
             minimumSize: const Size(84, 40),
             padding: const EdgeInsets.symmetric(horizontal: 18),
           ),
