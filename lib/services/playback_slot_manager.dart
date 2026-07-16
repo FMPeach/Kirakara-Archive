@@ -26,6 +26,7 @@ class PlaybackSlotManager extends ChangeNotifier {
   final QueueService _queueService;
   final PlaybackAssetCache? _assetCache;
   int _prefetchLookahead = 3;
+  final Set<String> _prefetchedSongIds = {};
 
   PlaybackSlot? _activeSlot;
   PlaybackSlot? _standbySlot;
@@ -77,6 +78,7 @@ class PlaybackSlotManager extends ChangeNotifier {
   }
 
   void _maybePrepareNext() {
+    _prefetchQueuedItems();
     final nextItem = _peekNextQueueItem();
     if (nextItem == null) {
       // 队列空了，清 standby
@@ -86,8 +88,6 @@ class PlaybackSlotManager extends ChangeNotifier {
       }
       return;
     }
-
-    _prefetchQueuedItems();
 
     final nextId = nextItem.song.id;
     // 如果 standby 已经是同一首且 ready/preparing，不重复准备
@@ -107,13 +107,24 @@ class PlaybackSlotManager extends ChangeNotifier {
     final items = _queueService.items;
     final limit =
         items.length < _prefetchLookahead ? items.length : _prefetchLookahead;
+    final nextPrefetchedIds = <String>{
+      for (var i = 0; i < limit; i++) items[i].song.id,
+    };
+    for (final songId in _prefetchedSongIds.difference(nextPrefetchedIds)) {
+      if (songId != _activeSlot?.songId) {
+        cache.setSongPriority(songId, 4);
+      }
+    }
     for (var i = 0; i < limit; i++) {
       final song = items[i].song;
       // priority: 0=active, 1=standby, 2+i=queue
-      final priority = i.clamp(0, 3);
+      final priority = (i + 1).clamp(1, 3);
       cache.setSongPriority(song.id, priority);
       cache.prefetchPlaybackAssets(song);
     }
+    _prefetchedSongIds
+      ..clear()
+      ..addAll(nextPrefetchedIds);
   }
 
   // ── 准备 standby ──────────────────────────────────────────────
@@ -127,6 +138,12 @@ class PlaybackSlotManager extends ChangeNotifier {
       ..song = item.song
       ..priority = 1; // standby = 1
 
+    final previousStandbyId = _standbySlot?.songId;
+    if (previousStandbyId != null &&
+        previousStandbyId != item.song.id &&
+        previousStandbyId != _activeSlot?.songId) {
+      _assetCache?.setSongPriority(previousStandbyId, 4);
+    }
     _standbySlot = slot;
     notifyListeners();
 
@@ -185,6 +202,10 @@ class PlaybackSlotManager extends ChangeNotifier {
     if (!standby.isReady) return null;
     if (standby.songId != nextSongId) return null;
 
+    final previousActiveId = _activeSlot?.songId;
+    if (previousActiveId != null && previousActiveId != nextSongId) {
+      _assetCache?.setSongPriority(previousActiveId, 4);
+    }
     _activeSlot = standby;
     _activeSlot!.priority = 0;
     _assetCache?.setSongPriority(_activeSlot!.songId, 0);
@@ -202,6 +223,10 @@ class PlaybackSlotManager extends ChangeNotifier {
   /// 当 standby 未就绪时，创建一个标记为 empty 的 active slot。
   /// 调用方之后需要走完整下载+加载流程。
   PlaybackSlot createFallbackActive(String songId, Song song) {
+    final previousActiveId = _activeSlot?.songId;
+    if (previousActiveId != null && previousActiveId != songId) {
+      _assetCache?.setSongPriority(previousActiveId, 4);
+    }
     _activeSlot = PlaybackSlot(songId: songId)
       ..song = song
       ..state = SlotState.empty

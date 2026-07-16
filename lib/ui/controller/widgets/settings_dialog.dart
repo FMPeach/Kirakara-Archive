@@ -19,7 +19,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   late final TextEditingController _announcementController;
   late Future<int> _cacheSize;
   bool _savingAnnouncement = false;
-  bool _savingCacheDirectory = false;
   bool _startingLan = false;
 
   @override
@@ -51,35 +50,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     await widget.settingsService
         .setCustomAnnouncement(_announcementController.text);
     if (mounted) setState(() => _savingAnnouncement = false);
-  }
-
-  Future<void> _changeCacheDirectory() async {
-    setState(() => _savingCacheDirectory = true);
-    try {
-      final path = await FilePicker.getDirectoryPath(
-        dialogTitle: '选择缓存目录',
-        initialDirectory: widget.settingsService.cacheDirectoryPath,
-        lockParentWindow: Platform.isWindows,
-      );
-      if (path == null || path.trim().isEmpty) return;
-      final directory = Directory(path).absolute;
-      directory.createSync(recursive: true);
-      await widget.settingsService.setCacheDirectoryPath(directory.path);
-      if (mounted) {
-        setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('缓存目录将在下次启动时生效')),
-        );
-      }
-    } on FileSystemException catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('无法使用该目录：${error.message}')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _savingCacheDirectory = false);
-    }
   }
 
   Future<void> _startLanServer() async {
@@ -213,28 +183,10 @@ class _SettingsDialogState extends State<_SettingsDialog> {
             style: TextStyle(
                 color: KiraColors.muted, fontWeight: FontWeight.w700)),
         subtitle: Text(
-          widget.settingsService.cacheDirectoryPath,
+          widget.assetCache.cacheDirectoryPath,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(color: KiraColors.muted, fontSize: 11),
-        ),
-        trailing: FilledButton(
-          onPressed: _savingCacheDirectory ? null : _changeCacheDirectory,
-          style: FilledButton.styleFrom(
-            backgroundColor: KiraColors.surface3,
-            foregroundColor: KiraColors.cream,
-            side: const BorderSide(color: KiraColors.lineStrong),
-            elevation: 0,
-            minimumSize: const Size(84, 40),
-            padding: const EdgeInsets.symmetric(horizontal: 18),
-          ),
-          child: _savingCacheDirectory
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('更改…'),
         ),
       ),
       ListTile(

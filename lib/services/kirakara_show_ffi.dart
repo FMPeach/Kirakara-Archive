@@ -44,6 +44,7 @@ typedef PrepareNextNative = Bool Function(
 typedef PlayNative = Void Function(ShowHostHandle);
 typedef PauseNative = Void Function(ShowHostHandle);
 typedef StopNative = Void Function(ShowHostHandle);
+typedef ReplayNative = Void Function(ShowHostHandle);
 typedef SeekNative = Void Function(ShowHostHandle, Double);
 typedef SetVolumeNative = Void Function(ShowHostHandle, Int32);
 typedef SetKeyNative = Void Function(ShowHostHandle, Int32);
@@ -123,6 +124,7 @@ typedef _PrepareNext = bool Function(
 typedef _Play = void Function(ShowHostHandle);
 typedef _Pause = void Function(ShowHostHandle);
 typedef _Stop = void Function(ShowHostHandle);
+typedef _Replay = void Function(ShowHostHandle);
 typedef _Seek = void Function(ShowHostHandle, double);
 typedef _SetVolume = void Function(ShowHostHandle, int);
 typedef _SetKey = void Function(ShowHostHandle, int);
@@ -183,6 +185,7 @@ class KirakaraShowFFI {
   late final _Play _play;
   late final _Pause _pause;
   late final _Stop _stop;
+  _Replay? _replay;
   late final _Seek _seek;
   late final _SetVolume _setVolume;
   late final _SetKey _setKey;
@@ -239,6 +242,14 @@ class KirakaraShowFFI {
     _play = _dylib.lookupFunction<PlayNative, _Play>('show_host_play');
     _pause = _dylib.lookupFunction<PauseNative, _Pause>('show_host_pause');
     _stop = _dylib.lookupFunction<StopNative, _Stop>('show_host_stop');
+    try {
+      _replay = _dylib.lookupFunction<ReplayNative, _Replay>(
+        'show_host_replay',
+      );
+    } on ArgumentError {
+      // Pre-title Show builds do not export program-level replay.
+      _replay = null;
+    }
     _seek = _dylib.lookupFunction<SeekNative, _Seek>('show_host_seek');
     _setVolume = _dylib.lookupFunction<SetVolumeNative, _SetVolume>(
       'show_host_set_volume',
@@ -387,6 +398,13 @@ class KirakaraShowFFI {
   void play() => _play(_handle);
   void pause() => _pause(_handle);
   void stop() => _stop(_handle);
+  bool replay() {
+    final replay = _replay;
+    if (replay == null) return false;
+    replay(_handle);
+    return true;
+  }
+
   void seek(double seconds) => _seek(_handle, seconds);
   void setVolume(int volumePercent) => _setVolume(_handle, volumePercent);
   void setKeySemitones(int keySemitones) => _setKey(_handle, keySemitones);

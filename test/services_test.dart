@@ -173,10 +173,17 @@ class _FakeAssetHttpClient extends http.BaseClient {
 }
 
 class _ConcurrentVideoHttpClient extends http.BaseClient {
-  final List<Completer<void>> started =
-      List.generate(4, (_) => Completer<void>());
-  final List<Completer<void>> release =
-      List.generate(4, (_) => Completer<void>());
+  _ConcurrentVideoHttpClient({int count = 4, this.resumableIndex})
+      : started = List.generate(count, (_) => Completer<void>()),
+        release = List.generate(count, (_) => Completer<void>()),
+        requestCount = List.filled(count, 0),
+        requestRanges = List.generate(count, (_) => <String?>[]);
+
+  final int? resumableIndex;
+  final List<Completer<void>> started;
+  final List<Completer<void>> release;
+  final List<int> requestCount;
+  final List<List<String?>> requestRanges;
   int active = 0;
   int maxActive = 0;
 
@@ -194,16 +201,68 @@ class _ConcurrentVideoHttpClient extends http.BaseClient {
     }
 
     final index = int.parse(match.group(1)!);
+    requestCount[index]++;
+    final range = request.headers[HttpHeaders.rangeHeader];
+    requestRanges[index].add(range);
     active++;
     if (active > maxActive) maxActive = active;
     if (!started[index].isCompleted) started[index].complete();
 
-    final controller = StreamController<List<int>>();
+    var finished = false;
+    void finish() {
+      if (finished) return;
+      finished = true;
+      active--;
+    }
+
+    late final StreamController<List<int>> controller;
+    controller = StreamController<List<int>>(onCancel: finish);
+    if (index == resumableIndex) {
+      if (range != null) {
+        final start = int.parse(
+          RegExp(r'bytes=(\d+)-').firstMatch(range)!.group(1)!,
+        );
+        final remaining = 4 - start;
+        unawaited(() async {
+          controller.add(List<int>.filled(remaining, 9));
+          unawaited(controller.close());
+          finish();
+        }());
+        return http.StreamedResponse(
+          controller.stream,
+          HttpStatus.partialContent,
+          contentLength: remaining,
+          headers: {
+            HttpHeaders.acceptRangesHeader: 'bytes',
+            HttpHeaders.contentLengthHeader: '$remaining',
+            HttpHeaders.contentRangeHeader: 'bytes $start-3/4',
+          },
+        );
+      }
+      unawaited(() async {
+        controller.add([1, 2]);
+        await release[index].future;
+        if (!controller.isClosed) {
+          controller.add([3, 4]);
+          unawaited(controller.close());
+        }
+        finish();
+      }());
+      return http.StreamedResponse(
+        controller.stream,
+        HttpStatus.ok,
+        contentLength: 4,
+        headers: {HttpHeaders.contentLengthHeader: '4'},
+      );
+    }
+
     unawaited(() async {
       await release[index].future;
-      controller.add([index, index + 1]);
-      await controller.close();
-      active--;
+      if (!controller.isClosed) {
+        controller.add([index, index + 1]);
+        unawaited(controller.close());
+      }
+      finish();
     }());
 
     return http.StreamedResponse(
@@ -242,6 +301,20 @@ void main() {
 
     playback.toggleAudioTrack();
     expect(playback.state.audioTrackMode, AudioTrackMode.accompaniment);
+  });
+
+  test('replay emits a distinct command even when already at zero', () {
+    final playback = PlaybackService(queueService: QueueService());
+    addTearDown(playback.disposeService);
+
+    expect(playback.replayRevision, 0);
+    playback.replay();
+    expect(playback.replayRevision, 1);
+    expect(playback.state.position, Duration.zero);
+    expect(playback.state.isPlaying, isTrue);
+
+    playback.replay();
+    expect(playback.replayRevision, 2);
   });
 
   test('starting a queued song consumes it instead of duplicating up next', () {
@@ -648,8 +721,8 @@ void main() {
     }
   });
 
-  test('playback cache limits background video downloads to three', () async {
-    final client = _ConcurrentVideoHttpClient();
+  test('playback cache pulls fifteen mixed assets concurrently', () async {
+    final client = _ConcurrentVideoHttpClient(count: 15);
     final cacheDir =
         await Directory.systemTemp.createTemp('kirakara_cache_test_');
     addTearDown(() {
@@ -663,39 +736,129 @@ void main() {
     );
     addTearDown(cache.dispose);
 
-    for (var i = 0; i < 4; i++) {
-      cache.prefetchPlaybackAssets(
-        Song(
-          id: 'video-limit-$i',
-          title: 'Video Limit $i',
-          category: 'Test',
-          assets: [
+    const assetTypes = [
+      MediaAssetType.video,
+      MediaAssetType.vocal,
+      MediaAssetType.accompaniment,
+      MediaAssetType.lyric,
+      MediaAssetType.cover,
+    ];
+    for (var songIndex = 0; songIndex < 3; songIndex++) {
+      final song = Song(
+        id: 'parallel-song-$songIndex',
+        title: 'Parallel Song $songIndex',
+        category: 'Test',
+        assets: [
+          for (var assetIndex = 0; assetIndex < assetTypes.length; assetIndex++)
             MediaAsset(
-              id: 'video-limit-$i',
-              type: MediaAssetType.video,
-              uri: Uri.parse('/media/video$i.mp4'),
+              id: 'parallel-$songIndex-$assetIndex',
+              type: assetTypes[assetIndex],
+              uri: Uri.parse(
+                '/media/video${songIndex * assetTypes.length + assetIndex}.mp4',
+              ),
             ),
-          ],
-        ),
+        ],
       );
+      cache
+        ..setSongPriority(song.id, songIndex)
+        ..prefetchPlaybackAssets(song);
     }
 
-    await Future.wait(client.started.take(3).map((c) => c.future))
+    await Future.wait(client.started.map((c) => c.future))
         .timeout(const Duration(seconds: 1));
-    expect(client.started[3].isCompleted, isFalse);
-    expect(client.maxActive, 3);
+    expect(client.maxActive, 15);
+    expect(client.requestCount, everyElement(1));
 
-    client.release[0].complete();
-    await client.started[3].future.timeout(const Duration(seconds: 1));
-    expect(client.maxActive, 3);
+    for (final release in client.release) {
+      release.complete();
+    }
+    for (var i = 0; i < 40 && client.active > 0; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    expect(
+      client.active,
+      0,
+      reason: 'requests=${client.requestCount}',
+    );
+  });
 
-    for (var i = 1; i < 4; i++) {
+  test('promoted asset preempts and reconnects the latest lowest priority',
+      () async {
+    final client = _ConcurrentVideoHttpClient(count: 16, resumableIndex: 14);
+    final cacheDir =
+        await Directory.systemTemp.createTemp('kirakara_cache_test_');
+    addTearDown(() {
+      if (cacheDir.existsSync()) cacheDir.deleteSync(recursive: true);
+    });
+    final cache = PlaybackAssetCache(
+      baseUrl: 'http://catalog.test',
+      cacheDir: cacheDir,
+      httpClient: client,
+      mediaHttpClient: client,
+    );
+    addTearDown(cache.dispose);
+
+    final lowPriority = Song(
+      id: 'low-priority',
+      title: 'Low Priority',
+      category: 'Test',
+      assets: List.generate(
+        15,
+        (index) => MediaAsset(
+          id: 'low-priority-$index',
+          type: MediaAssetType.video,
+          uri: Uri.parse('/media/video$index.mp4'),
+        ),
+      ),
+    );
+    final promoted = Song(
+      id: 'promoted',
+      title: 'Promoted',
+      category: 'Test',
+      assets: [
+        MediaAsset(
+          id: 'promoted',
+          type: MediaAssetType.video,
+          uri: Uri.parse('/media/video15.mp4'),
+        ),
+      ],
+    );
+    cache
+      ..setSongPriority(lowPriority.id, 3)
+      ..prefetchPlaybackAssets(lowPriority);
+
+    await Future.wait(client.started.take(15).map((c) => c.future))
+        .timeout(const Duration(seconds: 1));
+    for (var i = 0;
+        i < 40 && cache.progressForSong(lowPriority).downloadedBytes < 2;
+        i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    expect(cache.progressForSong(lowPriority).downloadedBytes, 2);
+    cache
+      ..setSongPriority(promoted.id, 0)
+      ..prefetchPlaybackAssets(promoted);
+    await client.started[15].future.timeout(const Duration(seconds: 1));
+
+    client.release[15].complete();
+    for (var i = 0; i < 40 && client.requestCount[14] < 2; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    expect(client.requestCount[14], 2);
+    expect(client.requestRanges[14], [null, 'bytes=2-']);
+    expect(client.requestCount.take(14), everyElement(1));
+
+    for (var i = 0; i < 15; i++) {
       client.release[i].complete();
     }
     for (var i = 0; i < 40 && client.active > 0; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 25));
     }
-    expect(client.active, 0);
+    expect(
+      client.active,
+      0,
+      reason: 'requests=${client.requestCount}',
+    );
   });
 
   test('playback cache proxies far-ahead video ranges instead of waiting',

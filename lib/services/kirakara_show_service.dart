@@ -39,6 +39,7 @@ class KirakaraShowService extends ChangeNotifier {
   bool _started = false;
   bool _applyingEnginePosition = false;
   bool _controllerPreviewSuppressed = false;
+  int _lastReplayRevision = 0;
   int _prepareGeneration = 0;
   String? _nativePreparedSongId;
   int? _nativePreparedSlotGeneration;
@@ -134,6 +135,7 @@ class KirakaraShowService extends ChangeNotifier {
       _lastKey = null;
       _lastCompletedItemId = null;
       _sawEngineProgressForItem = false;
+      _lastReplayRevision = _playbackService.replayRevision;
       _enginePosition = Duration.zero;
       _engineDuration = Duration.zero;
       _setBuffering(false);
@@ -141,11 +143,19 @@ class KirakaraShowService extends ChangeNotifier {
     }
 
     if (_loadedItemId != item.id || _loadedSongId != item.song.id) {
+      // A replay requested while the item is still loading is naturally
+      // satisfied by that initial load, which already starts at its title.
+      _lastReplayRevision = _playbackService.replayRevision;
       _trySlotSwapOrPrepare(item);
       return;
     }
 
     _syncAudioTrack(ffi, state);
+    if (_lastReplayRevision != _playbackService.replayRevision) {
+      _lastReplayRevision = _playbackService.replayRevision;
+      _replayCurrentProgram(ffi);
+      return;
+    }
     final justLoaded = _lastPlaying == null;
     if (!justLoaded) {
       _syncRequestedPosition(ffi, state);
@@ -531,6 +541,20 @@ class KirakaraShowService extends ChangeNotifier {
     _lastKey = key;
   }
 
+  void _replayCurrentProgram(KirakaraShowFFI ffi) {
+    // New title-aware engines restart the whole program, including the
+    // negative title timeline. Older DLLs lack this optional export and keep
+    // their established media-zero behavior.
+    if (!ffi.replay()) {
+      ffi.seek(0.0);
+      ffi.play();
+    }
+    _enginePosition = Duration.zero;
+    _lastCompletedItemId = null;
+    _sawEngineProgressForItem = false;
+    _lastPlaying = true;
+  }
+
   void _syncRequestedPosition(
     KirakaraShowFFI ffi,
     PlaybackState state,
@@ -570,8 +594,7 @@ class KirakaraShowService extends ChangeNotifier {
 
     if (_engineDuration <= Duration.zero) return false;
     if (_enginePosition < const Duration(seconds: 1)) return false;
-    return _enginePosition + const Duration(milliseconds: 450) >=
-        _engineDuration;
+    return _enginePosition >= _engineDuration;
   }
 
   void _advanceAfterEngineEnd() {

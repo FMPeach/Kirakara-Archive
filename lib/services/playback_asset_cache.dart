@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -81,7 +80,9 @@ class PlaybackAssetCache extends ChangeNotifier {
   final Map<String, Future<void>> _downloads = {};
   final Map<String, MediaAsset> _streamAssets = {};
   final Map<String, _DownloadState> _downloadStates = {};
-  final _AsyncPermitPool _videoDownloadPool = _AsyncPermitPool(3);
+  final Map<String, int> _songPriorities = {};
+  final _AsyncPreemptivePermitPool _downloadConnectionPool =
+      _AsyncPreemptivePermitPool(15);
   HttpServer? _streamServer;
   Future<HttpServer>? _streamServerFuture;
   bool _disposed = false;
@@ -106,7 +107,8 @@ class PlaybackAssetCache extends ChangeNotifier {
   /// 确保歌曲全部 assets 完整下载。完成后回填 [MediaAsset.cachedPath] 和
   /// [song.lyricProject.cachedPath]。
   Future<void> ensureSongAssets(Song song) async {
-    await Future.wait(song.assets.map(_ensureOne));
+    _songPriorities.putIfAbsent(song.id, () => 0);
+    await Future.wait(song.assets.map((asset) => _ensureOne(song.id, asset)));
     _syncLyricProject(song);
   }
 
@@ -118,22 +120,23 @@ class PlaybackAssetCache extends ChangeNotifier {
     Song song, {
     bool awaitAudio = true,
   }) async {
+    _songPriorities.putIfAbsent(song.id, () => 0);
     final blocking = <Future<void>>[];
     final videos = <MediaAsset>[];
     for (final asset in song.assets) {
       if (!_isPlaybackAsset(asset)) continue;
       if (asset.type == MediaAssetType.video) {
         videos.add(asset);
-        unawaited(_ensureOne(asset, background: true));
+        unawaited(_ensureOne(song.id, asset, background: true));
       } else if (_isAudio(asset.type)) {
-        final task = _ensureOne(asset);
+        final task = _ensureOne(song.id, asset);
         if (awaitAudio) {
           blocking.add(task);
         } else {
           unawaited(task);
         }
       } else {
-        blocking.add(_ensureOne(asset));
+        blocking.add(_ensureOne(song.id, asset));
       }
     }
     final streamVideos = videos
@@ -155,13 +158,14 @@ class PlaybackAssetCache extends ChangeNotifier {
   /// 落到这首歌时，[ensurePlaybackAssets] 会复用同一个下载任务并等待
   /// 音频/KRL 等必要资源完整落盘。
   void prefetchPlaybackAssets(Song song) {
+    _songPriorities.putIfAbsent(song.id, () => 2);
     final videos = <MediaAsset>[];
     for (final asset in song.assets) {
       if (!_isPlaybackAsset(asset)) continue;
       if (asset.type == MediaAssetType.video) {
         videos.add(asset);
       }
-      unawaited(_ensureOne(asset, background: true));
+      unawaited(_ensureOne(song.id, asset, background: true));
     }
     final streamVideos = videos
         .where((asset) => existingLocalPathFor(asset) == null)
@@ -180,10 +184,14 @@ class PlaybackAssetCache extends ChangeNotifier {
     prefetchPlaybackAssets(song);
   }
 
-  /// 设置歌曲下载优先级。保留接口给 UI/slot manager 调用；当前下载层只按
-  /// asset/url 去重，不再做独占门控，避免播放中任务阻塞其它预热。
+  /// 设置歌曲下载优先级：0=当前播放，1=standby，数值越大越靠后。
+  ///
+  /// 只要 15 连接池尚未占满，不同歌曲及其全部资源都会同时请求、持续拉取
+  /// 并写盘。池满后优先级才参与排队；提权会抢占最新、最低优先级连接，
+  /// 被抢占资源保留 `.part` 并稍后 Range 续传。
   void setSongPriority(String songId, int priority) {
-    // no-op
+    _songPriorities[songId] = priority < 0 ? 0 : priority;
+    _downloadConnectionPool.prioritiesChanged();
   }
 
   /// 歌曲所有已知 asset 是否已完整缓存。
@@ -289,6 +297,7 @@ class PlaybackAssetCache extends ChangeNotifier {
   }
 
   Future<void> _ensureOne(
+    String songId,
     MediaAsset asset, {
     bool background = false,
   }) {
@@ -324,6 +333,7 @@ class PlaybackAssetCache extends ChangeNotifier {
 
     late final Future<void> future;
     future = _ensureOneDownload(
+      songId: songId,
       url: url,
       localPath: localPath,
       asset: asset,
@@ -338,23 +348,35 @@ class PlaybackAssetCache extends ChangeNotifier {
   }
 
   Future<void> _ensureOneDownload({
+    required String songId,
     required String url,
     required String localPath,
     required MediaAsset asset,
     required http.Client client,
   }) async {
-    if (asset.type != MediaAssetType.video) {
-      if (await _hydrateCachedAsset(asset, localPath)) return;
-      await _downloadToCache(url, localPath, asset, client: client);
-      return;
-    }
+    if (await _hydrateCachedAsset(asset, localPath)) return;
 
-    final release = await _videoDownloadPool.acquire();
-    try {
-      if (await _hydrateCachedAsset(asset, localPath)) return;
-      await _downloadToCache(url, localPath, asset, client: client);
-    } finally {
-      release();
+    while (!_disposed) {
+      final connectionLease = await _downloadConnectionPool.acquire(
+        priority: () => _songPriorities[songId] ?? 2,
+      );
+      try {
+        if (_disposed) return;
+        if (await _hydrateCachedAsset(asset, localPath)) return;
+        final result = await _downloadToCache(
+          url,
+          localPath,
+          asset,
+          client: client,
+          connectionLease: connectionLease,
+        );
+        if (result != _DownloadAttemptResult.preempted) return;
+      } finally {
+        connectionLease.release();
+      }
+      // Re-enter the priority queue. The existing `.part` file is preserved,
+      // so the next attempt resumes with an HTTP Range request.
+      await Future<void>.delayed(Duration.zero);
     }
   }
 
@@ -391,13 +413,17 @@ class PlaybackAssetCache extends ChangeNotifier {
     );
   }
 
-  Future<void> _downloadToCache(
+  Future<_DownloadAttemptResult> _downloadToCache(
     String url,
     String localPath,
     MediaAsset asset, {
     required http.Client client,
+    required _PreemptiblePermitLease connectionLease,
   }) async {
     try {
+      if (connectionLease.preemptRequested) {
+        return _DownloadAttemptResult.preempted;
+      }
       final localFile = File(localPath);
       final partFile = File('$localPath.part');
       final state = _downloadStateFor(asset);
@@ -411,6 +437,10 @@ class PlaybackAssetCache extends ChangeNotifier {
       }
 
       final response = await client.send(request);
+      if (connectionLease.preemptRequested) {
+        await response.stream.listen((_) {}).cancel();
+        return _DownloadAttemptResult.preempted;
+      }
       if (response.statusCode == HttpStatus.requestedRangeNotSatisfiable) {
         if (existingBytes > 0) {
           state.complete = true;
@@ -419,7 +449,7 @@ class PlaybackAssetCache extends ChangeNotifier {
           _notifyProgressListeners();
           await _promoteCompletedPart(asset, partFile);
         }
-        return;
+        return _DownloadAttemptResult.finished;
       }
       if (response.statusCode != HttpStatus.ok &&
           response.statusCode != HttpStatus.partialContent) {
@@ -429,7 +459,7 @@ class PlaybackAssetCache extends ChangeNotifier {
         state.totalLength = 0;
         state.downloadedBytes = 0;
         _notifyProgressListeners();
-        return;
+        return _DownloadAttemptResult.finished;
       }
 
       final append =
@@ -447,16 +477,38 @@ class PlaybackAssetCache extends ChangeNotifier {
       final writer = await partFile.open(
         mode: append ? FileMode.append : FileMode.write,
       );
+      final iterator = StreamIterator<List<int>>(response.stream);
+      var preempted = false;
       try {
-        await for (final chunk in response.stream) {
+        while (true) {
+          if (connectionLease.preemptRequested) {
+            preempted = true;
+            break;
+          }
+          final read = await Future.any<({bool preempted, bool hasNext})>([
+            iterator.moveNext().then(
+                  (hasNext) => (preempted: false, hasNext: hasNext),
+                ),
+            connectionLease.whenPreempted.then(
+              (_) => (preempted: true, hasNext: false),
+            ),
+          ]);
+          if (read.preempted || connectionLease.preemptRequested) {
+            preempted = true;
+            break;
+          }
+          if (!read.hasNext) break;
+          final chunk = iterator.current;
           await writer.writeFrom(chunk);
           state.downloadedBytes += chunk.length;
           state.markSample(state.downloadedBytes);
           _notifyProgressListeners();
         }
       } finally {
+        await iterator.cancel();
         await writer.close();
       }
+      if (preempted) return _DownloadAttemptResult.preempted;
 
       final expectedLength = _expectedLength(response, existingBytes);
       final actualLength = await partFile.length();
@@ -471,8 +523,12 @@ class PlaybackAssetCache extends ChangeNotifier {
         _notifyProgressListeners();
         await _promoteCompletedPart(asset, partFile);
       }
+      return _DownloadAttemptResult.finished;
     } catch (_) {
       // 下载失败，asset.cachedPath 保持 null
+      return connectionLease.preemptRequested
+          ? _DownloadAttemptResult.preempted
+          : _DownloadAttemptResult.finished;
     }
   }
 
@@ -905,6 +961,7 @@ class PlaybackAssetCache extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _downloadConnectionPool.dispose();
     _http.close();
     _mediaHttp.close();
     unawaited(_streamServer?.close(force: true));
@@ -939,32 +996,158 @@ class _DownloadState {
   }
 }
 
-class _AsyncPermitPool {
-  _AsyncPermitPool(this._limit);
+enum _DownloadAttemptResult { finished, preempted }
+
+/// 全资源并发池。正常最多允许 15 条响应流同时拉取并写盘。
+///
+/// 如果池已满而更高优先级任务正在等待，最新、最低优先级的活动连接会收到
+/// 抢占信号。下载循环随即取消响应流并保留 `.part`，重新排队后通过 Range
+/// 继续拉取。
+class _AsyncPreemptivePermitPool {
+  _AsyncPreemptivePermitPool(this._limit);
 
   final int _limit;
-  final Queue<Completer<void>> _waiters = Queue<Completer<void>>();
-  int _active = 0;
+  final List<_PreemptivePermitRequest> _waiters = [];
+  final Set<_PreemptiblePermitLease> _active = {};
+  int _sequence = 0;
+  bool _disposed = false;
 
-  Future<void Function()> acquire() async {
-    if (_active < _limit && _waiters.isEmpty) {
-      _active++;
-    } else {
-      final waiter = Completer<void>();
-      _waiters.add(waiter);
-      await waiter.future;
+  Future<_PreemptiblePermitLease> acquire({
+    required int Function() priority,
+  }) {
+    if (_disposed) {
+      return Future.value(_PreemptiblePermitLease.cancelled(priority));
     }
-    var released = false;
-    return () {
-      if (released) return;
-      released = true;
-      if (_waiters.isNotEmpty) {
-        _waiters.removeFirst().complete();
-      } else {
-        _active--;
-      }
-    };
+    final request = _PreemptivePermitRequest(
+      priority: priority,
+      sequence: _sequence++,
+    );
+    _waiters.add(request);
+    _schedule();
+    return request.completer.future;
   }
+
+  void prioritiesChanged() => _schedule();
+
+  void _schedule() {
+    if (_disposed) return;
+    _sortWaiters();
+
+    while (_active.length < _limit && _waiters.isNotEmpty) {
+      final request = _waiters.removeAt(0);
+      late final _PreemptiblePermitLease lease;
+      lease = _PreemptiblePermitLease(
+        priority: request.priority,
+        sequence: request.sequence,
+        onRelease: () {
+          if (_active.remove(lease)) _schedule();
+        },
+      );
+      _active.add(lease);
+      request.completer.complete(lease);
+    }
+
+    if (_waiters.isEmpty || _active.length < _limit) return;
+    _requestPreemptions();
+  }
+
+  void _sortWaiters() {
+    _waiters.sort((a, b) {
+      final byPriority = a.priority().compareTo(b.priority());
+      return byPriority != 0 ? byPriority : a.sequence.compareTo(b.sequence);
+    });
+  }
+
+  void _requestPreemptions() {
+    final pendingPreemptions =
+        _active.where((lease) => lease.preemptRequested).length;
+    if (pendingPreemptions >= _waiters.length) return;
+
+    final candidates = _active
+        .where((lease) => !lease.preemptRequested)
+        .toList(growable: false)
+      ..sort((a, b) {
+        final byPriority = b.priority().compareTo(a.priority());
+        return byPriority != 0 ? byPriority : b.sequence.compareTo(a.sequence);
+      });
+    final unmatchedWaiters = _waiters.skip(pendingPreemptions).toList();
+    final count = candidates.length < unmatchedWaiters.length
+        ? candidates.length
+        : unmatchedWaiters.length;
+    for (var i = 0; i < count; i++) {
+      final waiter = unmatchedWaiters[i];
+      final active = candidates[i];
+      if (waiter.priority() >= active.priority()) break;
+      active.requestPreempt();
+    }
+  }
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    for (final lease in _active) {
+      lease.requestPreempt();
+    }
+    for (final request in _waiters) {
+      if (!request.completer.isCompleted) {
+        request.completer.complete(
+          _PreemptiblePermitLease.cancelled(request.priority),
+        );
+      }
+    }
+    _waiters.clear();
+  }
+}
+
+class _PreemptivePermitRequest {
+  _PreemptivePermitRequest({
+    required this.priority,
+    required this.sequence,
+  });
+
+  final int Function() priority;
+  final int sequence;
+  final Completer<_PreemptiblePermitLease> completer =
+      Completer<_PreemptiblePermitLease>();
+}
+
+class _PreemptiblePermitLease {
+  _PreemptiblePermitLease({
+    required this.priority,
+    required this.sequence,
+    required void Function() onRelease,
+  }) : _onRelease = onRelease;
+
+  _PreemptiblePermitLease.cancelled(this.priority)
+      : sequence = -1,
+        _onRelease = _noop,
+        _preemptRequested = true {
+    _preempted.complete();
+  }
+
+  final int Function() priority;
+  final int sequence;
+  final void Function() _onRelease;
+  final Completer<void> _preempted = Completer<void>();
+  bool _preemptRequested = false;
+  bool _released = false;
+
+  bool get preemptRequested => _preemptRequested;
+  Future<void> get whenPreempted => _preempted.future;
+
+  void requestPreempt() {
+    if (_preemptRequested) return;
+    _preemptRequested = true;
+    _preempted.complete();
+  }
+
+  void release() {
+    if (_released) return;
+    _released = true;
+    _onRelease();
+  }
+
+  static void _noop() {}
 }
 
 class PlaybackAssetProgress {

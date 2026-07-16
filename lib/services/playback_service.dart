@@ -15,8 +15,10 @@ class PlaybackService extends ChangeNotifier {
   final QueueService _queueService;
   PlaybackState _state;
   int _directSequence = 0;
+  int _replayRevision = 0;
 
   PlaybackState get state => _state;
+  int get replayRevision => _replayRevision;
 
   void disposeService() {}
 
@@ -33,6 +35,7 @@ class PlaybackService extends ChangeNotifier {
   }
 
   void replay() {
+    _replayRevision++;
     _setState(
       _state.copyWith(
         position: Duration.zero,
