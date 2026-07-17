@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kirakara_app/app/kirakara_app.dart';
 import 'package:kirakara_app/ui/widgets/kira_design_canvas.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   testWidgets('Kirakara controller shell renders', (tester) async {
@@ -101,6 +102,40 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('番剧 OP / ED / 插曲'), findsOneWidget);
     expect(find.text('在当前分类中搜索歌曲、歌手、编号'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('long ticker keeps a clear gap between repeated runs',
+      (tester) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({
+      'custom_announcement': List.filled(
+        10,
+        '欢迎使用 Kira Karaoke，请使用手机点歌并留意下一首歌曲',
+      ).join('，'),
+    });
+
+    await tester.pumpWidget(const KirakaraApp(databasePath: ':memory:'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final leading = find.byKey(const ValueKey('marquee-leading-run'));
+    final trailing = find.byKey(const ValueKey('marquee-trailing-run'));
+    expect(leading, findsOneWidget);
+    expect(trailing, findsOneWidget);
+
+    void expectRunGap() {
+      final leadingRect = tester.getRect(leading);
+      final trailingRect = tester.getRect(trailing);
+      expect(trailingRect.left - leadingRect.right, greaterThanOrEqualTo(95));
+    }
+
+    expectRunGap();
+    await tester.pump(const Duration(seconds: 12));
+    expectRunGap();
     expect(tester.takeException(), isNull);
   });
 }

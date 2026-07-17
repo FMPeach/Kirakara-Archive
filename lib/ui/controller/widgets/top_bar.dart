@@ -263,7 +263,7 @@ class _MarqueeTextState extends State<_MarqueeText>
           );
         }
 
-        const gap = 80.0;
+        const gap = 96.0;
         final distance = textWidth + gap;
         final duration = Duration(
           milliseconds: (distance / 68 * 1000).round().clamp(5000, 30000),
@@ -276,26 +276,39 @@ class _MarqueeTextState extends State<_MarqueeText>
 
         return ClipRect(
           child: SizedBox.expand(
-            child: AnimatedBuilder(
-              animation: _controller,
-              builder: (context, _) {
-                final offset = -distance * _controller.value;
-                return Stack(
-                  clipBehavior: Clip.none,
+            child: OverflowBox(
+              alignment: Alignment.centerLeft,
+              minWidth: 0,
+              maxWidth: double.infinity,
+              child: AnimatedBuilder(
+                animation: _controller,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    _MarqueePositionedRun(
-                      offset: offset,
+                    _MarqueeTextRun(
+                      key: const ValueKey('marquee-leading-run'),
                       text: widget.text,
                       style: widget.style,
                     ),
-                    _MarqueePositionedRun(
-                      offset: offset + distance,
+                    const SizedBox(width: gap),
+                    _MarqueeTextRun(
+                      key: const ValueKey('marquee-trailing-run'),
                       text: widget.text,
                       style: widget.style,
                     ),
+                    const SizedBox(width: gap),
                   ],
-                );
-              },
+                ),
+                builder: (context, child) {
+                  return FractionalTranslation(
+                    // The track contains two identical text-and-gap segments.
+                    // Moving by half its actual laid-out width makes the second
+                    // segment land exactly where the first one started.
+                    translation: Offset(-0.5 * _controller.value, 0),
+                    child: child,
+                  );
+                },
+              ),
             ),
           ),
         );
@@ -318,32 +331,9 @@ class _MarqueeTextState extends State<_MarqueeText>
   }
 }
 
-class _MarqueePositionedRun extends StatelessWidget {
-  const _MarqueePositionedRun({
-    required this.offset,
-    required this.text,
-    required this.style,
-  });
-
-  final double offset;
-  final String text;
-  final TextStyle style;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      left: offset,
-      top: 0,
-      bottom: 0,
-      child: Center(
-        child: _MarqueeTextRun(text: text, style: style),
-      ),
-    );
-  }
-}
-
 class _MarqueeTextRun extends StatelessWidget {
   const _MarqueeTextRun({
+    super.key,
     required this.text,
     required this.style,
   });
