@@ -220,6 +220,8 @@ class _MarqueeText extends StatefulWidget {
 
 class _MarqueeTextState extends State<_MarqueeText>
     with SingleTickerProviderStateMixin {
+  static const double _overflowSafetyMargin = 12;
+
   late final AnimationController _controller;
 
   @override
@@ -247,17 +249,19 @@ class _MarqueeTextState extends State<_MarqueeText>
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
+      key: const ValueKey('marquee-viewport'),
       builder: (context, constraints) {
         final textWidth = _measureText(context, widget.text, widget.style);
         final availableWidth = constraints.maxWidth;
         if (!textWidth.isFinite ||
             !availableWidth.isFinite ||
-            textWidth <= availableWidth) {
+            textWidth <= availableWidth - _overflowSafetyMargin) {
           _controller.stop();
           return Text(
+            key: const ValueKey('marquee-static-run'),
             widget.text,
             maxLines: 1,
-            overflow: TextOverflow.visible,
+            overflow: TextOverflow.clip,
             softWrap: false,
             style: widget.style,
           );
@@ -321,13 +325,17 @@ class _MarqueeTextState extends State<_MarqueeText>
     String text,
     TextStyle style,
   ) {
+    final effectiveStyle = DefaultTextStyle.of(context).style.merge(style);
     final painter = TextPainter(
-      text: TextSpan(text: text, style: style),
+      text: TextSpan(text: text, style: effectiveStyle),
       maxLines: 1,
       textDirection: Directionality.of(context),
       textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
     )..layout();
-    return painter.width;
+    final width = painter.width;
+    painter.dispose();
+    return width;
   }
 }
 

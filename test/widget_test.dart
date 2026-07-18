@@ -138,4 +138,88 @@ void main() {
     expectRunGap();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('near-boundary ticker scrolls before punctuation can overflow',
+      (tester) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    SharedPreferences.setMockInitialValues({
+      'custom_announcement': '',
+    });
+
+    await tester.pumpWidget(const TickerMode(
+      enabled: false,
+      child: KirakaraApp(databasePath: ':memory:'),
+    ));
+    await tester.pump();
+
+    await tester.tap(find.text('歌名点歌').first);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final viewport = find.byKey(const ValueKey('marquee-viewport'));
+    final staticRun = find.byKey(const ValueKey('marquee-static-run'));
+    expect(viewport, findsOneWidget);
+    expect(staticRun, findsOneWidget);
+
+    final baseWidget = tester.widget<Text>(staticRun);
+    final baseText = baseWidget.data!;
+    final textContext = tester.element(staticRun);
+    final effectiveStyle =
+        DefaultTextStyle.of(textContext).style.merge(baseWidget.style);
+    final availableWidth = tester.getSize(viewport).width;
+
+    String? boundaryAnnouncement;
+    for (var wideCount = 0;
+        wideCount <= 100 && boundaryAnnouncement == null;
+        wideCount += 1) {
+      for (var narrowCount = 0;
+          narrowCount <= 110 - wideCount;
+          narrowCount += 1) {
+        final announcement = 'MyGO!!!!!'
+            '${List.filled(wideCount, '歌').join()}'
+            '${List.filled(narrowCount, 'i').join()}';
+        final ticker = '$announcement  ·  $baseText';
+        final painter = TextPainter(
+          text: TextSpan(text: ticker, style: effectiveStyle),
+          maxLines: 1,
+          textDirection: Directionality.of(textContext),
+          textScaler: MediaQuery.textScalerOf(textContext),
+          locale: Localizations.maybeLocaleOf(textContext),
+        )..layout();
+        final width = painter.width;
+        painter.dispose();
+        if (width > availableWidth - 12 && width <= availableWidth) {
+          boundaryAnnouncement = announcement;
+          break;
+        }
+      }
+    }
+    expect(boundaryAnnouncement, isNotNull);
+    final announcement = boundaryAnnouncement!;
+    expect(announcement.length, lessThanOrEqualTo(120));
+
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pump();
+    final announcementField = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.hintText == '留空则不显示自定义文字',
+    );
+    expect(announcementField, findsOneWidget);
+    await tester.enterText(announcementField, announcement);
+    await tester.tap(find.text('应用'));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(
+      find.byKey(const ValueKey('marquee-leading-run')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('marquee-trailing-run')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('marquee-static-run')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
