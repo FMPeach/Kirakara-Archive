@@ -7,6 +7,7 @@ import '../domain/media_asset.dart';
 import '../domain/playback_state.dart';
 import '../domain/queue_item.dart';
 import '../domain/song.dart';
+import '../domain/stage_overlay_state.dart';
 import 'kirakara_show_ffi.dart';
 import 'playback_asset_cache.dart';
 import 'playback_service.dart';
@@ -467,6 +468,10 @@ class KirakaraShowService extends ChangeNotifier {
 
   void stopCastStream() {
     _ffi?.stopCastStream();
+  }
+
+  bool setStageOverlayState(StageOverlayState state) {
+    return _ffi?.setStageOverlayState(state) ?? false;
   }
 
   void setControllerQrRect({

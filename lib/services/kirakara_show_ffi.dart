@@ -3,6 +3,38 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
+import '../domain/stage_overlay_state.dart';
+
+final class ShowHostStageOverlayAssetNative extends Struct {
+  @Uint32()
+  external int structSize;
+
+  @Uint32()
+  external int reserved;
+
+  @Uint64()
+  external int contentRevision;
+
+  external Pointer<Utf16> cacheKey;
+  external Pointer<Utf16> localPath;
+}
+
+final class ShowHostStageOverlayStateNative extends Struct {
+  @Uint32()
+  external int structSize;
+
+  @Uint32()
+  external int flags;
+
+  @Uint64()
+  external int revision;
+
+  external Pointer<Utf16> qrPayload;
+  external ShowHostStageOverlayAssetNative qrDecoration;
+  external Pointer<Utf16> announcementText;
+  external ShowHostStageOverlayAssetNative announcementDecoration;
+}
+
 // ── C type aliases ────────────────────────────────────────────────
 
 typedef ShowHostHandle = Pointer<Void>;
@@ -84,6 +116,10 @@ typedef GetHeightNative = Uint32 Function(ShowHostHandle);
 typedef StartCastStreamNative = Bool Function(ShowHostHandle, Uint16);
 typedef GetCastStreamPortNative = Uint16 Function(ShowHostHandle);
 typedef StopCastStreamNative = Void Function(ShowHostHandle);
+typedef SetStageOverlayStateNative = Bool Function(
+  ShowHostHandle,
+  Pointer<ShowHostStageOverlayStateNative>,
+);
 
 // ── Dart function signatures ──────────────────────────────────────
 
@@ -164,6 +200,10 @@ typedef _GetHeight = int Function(ShowHostHandle);
 typedef _StartCastStream = bool Function(ShowHostHandle, int);
 typedef _GetCastStreamPort = int Function(ShowHostHandle);
 typedef _StopCastStream = void Function(ShowHostHandle);
+typedef _SetStageOverlayState = bool Function(
+  ShowHostHandle,
+  Pointer<ShowHostStageOverlayStateNative>,
+);
 
 // ── KirakaraShowFFI ───────────────────────────────────────────────
 
@@ -206,6 +246,7 @@ class KirakaraShowFFI {
   _StartCastStream? _startCastStream;
   _GetCastStreamPort? _getCastStreamPort;
   _StopCastStream? _stopCastStream;
+  _SetStageOverlayState? _setStageOverlayState;
 
   int _width = 0;
   int _height = 0;
@@ -313,6 +354,12 @@ class KirakaraShowFFI {
       _startCastStream = null;
       _getCastStreamPort = null;
       _stopCastStream = null;
+    }
+    try {
+      _setStageOverlayState = _dylib.lookupFunction<SetStageOverlayStateNative,
+          _SetStageOverlayState>('show_host_set_stage_overlay_state');
+    } on ArgumentError {
+      _setStageOverlayState = null;
     }
 
     _handle = _create();
@@ -458,6 +505,54 @@ class KirakaraShowFFI {
       _startCastStream?.call(_handle, port) ?? false;
   int get castStreamPort => _getCastStreamPort?.call(_handle) ?? 0;
   void stopCastStream() => _stopCastStream?.call(_handle);
+
+  bool setStageOverlayState(StageOverlayState state) {
+    final setter = _setStageOverlayState;
+    if (setter == null || !state.isValid) return false;
+
+    final native = calloc<ShowHostStageOverlayStateNative>();
+    final allocations = <Pointer<Utf16>>[];
+    Pointer<Utf16> allocateText(String value) {
+      if (value.isEmpty) return nullptr;
+      final pointer = value.toNativeUtf16();
+      allocations.add(pointer);
+      return pointer;
+    }
+
+    void writeAsset(
+      ShowHostStageOverlayAssetNative target,
+      StageOverlayAsset? asset,
+    ) {
+      target
+        ..structSize = sizeOf<ShowHostStageOverlayAssetNative>()
+        ..reserved = 0
+        ..contentRevision = asset?.contentRevision ?? 0
+        ..cacheKey = allocateText(asset?.cacheKey ?? '')
+        ..localPath = allocateText(asset?.localPath ?? '');
+    }
+
+    try {
+      final value = native.ref;
+      value
+        ..structSize = sizeOf<ShowHostStageOverlayStateNative>()
+        ..flags =
+            (state.qrVisible ? 1 : 0) | (state.announcementVisible ? 2 : 0)
+        ..revision = state.revision
+        ..qrPayload = allocateText(state.qrPayload)
+        ..announcementText = allocateText(state.announcementText);
+      writeAsset(value.qrDecoration, state.qrDecoration);
+      writeAsset(
+        value.announcementDecoration,
+        state.announcementDecoration,
+      );
+      return setter(_handle, native);
+    } finally {
+      for (final pointer in allocations) {
+        calloc.free(pointer);
+      }
+      calloc.free(native);
+    }
+  }
 
   void dispose() {
     _destroy(_handle);
