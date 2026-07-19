@@ -568,8 +568,7 @@ class KirakaraShowFFI {
       if (File(exePath).existsSync()) return exePath;
 
       // 2. Fallback: kirakara-show build directory
-      const showPath =
-          r'D:\仓库\Kirakara Show\build-unified\bin\libshow_host.dll';
+      const showPath = r'D:\仓库\Kirakara Show\build\bin\libshow_host.dll';
       if (File(showPath).existsSync()) return showPath;
 
       // 3. Last resort: PATH

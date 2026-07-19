@@ -193,9 +193,10 @@ struct StageTextureBridge::Impl {
   }
 
   bool EnsureStageDevice() {
-    if (stage_device) {
+    if (stage_device && SUCCEEDED(stage_device->GetDeviceRemovedReason())) {
       return true;
     }
+    stage_device.Reset();
     if (!engine) {
       return false;
     }

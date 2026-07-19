@@ -39,7 +39,7 @@ void main() {
   });
 
   final showDll = File(
-    r'D:\仓库\Kirakara Show\build-unified\bin\libshow_host.dll',
+    r'D:\仓库\Kirakara Show\build\bin\libshow_host.dll',
   );
   test(
     'Windows FFI transports the versioned overlay struct',

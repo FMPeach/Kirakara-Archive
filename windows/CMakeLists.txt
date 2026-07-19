@@ -50,7 +50,7 @@ set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
 
 set(KIRAKARA_SHOW_HOST_DLL
-  "D:/仓库/Kirakara Show/build-unified/bin/libshow_host.dll"
+  "D:/仓库/Kirakara Show/build/bin/libshow_host.dll"
   CACHE FILEPATH "Path to the Kirakara Show host DLL")
 
 # Application build; see runner/CMakeLists.txt.
