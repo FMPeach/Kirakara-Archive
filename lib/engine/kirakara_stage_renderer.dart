@@ -1,8 +1,12 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../domain/playback_state.dart';
 import '../services/kirakara_show_service.dart';
 import '../services/native_window_service.dart';
+import '../services/stage_texture_service.dart';
 import 'stage_renderer.dart';
 
 class KirakaraStageRenderer implements StageRenderer {
@@ -10,10 +14,12 @@ class KirakaraStageRenderer implements StageRenderer {
     required KirakaraShowService showService,
     NativeWindowService nativeWindowService = const NativeWindowService(),
   })  : _showService = showService,
-        _nativeWindowService = nativeWindowService;
+        _nativeWindowService = nativeWindowService,
+        _stageTextureController = StageTextureController();
 
   final KirakaraShowService _showService;
   final NativeWindowService _nativeWindowService;
+  final StageTextureController _stageTextureController;
 
   @override
   Widget buildStage({
@@ -21,10 +27,91 @@ class KirakaraStageRenderer implements StageRenderer {
     required MediaFrame mediaFrame,
     required RenderPreset preset,
   }) {
+    if (Platform.isWindows) {
+      return _KirakaraGpuStageWidget(
+        showService: _showService,
+        textureController: _stageTextureController,
+        nativeWindowService: _nativeWindowService,
+        fallbackColor: mediaFrame.backgroundColor,
+      );
+    }
     return _KirakaraNativeStageWidget(
       showService: _showService,
       nativeWindowService: _nativeWindowService,
       fallbackColor: mediaFrame.backgroundColor,
+    );
+  }
+}
+
+class _KirakaraGpuStageWidget extends StatefulWidget {
+  const _KirakaraGpuStageWidget({
+    required this.showService,
+    required this.textureController,
+    required this.nativeWindowService,
+    required this.fallbackColor,
+  });
+
+  final KirakaraShowService showService;
+  final StageTextureController textureController;
+  final NativeWindowService nativeWindowService;
+  final Color fallbackColor;
+
+  @override
+  State<_KirakaraGpuStageWidget> createState() =>
+      _KirakaraGpuStageWidgetState();
+}
+
+class _KirakaraGpuStageWidgetState extends State<_KirakaraGpuStageWidget> {
+  int? _textureId;
+  bool _useLegacyFallback = false;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_attachTexture());
+  }
+
+  Future<void> _attachTexture() async {
+    final textureId = await widget.textureController.attach(
+      widget.showService.nativeHandleAddress,
+    );
+    if (!mounted) {
+      await widget.textureController.setActive(false);
+      return;
+    }
+    if (textureId == null) {
+      setState(() => _useLegacyFallback = true);
+      return;
+    }
+    widget.showService.hideControllerPreview();
+    await widget.textureController.setActive(true);
+    if (mounted) setState(() => _textureId = textureId);
+  }
+
+  @override
+  void dispose() {
+    unawaited(widget.textureController.setActive(false));
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_useLegacyFallback) {
+      return _KirakaraNativeStageWidget(
+        showService: widget.showService,
+        nativeWindowService: widget.nativeWindowService,
+        fallbackColor: widget.fallbackColor,
+      );
+    }
+    final textureId = _textureId;
+    return ColoredBox(
+      color: Colors.black,
+      child: textureId == null
+          ? const SizedBox.expand()
+          : Texture(
+              textureId: textureId,
+              filterQuality: FilterQuality.high,
+            ),
     );
   }
 }
@@ -216,7 +303,8 @@ class _KirakaraNativeStageWidgetState extends State<_KirakaraNativeStageWidget>
     const qrDesignTop = 90.0;
     final qrSize = (qrDesignSize * ((scaleX + scaleY) / 2)).round();
     final qrRect = _NativePreviewRect(
-      x: ((designSize.width - qrDesignRight - qrDesignSize) * scaleX * dpr).round(),
+      x: ((designSize.width - qrDesignRight - qrDesignSize) * scaleX * dpr)
+          .round(),
       y: (qrDesignTop * scaleY * dpr).round(),
       width: (qrSize * dpr).round().clamp(1, 4096),
       height: (qrSize * dpr).round().clamp(1, 4096),

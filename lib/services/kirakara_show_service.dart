@@ -54,6 +54,7 @@ class KirakaraShowService extends ChangeNotifier {
   Duration get engineDuration => _engineDuration;
   bool get isBuffering => _isBuffering;
   bool get controllerPreviewSuppressed => _controllerPreviewSuppressed;
+  int get nativeHandleAddress => _ffi?.nativeHandleAddress ?? 0;
 
   /// Call this once after the engine DLL is available.
   void start() {

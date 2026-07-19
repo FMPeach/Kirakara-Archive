@@ -22,6 +22,7 @@ add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
   "ime_bridge.cpp"
   "main.cpp"
+  "stage_texture_bridge.cpp"
   "utils.cpp"
   "window_bridge.cpp"
   "win32_window.cpp"
@@ -49,6 +50,7 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "d3d11.lib" "dxgi.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE kirakara_zinnia)
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
