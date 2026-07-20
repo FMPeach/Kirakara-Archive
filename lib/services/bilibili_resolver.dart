@@ -154,11 +154,11 @@ class _HttpResult {
   if (dash != null) {
     final videos = (dash['video'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
-        .where((stream) => _streamUrl(stream) != null)
+        .where((stream) => selectBilibiliStreamUrl(stream) != null)
         .toList();
     final audios = (dash['audio'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
-        .where((stream) => _streamUrl(stream) != null)
+        .where((stream) => selectBilibiliStreamUrl(stream) != null)
         .toList();
     if (videos.isNotEmpty && audios.isNotEmpty) {
       final reportedQuality = (data['quality'] as num?)?.toInt() ?? 0;
@@ -178,8 +178,8 @@ class _HttpResult {
       final audio = audios.first;
       final quality = (video['id'] as num?)?.toInt() ?? reportedQuality;
       return (
-        videoUrl: _streamUrl(video)!,
-        audioUrl: _streamUrl(audio),
+        videoUrl: selectBilibiliStreamUrl(video)!,
+        audioUrl: selectBilibiliStreamUrl(audio),
         quality: quality,
         qualityDesc: _qualityMap[quality] ?? '${quality}P',
       );
@@ -207,9 +207,36 @@ class _HttpResult {
   );
 }
 
-String? _streamUrl(Map<String, dynamic> stream) {
-  final value = stream['baseUrl'] ?? stream['base_url'] ?? stream['url'];
-  return value is String && value.isNotEmpty ? value : null;
+/// Selects a Bilibili DASH URL while avoiding MCDN when a regular CDN mirror
+/// is available. Some networks can resolve MCDN URLs but fail during TLS or
+/// transfer setup, while the matching backup URL remains healthy.
+String? selectBilibiliStreamUrl(Map<String, dynamic> stream) {
+  final candidates = <String>[];
+
+  void addCandidate(dynamic value) {
+    if (value is String && value.isNotEmpty && !candidates.contains(value)) {
+      candidates.add(value);
+    }
+  }
+
+  addCandidate(stream['baseUrl']);
+  addCandidate(stream['base_url']);
+  addCandidate(stream['url']);
+  final backups = stream['backupUrl'] ?? stream['backup_url'];
+  if (backups is List) {
+    for (final value in backups) {
+      addCandidate(value);
+    }
+  }
+
+  if (candidates.isEmpty) return null;
+  for (final candidate in candidates) {
+    final host = Uri.tryParse(candidate)?.host.toLowerCase() ?? '';
+    final isMcdn =
+        host == 'mcdn.bilivideo.cn' || host.endsWith('.mcdn.bilivideo.cn');
+    if (!isMcdn) return candidate;
+  }
+  return candidates.first;
 }
 
 int _compareDashStreams(Map<String, dynamic> a, Map<String, dynamic> b) {
