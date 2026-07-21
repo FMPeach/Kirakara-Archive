@@ -31,49 +31,53 @@ class _LeftPane extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               height: stageHeight,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: KiraColors.lineStrong),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x57000000),
-                        blurRadius: 58,
-                        offset: Offset(0, 22),
-                      ),
-                    ],
+              child: Container(
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x57000000),
+                      blurRadius: 58,
+                      offset: Offset(0, 22),
+                    ),
+                  ],
+                ),
+                foregroundDecoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: KiraColors.lineStrong,
+                    width: 2,
                   ),
-                  child: Center(
-                    child: AspectRatio(
-                      aspectRatio: 16 / 9,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          if (castActive)
-                            _CastStagePlaceholder(castService: castService)
-                          else
-                            StageScreen(
-                              playbackService: playbackService,
-                              stageRenderer: stageRenderer,
-                            ),
-                          if (!castActive && !state.isPlaying)
-                            Center(
-                              child: FilledButton(
-                                onPressed: playbackService.play,
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: KiraColors.cream,
-                                  foregroundColor: const Color(0xff17181c),
-                                  shape: const CircleBorder(),
-                                  fixedSize: const Size(138, 138),
-                                ),
-                                child: const Icon(Icons.play_arrow, size: 70),
+                ),
+                child: Center(
+                  child: AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (castActive)
+                          _CastStagePlaceholder(castService: castService)
+                        else
+                          StageScreen(
+                            playbackService: playbackService,
+                            stageRenderer: stageRenderer,
+                          ),
+                        if (!castActive && !state.isPlaying)
+                          Center(
+                            child: FilledButton(
+                              onPressed: playbackService.play,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: KiraColors.cream,
+                                foregroundColor: const Color(0xff17181c),
+                                shape: const CircleBorder(),
+                                fixedSize: const Size(138, 138),
                               ),
+                              child: const Icon(Icons.play_arrow, size: 70),
                             ),
-                        ],
-                      ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
