@@ -21,11 +21,11 @@ namespace {
 
 using ShowHostHandle = void*;
 using ShowHostStageTextureSource = void*;
-using FrameAvailableCallback = void (*)(void*);
+using FrameAvailableCallback = void (*)(void*, uintptr_t, uint32_t, uint32_t,
+                                        uint64_t, uint64_t);
 
 struct ShowHostStageTextureFrame {
   uintptr_t shared_handle;
-  uintptr_t lease_token;
   uint32_t width;
   uint32_t height;
   uint64_t generation;
@@ -39,8 +39,6 @@ using SetFrameCallback = void (*)(ShowHostStageTextureSource,
                                   FrameAvailableCallback,
                                   void*);
 using SetStageDevice = bool (*)(ShowHostHandle, uintptr_t);
-using AcquireFrame = bool (*)(ShowHostStageTextureSource,
-                              ShowHostStageTextureFrame*);
 
 struct ShowTextureApi {
   HMODULE module{};
@@ -49,7 +47,6 @@ struct ShowTextureApi {
   SetSourceActive set_active{};
   SetFrameCallback set_callback{};
   SetStageDevice set_stage_device{};
-  AcquireFrame acquire{};
 
   bool Load() {
     module = GetModuleHandleW(L"libshow_host.dll");
@@ -69,10 +66,8 @@ struct ShowTextureApi {
         module, "show_host_stage_texture_source_set_frame_callback"));
     set_stage_device = reinterpret_cast<SetStageDevice>(
         GetProcAddress(module, "show_host_set_stage_d3d_device"));
-    acquire = reinterpret_cast<AcquireFrame>(
-        GetProcAddress(module, "show_host_stage_texture_source_acquire"));
     return create_source && destroy_source && set_active && set_callback &&
-           set_stage_device && acquire;
+           set_stage_device;
   }
 };
 
@@ -179,7 +174,7 @@ struct StageTextureBridge::Impl {
   }
 
   bool EnsureApi() {
-    std::lock_guard lock(state_mutex);
+    std::lock_guard lock(source_mutex);
     if (api_loaded) {
       return api_available;
     }
@@ -229,7 +224,7 @@ struct StageTextureBridge::Impl {
       return -1;
     }
 
-    std::lock_guard lock(state_mutex);
+    std::lock_guard lock(source_mutex);
     const auto existing_texture_id = texture_id.load();
     if (source && attached_host == host && existing_texture_id >= 0) {
       api.set_active(source, true);
@@ -239,12 +234,13 @@ struct StageTextureBridge::Impl {
       return existing_texture_id;
     }
     if (source) {
+      active.store(false);
       api.set_callback(source, nullptr, nullptr);
       api.set_active(source, false);
       api.destroy_source(source);
       source = nullptr;
       attached_host = nullptr;
-      ReleaseCurrentFrameLocked();
+      ReleaseCurrentFrame();
     }
 
     if (!EnsureStageDevice() || !api.set_stage_device(
@@ -294,7 +290,7 @@ struct StageTextureBridge::Impl {
   }
 
   void SetActive(bool value) {
-    std::lock_guard lock(state_mutex);
+    std::lock_guard lock(source_mutex);
     if (!source || shutting_down.load()) {
       active.store(false);
       return;
@@ -308,21 +304,22 @@ struct StageTextureBridge::Impl {
     }
   }
 
-  static void FrameAvailable(void* context) {
+  static void FrameAvailable(void* context,
+                             uintptr_t shared_handle,
+                             uint32_t width,
+                             uint32_t height,
+                             uint64_t generation,
+                             uint64_t frame_id) {
     auto* self = static_cast<Impl*>(context);
     if (!self || !self->active.load() || self->shutting_down.load() ||
-        !self->registrar || self->texture_id.load() < 0) {
+        !self->registrar || self->texture_id.load() < 0 ||
+        shared_handle == 0 || width == 0 || height == 0) {
       return;
     }
-    ShowHostStageTextureFrame next{};
     {
-      std::lock_guard lock(self->state_mutex);
-      if (!self->source || !self->active.load() ||
-          self->shutting_down.load() ||
-          !self->api.acquire(self->source, &next)) {
-        return;
-      }
-      self->pending_frame = next;
+      std::lock_guard lock(self->descriptor_mutex);
+      self->pending_frame = ShowHostStageTextureFrame{
+          shared_handle, width, height, generation, frame_id};
       self->pending_frame_ready = true;
     }
     FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
@@ -332,8 +329,8 @@ struct StageTextureBridge::Impl {
   const FlutterDesktopGpuSurfaceDescriptor* ObtainDescriptor(
       size_t,
       size_t) {
-    std::lock_guard lock(state_mutex);
-    if (!source || !active.load() || shutting_down.load()) {
+    std::lock_guard lock(descriptor_mutex);
+    if (!active.load() || shutting_down.load()) {
       return nullptr;
     }
 
@@ -358,7 +355,7 @@ struct StageTextureBridge::Impl {
       return;
     }
     active.store(false);
-    std::lock_guard lock(state_mutex);
+    std::lock_guard lock(source_mutex);
     if (source && api_available) {
       api.set_callback(source, nullptr, nullptr);
       api.set_active(source, false);
@@ -371,19 +368,15 @@ struct StageTextureBridge::Impl {
     }
   }
 
-  void ReleaseCurrentFrameLocked() {
+  void ReleaseCurrentFrame() {
+    std::lock_guard lock(descriptor_mutex);
     descriptor = {};
     pending_frame = {};
     pending_frame_ready = false;
   }
 
-  void ReleaseCurrentFrame() {
-    std::lock_guard lock(state_mutex);
-    ReleaseCurrentFrameLocked();
-  }
-
   void DestroySource() {
-    std::lock_guard lock(state_mutex);
+    std::lock_guard lock(source_mutex);
     if (source && api_available) {
       api.destroy_source(source);
     }
@@ -404,7 +397,8 @@ struct StageTextureBridge::Impl {
   Microsoft::WRL::ComPtr<ID3D11Device> stage_device;
   std::atomic_bool active{};
   std::atomic_bool shutting_down{};
-  std::mutex state_mutex;
+  std::mutex source_mutex;
+  std::mutex descriptor_mutex;
   FlutterDesktopGpuSurfaceDescriptor descriptor{};
   ShowHostStageTextureFrame pending_frame{};
   bool pending_frame_ready{};

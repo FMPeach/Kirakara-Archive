@@ -48,31 +48,30 @@ class _LeftPane extends StatelessWidget {
                 child: Center(
                   child: AspectRatio(
                     aspectRatio: 16 / 9,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        if (castActive)
-                          _CastStagePlaceholder(castService: castService)
-                        else
-                          StageScreen(
+                    child: castActive
+                        ? _CastStagePlaceholder(castService: castService)
+                        : StagePreviewHost(
                             playbackService: playbackService,
                             stageRenderer: stageRenderer,
+                            overlays: [
+                              if (!state.isPlaying)
+                                Center(
+                                  child: FilledButton(
+                                    onPressed: playbackService.play,
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: KiraColors.cream,
+                                      foregroundColor: const Color(0xff17181c),
+                                      shape: const CircleBorder(),
+                                      fixedSize: const Size(138, 138),
+                                    ),
+                                    child: const Icon(
+                                      Icons.play_arrow,
+                                      size: 70,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
-                        if (!castActive && !state.isPlaying)
-                          Center(
-                            child: FilledButton(
-                              onPressed: playbackService.play,
-                              style: FilledButton.styleFrom(
-                                backgroundColor: KiraColors.cream,
-                                foregroundColor: const Color(0xff17181c),
-                                shape: const CircleBorder(),
-                                fixedSize: const Size(138, 138),
-                              ),
-                              child: const Icon(Icons.play_arrow, size: 70),
-                            ),
-                          ),
-                      ],
-                    ),
                   ),
                 ),
               ),
