@@ -345,7 +345,7 @@ struct StageTextureBridge::Impl {
 
     ShowHostStageTextureFrame next{};
     if (!api.acquire(source, &next)) {
-      if (!current_lease) {
+      if (!descriptor.handle) {
         return nullptr;
       }
       descriptor.release_callback = nullptr;
@@ -353,28 +353,16 @@ struct StageTextureBridge::Impl {
       return &descriptor;
     }
 
-    if (current_lease && next.generation == current_generation &&
-        next.frame_id == current_frame_id) {
-      api.release(next.lease_token);
-      descriptor.release_callback = nullptr;
-      descriptor.release_context = nullptr;
-      return &descriptor;
-    }
-
-    const auto previous_lease = current_lease;
-    current_lease = next.lease_token;
-    current_generation = next.generation;
-    current_frame_id = next.frame_id;
     descriptor = {};
     descriptor.struct_size = sizeof(FlutterDesktopGpuSurfaceDescriptor);
     descriptor.handle = reinterpret_cast<void*>(next.shared_handle);
     descriptor.width = descriptor.visible_width = next.width;
     descriptor.height = descriptor.visible_height = next.height;
     descriptor.format = kFlutterDesktopPixelFormatBGRA8888;
-    if (previous_lease) {
+    if (next.lease_token) {
       auto deferred = std::make_unique<DeferredLeaseRelease>();
       deferred->release = api.release;
-      deferred->token = previous_lease;
+      deferred->token = next.lease_token;
       descriptor.release_callback = &ReleaseDeferredLease;
       descriptor.release_context = deferred.release();
     }
@@ -400,12 +388,6 @@ struct StageTextureBridge::Impl {
   }
 
   void ReleaseCurrentFrameLocked() {
-    if (current_lease && api_available && api.release) {
-      api.release(current_lease);
-    }
-    current_lease = 0;
-    current_generation = 0;
-    current_frame_id = 0;
     descriptor = {};
   }
 
@@ -437,9 +419,6 @@ struct StageTextureBridge::Impl {
   std::atomic_bool active{};
   std::atomic_bool shutting_down{};
   std::mutex state_mutex;
-  uintptr_t current_lease{};
-  uint64_t current_generation{};
-  uint64_t current_frame_id{};
   FlutterDesktopGpuSurfaceDescriptor descriptor{};
 };
 
