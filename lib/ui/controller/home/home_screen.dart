@@ -34,7 +34,6 @@ class _LeftPane extends StatelessWidget {
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: Colors.black,
-                  borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: KiraColors.lineStrong),
                   boxShadow: const [
                     BoxShadow(
@@ -47,8 +46,7 @@ class _LeftPane extends StatelessWidget {
                 child: Center(
                   child: AspectRatio(
                     aspectRatio: 16 / 9,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
+                    child: ClipRect(
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
@@ -550,9 +548,7 @@ class _SongCover extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final coverAsset = song?.assets
-        .cast<MediaAsset?>()
-        .firstWhere(
+    final coverAsset = song?.assets.cast<MediaAsset?>().firstWhere(
           (a) => a?.type == MediaAssetType.cover,
           orElse: () => null,
         );
