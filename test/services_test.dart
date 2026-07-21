@@ -8,6 +8,7 @@ import 'package:kirakara_app/data/local_db/local_database.dart';
 import 'package:kirakara_app/domain/lyric_project.dart';
 import 'package:kirakara_app/domain/media_asset.dart';
 import 'package:kirakara_app/domain/playback_state.dart';
+import 'package:kirakara_app/domain/queue_item.dart';
 import 'package:kirakara_app/domain/song.dart';
 import 'package:kirakara_app/services/display_manager.dart';
 import 'package:kirakara_app/services/lan_server.dart';
@@ -315,6 +316,32 @@ void main() {
 
     playback.replay();
     expect(playback.replayRevision, 2);
+  });
+
+  test('engine position sync does not rebuild controller listeners', () {
+    final search = _testSearch();
+    final playback = PlaybackService(
+      queueService: QueueService(),
+      initialItem: QueueItem(
+        id: 'current',
+        song: search.featuredSongs.first,
+        requestedBy: 'test',
+        addedAt: DateTime(2026),
+      ),
+    );
+    addTearDown(playback.disposeService);
+    var notifications = 0;
+    playback.addListener(() => notifications++);
+
+    expect(
+      playback.syncEnginePosition(const Duration(seconds: 1)),
+      isTrue,
+    );
+    expect(playback.state.position, const Duration(seconds: 1));
+    expect(notifications, 0);
+
+    playback.pause();
+    expect(notifications, 1);
   });
 
   test('starting a queued song consumes it instead of duplicating up next', () {

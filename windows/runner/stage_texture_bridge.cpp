@@ -41,7 +41,6 @@ using SetFrameCallback = void (*)(ShowHostStageTextureSource,
 using SetStageDevice = bool (*)(ShowHostHandle, uintptr_t);
 using AcquireFrame = bool (*)(ShowHostStageTextureSource,
                               ShowHostStageTextureFrame*);
-using ReleaseFrame = void (*)(uintptr_t);
 
 struct ShowTextureApi {
   HMODULE module{};
@@ -51,7 +50,6 @@ struct ShowTextureApi {
   SetFrameCallback set_callback{};
   SetStageDevice set_stage_device{};
   AcquireFrame acquire{};
-  ReleaseFrame release{};
 
   bool Load() {
     module = GetModuleHandleW(L"libshow_host.dll");
@@ -73,10 +71,8 @@ struct ShowTextureApi {
         GetProcAddress(module, "show_host_set_stage_d3d_device"));
     acquire = reinterpret_cast<AcquireFrame>(
         GetProcAddress(module, "show_host_stage_texture_source_acquire"));
-    release = reinterpret_cast<ReleaseFrame>(
-        GetProcAddress(module, "show_host_release_stage_texture_frame"));
     return create_source && destroy_source && set_active && set_callback &&
-           set_stage_device && acquire && release;
+           set_stage_device && acquire;
   }
 };
 
@@ -318,21 +314,19 @@ struct StageTextureBridge::Impl {
         !self->registrar || self->texture_id.load() < 0) {
       return;
     }
+    ShowHostStageTextureFrame next{};
+    {
+      std::lock_guard lock(self->state_mutex);
+      if (!self->source || !self->active.load() ||
+          self->shutting_down.load() ||
+          !self->api.acquire(self->source, &next)) {
+        return;
+      }
+      self->pending_frame = next;
+      self->pending_frame_ready = true;
+    }
     FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
         self->registrar, self->texture_id.load());
-  }
-
-  struct DeferredLeaseRelease {
-    ReleaseFrame release{};
-    uintptr_t token{};
-  };
-
-  static void ReleaseDeferredLease(void* context) {
-    std::unique_ptr<DeferredLeaseRelease> deferred(
-        static_cast<DeferredLeaseRelease*>(context));
-    if (deferred && deferred->release && deferred->token) {
-      deferred->release(deferred->token);
-    }
   }
 
   const FlutterDesktopGpuSurfaceDescriptor* ObtainDescriptor(
@@ -343,28 +337,18 @@ struct StageTextureBridge::Impl {
       return nullptr;
     }
 
-    ShowHostStageTextureFrame next{};
-    if (!api.acquire(source, &next)) {
-      if (!descriptor.handle) {
-        return nullptr;
-      }
-      descriptor.release_callback = nullptr;
-      descriptor.release_context = nullptr;
-      return &descriptor;
+    if (!pending_frame_ready && !descriptor.handle) {
+      return nullptr;
     }
-
-    descriptor = {};
-    descriptor.struct_size = sizeof(FlutterDesktopGpuSurfaceDescriptor);
-    descriptor.handle = reinterpret_cast<void*>(next.shared_handle);
-    descriptor.width = descriptor.visible_width = next.width;
-    descriptor.height = descriptor.visible_height = next.height;
-    descriptor.format = kFlutterDesktopPixelFormatBGRA8888;
-    if (next.lease_token) {
-      auto deferred = std::make_unique<DeferredLeaseRelease>();
-      deferred->release = api.release;
-      deferred->token = next.lease_token;
-      descriptor.release_callback = &ReleaseDeferredLease;
-      descriptor.release_context = deferred.release();
+    if (pending_frame_ready) {
+      descriptor = {};
+      descriptor.struct_size = sizeof(FlutterDesktopGpuSurfaceDescriptor);
+      descriptor.handle =
+          reinterpret_cast<void*>(pending_frame.shared_handle);
+      descriptor.width = descriptor.visible_width = pending_frame.width;
+      descriptor.height = descriptor.visible_height = pending_frame.height;
+      descriptor.format = kFlutterDesktopPixelFormatBGRA8888;
+      pending_frame_ready = false;
     }
     return &descriptor;
   }
@@ -389,6 +373,8 @@ struct StageTextureBridge::Impl {
 
   void ReleaseCurrentFrameLocked() {
     descriptor = {};
+    pending_frame = {};
+    pending_frame_ready = false;
   }
 
   void ReleaseCurrentFrame() {
@@ -420,6 +406,8 @@ struct StageTextureBridge::Impl {
   std::atomic_bool shutting_down{};
   std::mutex state_mutex;
   FlutterDesktopGpuSurfaceDescriptor descriptor{};
+  ShowHostStageTextureFrame pending_frame{};
+  bool pending_frame_ready{};
 };
 
 StageTextureBridge::StageTextureBridge(flutter::FlutterEngine* engine)

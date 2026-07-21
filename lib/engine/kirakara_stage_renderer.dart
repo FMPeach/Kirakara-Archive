@@ -12,10 +12,16 @@ class KirakaraStageRenderer implements StageRenderer {
   KirakaraStageRenderer({
     required KirakaraShowService showService,
   })  : _showService = showService,
-        _stageTextureController = StageTextureController();
+        _stageTextureController = StageTextureController() {
+    _windowsStage = _KirakaraGpuStageWidget(
+      showService: _showService,
+      textureController: _stageTextureController,
+    );
+  }
 
   final KirakaraShowService _showService;
   final StageTextureController _stageTextureController;
+  late final Widget _windowsStage;
 
   @override
   Widget buildStage({
@@ -24,10 +30,10 @@ class KirakaraStageRenderer implements StageRenderer {
     required RenderPreset preset,
   }) {
     if (Platform.isWindows) {
-      return _KirakaraGpuStageWidget(
-        showService: _showService,
-        textureController: _stageTextureController,
-      );
+      // Keep the external texture element stable when unrelated controller
+      // state changes. Native Show drives frame availability directly;
+      // rebuilding this subtree cannot advance it.
+      return _windowsStage;
     }
     return ColoredBox(color: mediaFrame.backgroundColor);
   }
@@ -66,7 +72,8 @@ class _KirakaraGpuStageWidgetState extends State<_KirakaraGpuStageWidget> {
     }
     if (textureId == null) return;
     await widget.textureController.setActive(true);
-    if (mounted) setState(() => _textureId = textureId);
+    if (!mounted) return;
+    setState(() => _textureId = textureId);
   }
 
   @override

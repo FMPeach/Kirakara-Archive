@@ -50,7 +50,11 @@ class PlaybackService extends ChangeNotifier {
     final diffMs = (_state.position - safePosition).inMilliseconds.abs();
     if (diffMs < 250) return false;
 
-    _setState(_state.copyWith(position: safePosition));
+    // Engine position is sampled for playback coordination only. Nothing in
+    // the controller renders this value, so broadcasting it would rebuild the
+    // entire 1080p controller (including the external Stage texture) several
+    // times per second for no visible change.
+    _setState(_state.copyWith(position: safePosition), notify: false);
     return true;
   }
 
@@ -142,9 +146,9 @@ class PlaybackService extends ChangeNotifier {
     _setState(_state.copyWith(upNext: upNext, clearUpNext: upNext == null));
   }
 
-  void _setState(PlaybackState nextState) {
+  void _setState(PlaybackState nextState, {bool notify = true}) {
     _state = nextState;
-    notifyListeners();
+    if (notify) notifyListeners();
   }
 
   QueueItem? _peekNextQueueItem() {

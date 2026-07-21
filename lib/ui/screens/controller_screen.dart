@@ -110,12 +110,9 @@ class _ControllerScreenState extends State<ControllerScreen> {
         child: AnimatedBuilder(
           animation: Listenable.merge([
             widget.playbackService,
-            widget.queueService,
-            widget.displayManager,
             widget.castService,
             widget.kirakaraShowService,
             widget.settingsService,
-            widget.assetCache,
           ]),
           builder: (context, _) {
             return DecoratedBox(
