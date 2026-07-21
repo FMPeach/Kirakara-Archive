@@ -36,6 +36,7 @@ class _LeftPane extends StatelessWidget {
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     color: Colors.black,
+                    borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: KiraColors.lineStrong),
                     boxShadow: const [
                       BoxShadow(
