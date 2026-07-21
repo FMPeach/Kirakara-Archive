@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -241,7 +240,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
     };
 
     if (mode == null) {
-      _showDialogAboveNativePreview<void>(
+      _showControllerDialog<void>(
         builder: (context) {
           return _KiraDialog(
             title: title,
@@ -318,7 +317,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 
   void _showQueueDialog() {
-    _showDialogAboveNativePreview<void>(
+    _showControllerDialog<void>(
       builder: (context) {
         return AnimatedBuilder(
           animation: Listenable.merge([
@@ -430,7 +429,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 
   void _showQrDialog() {
-    _showDialogAboveNativePreview<void>(
+    _showControllerDialog<void>(
       builder: (context) {
         final uri = widget.lanServer.localUri;
         return _KiraDialog(
@@ -501,7 +500,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 
   void _showCastDialog() {
-    _showDialogAboveNativePreview<void>(
+    _showControllerDialog<void>(
       builder: (context) => _OutputDialog(
         displayManager: widget.displayManager,
         castService: widget.castService,
@@ -604,7 +603,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
   }
 
   void _showSettingsDialog() {
-    _showDialogAboveNativePreview<void>(
+    _showControllerDialog<void>(
       builder: (context) {
         return _SettingsDialog(
           settingsService: widget.settingsService,
@@ -615,16 +614,12 @@ class _ControllerScreenState extends State<ControllerScreen> {
     );
   }
 
-  Future<T?> _showDialogAboveNativePreview<T>({
+  Future<T?> _showControllerDialog<T>({
     required WidgetBuilder builder,
   }) {
-    final showService = widget.kirakaraShowService;
-    showService.setControllerPreviewSuppressed(true);
     return showDialog<T>(
       context: context,
       builder: builder,
-    ).whenComplete(() {
-      showService.setControllerPreviewSuppressed(false);
-    });
+    );
   }
 }

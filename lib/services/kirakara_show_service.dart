@@ -39,7 +39,6 @@ class KirakaraShowService extends ChangeNotifier {
   bool _sawEngineProgressForItem = false;
   bool _started = false;
   bool _applyingEnginePosition = false;
-  bool _controllerPreviewSuppressed = false;
   int _lastReplayRevision = 0;
   int _prepareGeneration = 0;
   String? _nativePreparedSongId;
@@ -54,7 +53,6 @@ class KirakaraShowService extends ChangeNotifier {
   Duration get enginePosition => _enginePosition;
   Duration get engineDuration => _engineDuration;
   bool get isBuffering => _isBuffering;
-  bool get controllerPreviewSuppressed => _controllerPreviewSuppressed;
   int get nativeHandleAddress => _ffi?.nativeHandleAddress ?? 0;
 
   /// Call this once after the engine DLL is available.
@@ -431,35 +429,6 @@ class KirakaraShowService extends ChangeNotifier {
     );
   }
 
-  void setControllerPreviewRect({
-    required int parentHwnd,
-    required int x,
-    required int y,
-    required int width,
-    required int height,
-  }) {
-    _ffi?.setControllerPreviewRect(
-      parentHwnd: parentHwnd,
-      x: x,
-      y: y,
-      width: width,
-      height: height,
-    );
-  }
-
-  void hideControllerPreview() {
-    _ffi?.hideControllerPreview();
-  }
-
-  void setControllerPreviewSuppressed(bool suppressed) {
-    if (_controllerPreviewSuppressed == suppressed) return;
-    _controllerPreviewSuppressed = suppressed;
-    if (suppressed) {
-      _ffi?.hideControllerPreview();
-    }
-    notifyListeners();
-  }
-
   bool startCastStream(int port) {
     return _ffi?.startCastStream(port) ?? false;
   }
@@ -472,20 +441,6 @@ class KirakaraShowService extends ChangeNotifier {
 
   bool setStageOverlayState(StageOverlayState state) {
     return _ffi?.setStageOverlayState(state) ?? false;
-  }
-
-  void setControllerQrRect({
-    required bool visible,
-    required int x,
-    required int y,
-    required int size,
-  }) {
-    _ffi?.setControllerQrRect(
-      visible: visible,
-      x: x,
-      y: y,
-      size: size,
-    );
   }
 
   void setAudioClockOffset(Duration offset) {

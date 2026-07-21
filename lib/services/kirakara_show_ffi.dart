@@ -90,23 +90,6 @@ typedef SetStageWindowRectNative = Void Function(
   Uint32,
   Uint32,
 );
-typedef SetControllerPreviewRectNative = Void Function(
-  ShowHostHandle,
-  Uint64,
-  Int32,
-  Int32,
-  Uint32,
-  Uint32,
-);
-typedef HideControllerPreviewNative = Void Function(ShowHostHandle);
-typedef SetControllerQrRectNative = Void Function(
-  ShowHostHandle,
-  Bool,
-  Int32,
-  Int32,
-  Uint32,
-);
-typedef ResizeNative = Void Function(ShowHostHandle, Uint32, Uint32);
 typedef GetPositionNative = Double Function(ShowHostHandle);
 typedef GetDurationNative = Double Function(ShowHostHandle);
 typedef GetStateNative = Int Function(ShowHostHandle);
@@ -174,23 +157,6 @@ typedef _SetStageWindowRect = void Function(
   int,
   int,
 );
-typedef _SetControllerPreviewRect = void Function(
-  ShowHostHandle,
-  int,
-  int,
-  int,
-  int,
-  int,
-);
-typedef _HideControllerPreview = void Function(ShowHostHandle);
-typedef _SetControllerQrRect = void Function(
-  ShowHostHandle,
-  bool,
-  int,
-  int,
-  int,
-);
-typedef _Resize = void Function(ShowHostHandle, int, int);
 typedef _GetPosition = double Function(ShowHostHandle);
 typedef _GetDuration = double Function(ShowHostHandle);
 typedef _GetState = int Function(ShowHostHandle);
@@ -233,10 +199,6 @@ class KirakaraShowFFI {
   late final _SetAudioTrack _setAudioTrack;
   late final _SetStageVisible _setStageVisible;
   late final _SetStageWindowRect _setStageWindowRect;
-  late final _SetControllerPreviewRect _setControllerPreviewRect;
-  late final _HideControllerPreview _hideControllerPreview;
-  late final _SetControllerQrRect _setControllerQrRect;
-  late final _Resize _resize;
   late final _GetPosition _getPosition;
   late final _GetDuration _getDuration;
   late final _GetState _getState;
@@ -313,16 +275,6 @@ class KirakaraShowFFI {
     _setStageWindowRect =
         _dylib.lookupFunction<SetStageWindowRectNative, _SetStageWindowRect>(
             'show_host_set_stage_window_rect');
-    _setControllerPreviewRect = _dylib.lookupFunction<
-        SetControllerPreviewRectNative,
-        _SetControllerPreviewRect>('show_host_set_controller_preview_rect');
-    _hideControllerPreview = _dylib.lookupFunction<HideControllerPreviewNative,
-        _HideControllerPreview>('show_host_hide_controller_preview');
-    _setControllerQrRect =
-        _dylib.lookupFunction<SetControllerQrRectNative, _SetControllerQrRect>(
-      'show_host_set_controller_qr_rect',
-    );
-    _resize = _dylib.lookupFunction<ResizeNative, _Resize>('show_host_resize');
     _getPosition = _dylib.lookupFunction<GetPositionNative, _GetPosition>(
         'show_host_get_position');
     _getDuration = _dylib.lookupFunction<GetDurationNative, _GetDuration>(
@@ -467,33 +419,6 @@ class KirakaraShowFFI {
     required int height,
   }) {
     _setStageWindowRect(_handle, x, y, width, height);
-  }
-
-  void setControllerPreviewRect({
-    required int parentHwnd,
-    required int x,
-    required int y,
-    required int width,
-    required int height,
-  }) {
-    _setControllerPreviewRect(_handle, parentHwnd, x, y, width, height);
-  }
-
-  void hideControllerPreview() => _hideControllerPreview(_handle);
-
-  void setControllerQrRect({
-    required bool visible,
-    required int x,
-    required int y,
-    required int size,
-  }) {
-    _setControllerQrRect(_handle, visible, x, y, size);
-  }
-
-  void resize(int w, int h) {
-    _resize(_handle, w, h);
-    _width = w;
-    _height = h;
   }
 
   double get position => _getPosition(_handle);
