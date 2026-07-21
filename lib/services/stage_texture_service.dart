@@ -1,6 +1,16 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+class StageTextureStats {
+  const StageTextureStats({
+    required this.publishedFrames,
+    required this.acquiredFrames,
+  });
+
+  final int publishedFrames;
+  final int acquiredFrames;
+}
+
 class StageTextureController {
   StageTextureController({
     MethodChannel channel = const MethodChannel('kirakara/stage_texture'),
@@ -57,6 +67,24 @@ class StageTextureController {
       debugPrint('Unified Stage texture bridge is unavailable: $error');
     } on PlatformException catch (error) {
       debugPrint('Unable to update Stage texture activity: ${error.message}');
+    }
+  }
+
+  Future<StageTextureStats?> readStats() async {
+    if (_textureId == null) return null;
+    try {
+      final result = await _channel.invokeMapMethod<String, Object?>(
+        'getStats',
+      );
+      if (result == null) return null;
+      return StageTextureStats(
+        publishedFrames: (result['publishedFrames'] as num?)?.toInt() ?? 0,
+        acquiredFrames: (result['acquiredFrames'] as num?)?.toInt() ?? 0,
+      );
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
     }
   }
 }

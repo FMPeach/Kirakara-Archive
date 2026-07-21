@@ -31,22 +31,23 @@ class _LeftPane extends StatelessWidget {
             SizedBox(
               width: double.infinity,
               height: stageHeight,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  border: Border.all(color: KiraColors.lineStrong),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x57000000),
-                      blurRadius: 58,
-                      offset: Offset(0, 22),
-                    ),
-                  ],
-                ),
-                child: Center(
-                  child: AspectRatio(
-                    aspectRatio: 16 / 9,
-                    child: ClipRect(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    border: Border.all(color: KiraColors.lineStrong),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x57000000),
+                        blurRadius: 58,
+                        offset: Offset(0, 22),
+                      ),
+                    ],
+                  ),
+                  child: Center(
+                    child: AspectRatio(
+                      aspectRatio: 16 / 9,
                       child: Stack(
                         fit: StackFit.expand,
                         children: [

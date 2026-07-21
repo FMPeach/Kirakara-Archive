@@ -178,6 +178,17 @@ struct StageTextureBridge::Impl {
             result->Success(flutter::EncodableValue(EnsureApi()));
             return;
           }
+          if (call.method_name() == "getStats") {
+            flutter::EncodableMap stats;
+            stats[flutter::EncodableValue("publishedFrames")] =
+                flutter::EncodableValue(static_cast<int64_t>(
+                    published_frames.load(std::memory_order_relaxed)));
+            stats[flutter::EncodableValue("acquiredFrames")] =
+                flutter::EncodableValue(static_cast<int64_t>(
+                    acquired_frames.load(std::memory_order_relaxed)));
+            result->Success(flutter::EncodableValue(std::move(stats)));
+            return;
+          }
           result->NotImplemented();
         });
   }
@@ -318,6 +329,7 @@ struct StageTextureBridge::Impl {
         !self->registrar || self->texture_id.load() < 0) {
       return;
     }
+    self->published_frames.fetch_add(1, std::memory_order_relaxed);
     FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
         self->registrar, self->texture_id.load());
   }
@@ -352,6 +364,7 @@ struct StageTextureBridge::Impl {
       descriptor.release_context = nullptr;
       return &descriptor;
     }
+    acquired_frames.fetch_add(1, std::memory_order_relaxed);
 
     descriptor = {};
     descriptor.struct_size = sizeof(FlutterDesktopGpuSurfaceDescriptor);
@@ -418,6 +431,8 @@ struct StageTextureBridge::Impl {
   Microsoft::WRL::ComPtr<ID3D11Device> stage_device;
   std::atomic_bool active{};
   std::atomic_bool shutting_down{};
+  std::atomic_uint64_t published_frames{};
+  std::atomic_uint64_t acquired_frames{};
   std::mutex state_mutex;
   FlutterDesktopGpuSurfaceDescriptor descriptor{};
 };

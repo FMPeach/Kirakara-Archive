@@ -42,4 +42,24 @@ void main() {
 
     expect(await controller.attach(1001), isNull);
   });
+
+  test('reads native publish and preview acquisition counters', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'attach') return 73;
+      if (call.method == 'getStats') {
+        return <String, Object?>{
+          'publishedFrames': 120,
+          'acquiredFrames': 117,
+        };
+      }
+      return true;
+    });
+    final controller = StageTextureController(channel: channel);
+
+    expect(await controller.attach(1001), 73);
+    final stats = await controller.readStats();
+
+    expect(stats?.publishedFrames, 120);
+    expect(stats?.acquiredFrames, 117);
+  });
 }
