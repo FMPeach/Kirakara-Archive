@@ -5,9 +5,11 @@
 #include <flutter/standard_method_codec.h>
 
 #include <cstdint>
+#include <cwchar>
 #include <memory>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -32,13 +34,79 @@ std::string WideToUtf8(const wchar_t* text) {
   if (size <= 1) {
     return {};
   }
-  std::string result(static_cast<size_t>(size - 1), '\0');
-  WideCharToMultiByte(
-      CP_UTF8, 0, text, -1, result.data(), size, nullptr, nullptr);
+  std::string result(static_cast<size_t>(size), '\0');
+  if (WideCharToMultiByte(
+          CP_UTF8, 0, text, -1, result.data(), size, nullptr, nullptr) <= 0) {
+    return {};
+  }
+  result.resize(static_cast<size_t>(size - 1));
   return result;
 }
 
+std::string DisplayConfigFriendlyName(const wchar_t* gdi_device_name) {
+  if (!gdi_device_name || gdi_device_name[0] == L'\0') {
+    return {};
+  }
+
+  // Display topology can change between sizing and querying. Retry briefly so
+  // a hot-plug does not force the UI back to the generic Win32 device string.
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    UINT32 path_count = 0;
+    UINT32 mode_count = 0;
+    if (GetDisplayConfigBufferSizes(
+            QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count) != ERROR_SUCCESS) {
+      return {};
+    }
+
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes(mode_count);
+    const LONG query_result = QueryDisplayConfig(
+        QDC_ONLY_ACTIVE_PATHS,
+        &path_count,
+        paths.empty() ? nullptr : paths.data(),
+        &mode_count,
+        modes.empty() ? nullptr : modes.data(),
+        nullptr);
+    if (query_result == ERROR_INSUFFICIENT_BUFFER) {
+      continue;
+    }
+    if (query_result != ERROR_SUCCESS) {
+      return {};
+    }
+
+    for (UINT32 index = 0; index < path_count; ++index) {
+      const auto& path = paths[index];
+      DISPLAYCONFIG_SOURCE_DEVICE_NAME source{};
+      source.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+      source.header.size = sizeof(source);
+      source.header.adapterId = path.sourceInfo.adapterId;
+      source.header.id = path.sourceInfo.id;
+      if (DisplayConfigGetDeviceInfo(&source.header) != ERROR_SUCCESS ||
+          _wcsicmp(source.viewGdiDeviceName, gdi_device_name) != 0) {
+        continue;
+      }
+
+      DISPLAYCONFIG_TARGET_DEVICE_NAME target{};
+      target.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+      target.header.size = sizeof(target);
+      target.header.adapterId = path.targetInfo.adapterId;
+      target.header.id = path.targetInfo.id;
+      if (DisplayConfigGetDeviceInfo(&target.header) == ERROR_SUCCESS &&
+          target.monitorFriendlyDeviceName[0] != L'\0') {
+        return WideToUtf8(target.monitorFriendlyDeviceName);
+      }
+    }
+    return {};
+  }
+  return {};
+}
+
 std::string MonitorFriendlyName(const MONITORINFOEXW& info) {
+  const auto display_config_name = DisplayConfigFriendlyName(info.szDevice);
+  if (!display_config_name.empty()) {
+    return display_config_name;
+  }
+
   DISPLAY_DEVICEW device{};
   device.cb = sizeof(device);
   if (EnumDisplayDevicesW(info.szDevice, 0, &device, 0) &&
