@@ -5,23 +5,20 @@ import '../ime_engine.dart';
 import '../ime_mode.dart';
 import '../native/ime_native_bridge.dart';
 import '../native/zinnia_native_bridge.dart';
-import 'mock_handwriting_ime_engine.dart';
 
 class ZinniaHandwritingEngine implements HandwritingImeEngine {
   ZinniaHandwritingEngine({
     NativeHandwritingBridge? bridge,
-    HandwritingImeEngine? fallback,
     this.sessionId = 'kirakara-zinnia-session',
-  })  : _bridge = bridge ?? const ZinniaNativeBridgeProbe().probe(),
-        _fallback = fallback ?? MockHandwritingImeEngine();
+  }) : _bridge = bridge ?? const ZinniaNativeBridgeProbe().probe();
 
   final NativeHandwritingBridge _bridge;
-  final HandwritingImeEngine _fallback;
   final String sessionId;
 
   final List<ImeStroke> _strokes = [];
   ImeStroke? _activeStroke;
   bool _nativeFailed = false;
+  String? _nativeError;
   ImeComposition _composition = ImeComposition.empty(ImeMode.handwriting);
 
   @override
@@ -31,43 +28,20 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
   ImeComposition get composition => _composition;
 
   bool get isNativeAvailable => _bridge.isAvailable && !_nativeFailed;
-  String? get nativeUnavailableReason {
-    if (_nativeFailed) {
-      return 'Zinnia native bridge failed and fallback is active';
-    }
-    return _bridge.unavailableReason;
-  }
-
-  Future<ImeComposition> _syncFallbackStrokesAndRecognize() async {
-    await _fallback.clear();
-    ImeComposition composition = ImeComposition.empty(mode);
-    for (final stroke in _strokes) {
-      if (stroke.isEmpty) {
-        continue;
-      }
-      composition = await _fallback.beginStroke(stroke.first.x, stroke.first.y);
-      for (final point in stroke.skip(1)) {
-        composition = await _fallback.appendStrokePoint(point.x, point.y);
-      }
-      composition = await _fallback.endStroke();
-    }
-    if (_strokes.isNotEmpty) {
-      composition = await _fallback.recognize();
-    }
-    return composition;
-  }
+  String? get nativeUnavailableReason =>
+      _nativeError ?? _bridge.unavailableReason;
 
   @override
   Future<void> activate() async {
-    if (isNativeAvailable) {
-      try {
-        await _bridge.activateSession(sessionId);
-        return;
-      } on Object {
-        _nativeFailed = true;
-      }
+    if (!_bridge.isAvailable) {
+      _composition = _failureComposition();
+      return;
     }
-    await _fallback.activate();
+    try {
+      await _bridge.activateSession(sessionId);
+    } on Object catch (error) {
+      _recordNativeFailure(error);
+    }
   }
 
   @override
@@ -75,25 +49,22 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
     if (isNativeAvailable) {
       try {
         await _bridge.deactivateSession(sessionId);
-      } on Object {
-        _nativeFailed = true;
+      } on Object catch (error) {
+        _recordNativeFailure(error);
       }
-      return;
     }
-    await _fallback.deactivate();
   }
 
   @override
   Future<ImeComposition> inputKey(String key) async {
-    return _fallback.inputKey(key);
+    _composition = isNativeAvailable
+        ? _strokeComposition(candidates: const [])
+        : _failureComposition();
+    return _composition;
   }
 
   @override
   Future<ImeComposition> beginStroke(double x, double y) async {
-    if (!isNativeAvailable) {
-      _composition = await _fallback.beginStroke(x, y);
-      return _composition;
-    }
     _activeStroke = [ImeStrokePoint(x: x, y: y)];
     _composition = _strokeComposition(candidates: const []);
     return _composition;
@@ -101,10 +72,6 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
 
   @override
   Future<ImeComposition> appendStrokePoint(double x, double y) async {
-    if (!isNativeAvailable) {
-      _composition = await _fallback.appendStrokePoint(x, y);
-      return _composition;
-    }
     _activeStroke?.add(ImeStrokePoint(x: x, y: y));
     _composition = _strokeComposition(candidates: const []);
     return _composition;
@@ -112,10 +79,6 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
 
   @override
   Future<ImeComposition> endStroke() async {
-    if (!isNativeAvailable) {
-      _composition = await _fallback.endStroke();
-      return _composition;
-    }
     final stroke = _activeStroke;
     if (stroke != null && stroke.isNotEmpty) {
       _strokes.add(stroke);
@@ -128,7 +91,7 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
   @override
   Future<ImeComposition> recognize() async {
     if (!isNativeAvailable) {
-      _composition = await _fallback.recognize();
+      _composition = _failureComposition();
       return _composition;
     }
     if (_strokes.isEmpty) {
@@ -141,9 +104,8 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
         sessionId: sessionId,
         strokes: _strokes,
       );
-    } on Object {
-      _nativeFailed = true;
-      _composition = await _syncFallbackStrokesAndRecognize();
+    } on Object catch (error) {
+      _recordNativeFailure(error);
       return _composition;
     }
     _composition = _strokeComposition(
@@ -174,7 +136,7 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
     _strokes.clear();
     _activeStroke = null;
     if (!isNativeAvailable) {
-      _composition = await _fallback.clear();
+      _composition = _failureComposition();
       return _composition;
     }
     _composition = ImeComposition.empty(mode);
@@ -207,6 +169,7 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
 
   ImeComposition _strokeComposition({
     required List<ImeCandidate> candidates,
+    String? errorMessage,
   }) {
     final count = _strokes.length + (_activeStroke == null ? 0 : 1);
     final rawInput = count == 0 ? '' : '$count 笔';
@@ -215,6 +178,21 @@ class ZinniaHandwritingEngine implements HandwritingImeEngine {
       rawInput: rawInput,
       preedit: rawInput,
       candidates: candidates,
+      errorMessage: errorMessage,
+    );
+  }
+
+  void _recordNativeFailure(Object error) {
+    _nativeFailed = true;
+    _nativeError = error.toString();
+    _composition = _failureComposition();
+  }
+
+  ImeComposition _failureComposition() {
+    final reason = nativeUnavailableReason ?? '未知错误';
+    return _strokeComposition(
+      candidates: const [],
+      errorMessage: '手写识别不可用：$reason',
     );
   }
 }

@@ -70,7 +70,7 @@ void main() {
     expect(search.text, '残酷');
   });
 
-  testWidgets('handwriting mode recognizes strokes into candidate bar',
+  testWidgets('handwriting native failure appears in the candidate bar',
       (tester) async {
     tester.view.physicalSize = const Size(640, 900);
     tester.view.devicePixelRatio = 1;
@@ -117,31 +117,22 @@ void main() {
     );
 
     expect(find.byType(HandwritingPad), findsOneWidget);
+    expect(find.textContaining('手写识别不可用'), findsOneWidget);
 
     await tester.drag(find.byType(HandwritingPad), const Offset(80, 80));
     await tester.pumpAndSettle();
 
-    expect(find.text('1 残'), findsOneWidget);
-    await tester.tap(find.text('1 残'));
-    await tester.pumpAndSettle();
-    expect(search.text, '残');
+    expect(find.textContaining('手写识别不可用'), findsOneWidget);
     expect(find.text('1 残'), findsNothing);
-
-    await tester.drag(find.byType(HandwritingPad), const Offset(80, 80));
-    await tester.pumpAndSettle();
-    expect(find.text('1 残'), findsOneWidget);
+    expect(search.text, isEmpty);
 
     await tester.tap(find.text('撤销一笔'));
     await tester.pumpAndSettle();
-    expect(find.text('1 残'), findsNothing);
-
-    await tester.drag(find.byType(HandwritingPad), const Offset(80, 80));
-    await tester.pumpAndSettle();
-    expect(find.text('1 残'), findsOneWidget);
+    expect(find.textContaining('手写识别不可用'), findsOneWidget);
 
     await tester.tap(find.text('清空'));
     await tester.pumpAndSettle();
-    expect(find.text('1 残'), findsNothing);
+    expect(find.textContaining('手写识别不可用'), findsOneWidget);
   });
 
   testWidgets('numeric mode shows a dial pad for song numbers', (tester) async {

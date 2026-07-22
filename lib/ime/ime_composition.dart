@@ -10,6 +10,7 @@ class ImeComposition {
     this.pageIndex = 0,
     this.hasPreviousPage = false,
     this.hasNextPage = false,
+    this.errorMessage,
   });
 
   factory ImeComposition.empty(ImeMode mode) {
@@ -28,6 +29,7 @@ class ImeComposition {
   final int pageIndex;
   final bool hasPreviousPage;
   final bool hasNextPage;
+  final String? errorMessage;
 
   ImeComposition copyWith({
     ImeMode? mode,
@@ -37,6 +39,7 @@ class ImeComposition {
     int? pageIndex,
     bool? hasPreviousPage,
     bool? hasNextPage,
+    String? errorMessage,
   }) {
     return ImeComposition(
       mode: mode ?? this.mode,
@@ -46,6 +49,7 @@ class ImeComposition {
       pageIndex: pageIndex ?? this.pageIndex,
       hasPreviousPage: hasPreviousPage ?? this.hasPreviousPage,
       hasNextPage: hasNextPage ?? this.hasNextPage,
+      errorMessage: errorMessage ?? this.errorMessage,
     );
   }
 }

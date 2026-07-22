@@ -3,8 +3,7 @@ import 'package:kirakara_app/ime/engines/rime_ime_engine.dart';
 import 'package:kirakara_app/ime/native/ime_native_bridge.dart';
 
 void main() {
-  test('Rime engine falls back to mock pinyin when native bridge is unavailable',
-      () async {
+  test('Rime engine exposes native failure without fake candidates', () async {
     final engine = RimeImeEngine(
       bridge: const UnavailableNativeImeBridge(
         engineName: 'rime',
@@ -17,7 +16,12 @@ void main() {
     final composition = await engine.inputKey('V');
 
     expect(composition.rawInput, 'lv');
-    expect(composition.candidates.map((c) => c.text), contains('绿'));
+    expect(composition.candidates, isEmpty);
+    expect(composition.errorMessage, contains('拼音输入法不可用'));
+    expect(composition.errorMessage, contains('test unavailable bridge'));
+
+    final commit = await engine.commitRaw();
+    expect(commit.text, 'lv');
   });
 
   test('Rime engine maps native bridge candidates into composition', () async {

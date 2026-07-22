@@ -43,7 +43,7 @@ class HttpCatalogClient implements CatalogClient {
   @override
   Future<List<Song>> fetchUpdatedSongs({DateTime? since}) async {
     // 暂不实现增量，全量拉取后由上层调用方决定如何转换成 Song 列表。
-    // 当前 SearchService 仍使用 mock，此方法留给 SQLite 阶段再接入。
+    // 当前启动同步使用 fetchManifest，增量接口后续再接入。
     return const [];
   }
 

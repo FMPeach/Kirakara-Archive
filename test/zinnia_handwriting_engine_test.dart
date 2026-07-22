@@ -5,7 +5,8 @@ import 'package:kirakara_app/ime/native/ime_native_bridge.dart';
 import 'package:kirakara_app/ime/native/zinnia_native_bridge.dart';
 
 void main() {
-  test('Zinnia handwriting engine falls back to mock recognition', () async {
+  test('Zinnia handwriting engine exposes native recognition failure',
+      () async {
     final engine = ZinniaHandwritingEngine(
       bridge: const UnavailableNativeHandwritingBridge(
         engineName: 'zinnia',
@@ -20,7 +21,9 @@ void main() {
     final composition = await engine.recognize();
 
     expect(composition.rawInput, '1 笔');
-    expect(composition.candidates.map((c) => c.text), contains('残'));
+    expect(composition.candidates, isEmpty);
+    expect(composition.errorMessage, contains('手写识别不可用'));
+    expect(composition.errorMessage, contains('test'));
   });
 
   test('Zinnia handwriting engine maps native candidates', () async {

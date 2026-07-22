@@ -6,6 +6,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../domain/media_asset.dart';
 import '../../domain/playback_state.dart';
+import '../../domain/queue_item.dart';
 import '../../domain/song.dart';
 import '../../engine/stage_renderer.dart';
 import '../../services/cast_service.dart';
@@ -314,6 +315,16 @@ class _ControllerScreenState extends State<ControllerScreen> {
     );
   }
 
+  void _retryQueueItem(QueueItem item) {
+    widget.assetCache.resetFailuresForSong(item.song);
+    widget.queueService.retry(item.id);
+    if (widget.playbackService.state.currentItem == null) {
+      widget.playbackService.next();
+    } else {
+      widget.playbackService.refreshUpNext();
+    }
+  }
+
   void _showQueueDialog() {
     _showControllerDialog<void>(
       builder: (context) {
@@ -351,6 +362,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
                           activeSlot,
                           isCurrent: true,
                         ),
+                        failed: false,
+                        onRetry: null,
                         onBump: null,
                         onDelete: null,
                       ),
@@ -390,28 +403,44 @@ class _ControllerScreenState extends State<ControllerScreen> {
                               itemCount: queueItems.length,
                               itemBuilder: (context, index) {
                                 final item = queueItems[index];
+                                final progress = widget.assetCache
+                                    .progressForSong(item.song);
+                                final failed = widget.queueService.isFailed(
+                                      item.id,
+                                    ) ||
+                                    progress.hasFailed;
                                 return _QueueItemRow(
                                   index: index + 1,
                                   song: item.song,
                                   subtitle:
                                       '${item.song.artist?.name ?? '未知'} · ${item.song.category}',
                                   isCurrent: false,
-                                  progress: widget.assetCache.progressForSong(
-                                    item.song,
-                                  ),
+                                  progress: progress,
                                   slotProgress: _slotProgressForSong(
                                     item.song,
                                     activeSlot,
                                     isCurrent: false,
                                   ),
-                                  onBump: () {
-                                    widget.queueService.bumpItemToNext(item.id);
-                                    widget.playbackService.refreshUpNext();
-                                  },
-                                  onDelete: () {
-                                    widget.queueService.remove(item.id);
-                                    widget.playbackService.refreshUpNext();
-                                  },
+                                  failed: failed,
+                                  onRetry: failed
+                                      ? () => _retryQueueItem(item)
+                                      : null,
+                                  onBump: failed
+                                      ? null
+                                      : () {
+                                          widget.queueService.bumpItemToNext(
+                                            item.id,
+                                          );
+                                          widget.playbackService
+                                              .refreshUpNext();
+                                        },
+                                  onDelete: failed
+                                      ? null
+                                      : () {
+                                          widget.queueService.remove(item.id);
+                                          widget.playbackService
+                                              .refreshUpNext();
+                                        },
                                 );
                               },
                             ),

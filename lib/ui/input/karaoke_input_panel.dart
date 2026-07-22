@@ -179,6 +179,7 @@ class KaraokeInputPanel extends StatelessWidget {
                 return CandidateBar(
                   preedit: composition.preedit,
                   candidates: composition.candidates,
+                  errorMessage: composition.errorMessage,
                   onCandidateSelected: imeController.commitCandidate,
                 );
               },

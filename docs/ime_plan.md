@@ -27,8 +27,9 @@ Kirakara-App 的输入法不是系统级 IME，而是一个服务于点歌屏的
 - 输入面板、候选栏、A-Z 输入、数字键盘、模式切换和手写板 UI 已进入 Flutter 原型。
 - Windows 版 Rime 已作为 App 自带 runtime 接入，用户不需要安装第三方输入法。
 - Windows 版 Zinnia 已静态链接进 runner，并随 App 打包日文和中文手写模型。
-- Mozc 仍处于 native spike 阶段；在可重复构建出 App 自带 runtime 之前，日语罗马音继续使用 mock fallback。
-- 所有 native / mock 引擎都通过统一 `ImeEngine` 返回输入候选，不直接访问 `SearchService`、Catalog API 或页面结果。
+- Windows 版 Mozc 已作为 App 自带 helper runtime 接入，用户不需要安装系统日语输入法。
+- 所有 App 自带引擎都通过统一 `ImeEngine` 返回输入候选，不直接访问 `SearchService`、Catalog API 或页面结果。
+- release 路径不再包含 mock fallback。原生引擎不可用时，候选栏显示错误并保留原始输入，不伪造候选字。
 
 ## 输入通道划分
 
@@ -499,9 +500,6 @@ lib/
     search_query_controller.dart
     engines/
       english_ime_engine.dart
-      mock_pinyin_ime_engine.dart
-      mock_japanese_ime_engine.dart
-      mock_handwriting_ime_engine.dart
       rime_ime_engine.dart
       mozc_ime_engine.dart
       zinnia_handwriting_engine.dart
@@ -515,7 +513,7 @@ lib/
       handwriting_pad.dart
 ```
 
-原型阶段允许 mock fallback 存在，但 release 路径应优先使用 App 自带 native runtime。mock 只验证状态机和 UI，不作为最终输入质量方案。
+release 路径只使用 App 自带 native runtime。原生组件加载或调用失败时，候选栏必须显示明确错误，不允许静默降级到固定词表或伪手写候选。
 
 ## 执行步骤
 
@@ -638,7 +636,7 @@ lib/
 4. 点击候选写入搜索 query。
 5. 让歌名、歌手、分类页全部走这个面板。
 
-这个闭环已经允许真实引擎替换 mock。当前 Windows 版 Rime、Mozc 和 Zinnia 都已走真实 App 自带 runtime；mock 只作为开发兜底。
+当前 Windows 版 Rime、Mozc 和 Zinnia 都已走真实 App 自带 runtime；运行时不再保留 mock 兜底。
 
 ## 参考
 

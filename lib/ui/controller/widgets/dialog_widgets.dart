@@ -78,7 +78,9 @@ class _QueueItemRow extends StatelessWidget {
     required this.subtitle,
     required this.isCurrent,
     required this.progress,
+    required this.failed,
     this.slotProgress,
+    this.onRetry,
     this.onBump,
     this.onDelete,
   });
@@ -88,7 +90,9 @@ class _QueueItemRow extends StatelessWidget {
   final String subtitle;
   final bool isCurrent;
   final PlaybackAssetProgress progress;
+  final bool failed;
   final _SlotProgress? slotProgress;
+  final VoidCallback? onRetry;
   final VoidCallback? onBump;
   final VoidCallback? onDelete;
 
@@ -163,6 +167,7 @@ class _QueueItemRow extends StatelessWidget {
                 _DownloadStatus(
                   progress: progress,
                   slotProgress: slotProgress,
+                  failed: failed,
                 ),
                 const SizedBox(width: 10),
                 Container(
@@ -195,17 +200,21 @@ class _QueueItemRow extends StatelessWidget {
             _DownloadStatus(
               progress: progress,
               slotProgress: slotProgress,
+              failed: failed,
             ),
             const SizedBox(width: 10),
-            if (onBump != null)
+            if (onRetry != null)
+              _QueueRetryButton(onTap: onRetry)
+            else if (onBump != null)
               _QueueIconButton(
                 icon: Icons.arrow_upward,
                 color: KiraColors.muted,
                 tooltip: '顶到下一首',
                 onTap: onBump,
               ),
-            const SizedBox(width: 6),
-            if (onDelete != null)
+            if (onRetry == null && onBump != null && onDelete != null)
+              const SizedBox(width: 6),
+            if (onRetry == null && onDelete != null)
               _QueueIconButton(
                 icon: Icons.close,
                 color: KiraColors.muted,
@@ -220,13 +229,32 @@ class _QueueItemRow extends StatelessWidget {
 }
 
 class _DownloadStatus extends StatelessWidget {
-  const _DownloadStatus({required this.progress, this.slotProgress});
+  const _DownloadStatus({
+    required this.progress,
+    required this.failed,
+    this.slotProgress,
+  });
 
   final PlaybackAssetProgress progress;
+  final bool failed;
   final _SlotProgress? slotProgress;
 
   @override
   Widget build(BuildContext context) {
+    if (failed) {
+      return const SizedBox(
+        width: 112,
+        child: Text(
+          '下载失败',
+          style: TextStyle(
+            color: KiraColors.red,
+            fontSize: 12,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      );
+    }
+
     // 下载完毕：所有资源完整缓存，不需要再显示进度条
     if (progress.isComplete) {
       return const SizedBox(width: 112);
@@ -316,6 +344,50 @@ class _DownloadStatus extends StatelessWidget {
     if (mb < 1024) return '${mb.toStringAsFixed(mb >= 100 ? 0 : 1)}MB';
     final gb = mb / 1024;
     return '${gb.toStringAsFixed(gb >= 100 ? 0 : 1)}GB';
+  }
+}
+
+class _QueueRetryButton extends StatelessWidget {
+  const _QueueRetryButton({required this.onTap});
+
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '重试下载',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            height: 38,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: KiraColors.surface2,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: KiraColors.lineStrong),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.refresh, size: 18, color: KiraColors.cream),
+                SizedBox(width: 6),
+                Text(
+                  '重试',
+                  style: TextStyle(
+                    color: KiraColors.cream,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

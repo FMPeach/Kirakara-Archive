@@ -9,40 +9,82 @@ class CandidateBar extends StatelessWidget {
     required this.candidates,
     required this.preedit,
     required this.onCandidateSelected,
+    this.errorMessage,
   });
 
   final List<ImeCandidate> candidates;
   final String preedit;
   final ValueChanged<int> onCandidateSelected;
+  final String? errorMessage;
 
   @override
   Widget build(BuildContext context) {
+    final error = errorMessage;
     return Container(
       height: 52,
       alignment: Alignment.centerLeft,
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: KiraColors.line)),
       ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            if (preedit.isNotEmpty) ...[
-              _PreeditChip(text: preedit),
-              const SizedBox(width: 8),
-            ],
-            for (var index = 0; index < candidates.length; index++)
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: _CandidateChip(
-                  index: index,
-                  candidate: candidates[index],
-                  onTap: () => onCandidateSelected(index),
-                ),
-              ),
+      child: error != null && error.isNotEmpty
+          ? _CandidateError(message: error, preedit: preedit)
+          : _candidateScroller(),
+    );
+  }
+
+  Widget _candidateScroller() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          if (preedit.isNotEmpty) ...[
+            _PreeditChip(text: preedit),
+            const SizedBox(width: 8),
           ],
-        ),
+          for (var index = 0; index < candidates.length; index++)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _CandidateChip(
+                index: index,
+                candidate: candidates[index],
+                onTap: () => onCandidateSelected(index),
+              ),
+            ),
+        ],
       ),
+    );
+  }
+}
+
+class _CandidateError extends StatelessWidget {
+  const _CandidateError({required this.message, required this.preedit});
+
+  final String message;
+  final String preedit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Icon(Icons.error_outline, size: 18, color: KiraColors.red),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            message,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: KiraColors.red,
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+        if (preedit.isNotEmpty) ...[
+          const SizedBox(width: 8),
+          SizedBox(width: 120, child: _PreeditChip(text: preedit)),
+        ],
+      ],
     );
   }
 }

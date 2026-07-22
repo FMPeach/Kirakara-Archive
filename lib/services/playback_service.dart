@@ -118,6 +118,13 @@ class PlaybackService extends ChangeNotifier {
     setCurrent(item, startPlaying: startPlaying);
   }
 
+  void failCurrent(String error) {
+    final item = _state.currentItem;
+    if (item == null) return;
+    _queueService.retainFailed(item, error);
+    next();
+  }
+
   void setKey(int key) {
     _setState(_state.copyWith(key: key.clamp(-6, 6).toInt()));
   }
@@ -152,6 +159,6 @@ class PlaybackService extends ChangeNotifier {
   }
 
   QueueItem? _peekNextQueueItem() {
-    return _queueService.items.isEmpty ? null : _queueService.items.first;
+    return _queueService.nextPlayableItem;
   }
 }

@@ -1,13 +1,26 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kirakara_app/ime/engines/mozc_ime_engine.dart';
+import 'package:kirakara_app/ime/engines/rime_ime_engine.dart';
 import 'package:kirakara_app/ime/ime_controller.dart';
 import 'package:kirakara_app/ime/ime_mode.dart';
+import 'package:kirakara_app/ime/native/ime_native_bridge.dart';
 import 'package:kirakara_app/ime/search_query_controller.dart';
 
 void main() {
   test('IME controller separates composition from committed search text',
       () async {
     final search = SearchQueryController();
-    final ime = ImeController(searchQueryController: search);
+    final ime = ImeController(
+      searchQueryController: search,
+      engines: {
+        ImeMode.pinyin: RimeImeEngine(
+          bridge: const _ControllerTestImeBridge({'lv': '绿'}),
+        ),
+        ImeMode.japaneseRomaji: MozcImeEngine(
+          bridge: const _ControllerTestImeBridge({'zankoku': '残酷'}),
+        ),
+      },
+    );
     addTearDown(ime.dispose);
     addTearDown(search.dispose);
 
@@ -58,4 +71,49 @@ void main() {
     expect(search.text, '残酷');
     expect(ime.composition.rawInput, isEmpty);
   });
+}
+
+class _ControllerTestImeBridge implements NativeImeBridge {
+  const _ControllerTestImeBridge(this.conversions);
+
+  final Map<String, String> conversions;
+
+  @override
+  String get engineName => 'test';
+
+  @override
+  bool get isAvailable => true;
+
+  @override
+  String? get unavailableReason => null;
+
+  @override
+  Future<void> activateSession(String sessionId) async {}
+
+  @override
+  Future<void> deactivateSession(String sessionId) async {}
+
+  @override
+  Future<NativeImeResult> compose({
+    required String sessionId,
+    required String rawInput,
+    required int pageIndex,
+  }) async {
+    final candidate = conversions[rawInput];
+    return NativeImeResult(
+      rawInput: rawInput,
+      preedit: rawInput,
+      candidates:
+          candidate == null ? const [] : [NativeImeCandidate(text: candidate)],
+    );
+  }
+
+  @override
+  Future<NativeImeResult> clear(String sessionId) async {
+    return const NativeImeResult(
+      rawInput: '',
+      preedit: '',
+      candidates: [],
+    );
+  }
 }

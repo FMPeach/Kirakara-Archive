@@ -4,23 +4,20 @@ import '../ime_engine.dart';
 import '../ime_mode.dart';
 import '../native/ime_native_bridge.dart';
 import '../native/rime_native_bridge.dart';
-import 'mock_pinyin_ime_engine.dart';
 
 class RimeImeEngine implements ImeEngine {
   RimeImeEngine({
     NativeImeBridge? bridge,
-    ImeEngine? fallback,
     this.sessionId = 'kirakara-rime-session',
-  })  : _bridge = bridge ?? const RimeNativeBridgeProbe().probe(),
-        _fallback = fallback ?? MockPinyinImeEngine();
+  }) : _bridge = bridge ?? const RimeNativeBridgeProbe().probe();
 
   final NativeImeBridge _bridge;
-  final ImeEngine _fallback;
   final String sessionId;
 
   String _rawInput = '';
   int _pageIndex = 0;
   bool _nativeFailed = false;
+  String? _nativeError;
   ImeComposition _composition = ImeComposition.empty(ImeMode.pinyin);
 
   @override
@@ -30,24 +27,20 @@ class RimeImeEngine implements ImeEngine {
   ImeComposition get composition => _composition;
 
   bool get isNativeAvailable => _bridge.isAvailable && !_nativeFailed;
-  String? get nativeUnavailableReason {
-    if (_nativeFailed) {
-      return 'Rime native bridge failed and fallback is active';
-    }
-    return _bridge.unavailableReason;
-  }
+  String? get nativeUnavailableReason =>
+      _nativeError ?? _bridge.unavailableReason;
 
   @override
   Future<void> activate() async {
-    if (isNativeAvailable) {
-      try {
-        await _bridge.activateSession(sessionId);
-        return;
-      } on Object {
-        _nativeFailed = true;
-      }
+    if (!_bridge.isAvailable) {
+      _composition = _failureComposition();
+      return;
     }
-    await _fallback.activate();
+    try {
+      await _bridge.activateSession(sessionId);
+    } on Object catch (error) {
+      _recordNativeFailure(error);
+    }
   }
 
   @override
@@ -55,93 +48,77 @@ class RimeImeEngine implements ImeEngine {
     if (isNativeAvailable) {
       try {
         await _bridge.deactivateSession(sessionId);
-      } on Object {
-        _nativeFailed = true;
+      } on Object catch (error) {
+        _recordNativeFailure(error);
       }
-      return;
     }
-    await _fallback.deactivate();
-  }
-
-  bool get _shouldUseFallback => !_bridge.isAvailable || _nativeFailed;
-
-  Future<ImeComposition> _syncFallbackInput() async {
-    var composition = await _fallback.clear();
-    for (final codeUnit in _rawInput.codeUnits) {
-      composition = await _fallback.inputKey(String.fromCharCode(codeUnit));
-    }
-    return composition;
   }
 
   @override
   Future<ImeComposition> inputKey(String key) async {
-    if (_shouldUseFallback) {
-      _composition = await _fallback.inputKey(key);
-      return _composition;
-    }
     _rawInput = '$_rawInput${key.toLowerCase()}';
     _pageIndex = 0;
+    if (!isNativeAvailable) {
+      _composition = _failureComposition();
+      return _composition;
+    }
     try {
       _composition = await _composeNative();
-    } on Object {
-      _nativeFailed = true;
-      _composition = await _syncFallbackInput();
+    } on Object catch (error) {
+      _recordNativeFailure(error);
     }
     return _composition;
   }
 
   @override
   Future<ImeComposition> backspace() async {
-    if (_shouldUseFallback) {
-      _composition = await _fallback.backspace();
-      return _composition;
-    }
     if (_rawInput.isNotEmpty) {
       _rawInput = _rawInput.substring(0, _rawInput.length - 1);
     }
     _pageIndex = 0;
+    if (!isNativeAvailable) {
+      _composition = _failureComposition();
+      return _composition;
+    }
     try {
       _composition = _rawInput.isEmpty
           ? ImeComposition.empty(mode)
           : await _composeNative();
-    } on Object {
-      _nativeFailed = true;
-      _composition = await _syncFallbackInput();
+    } on Object catch (error) {
+      _recordNativeFailure(error);
     }
     return _composition;
   }
 
   @override
   Future<ImeComposition> clear() async {
-    if (_shouldUseFallback) {
-      _composition = await _fallback.clear();
-      return _composition;
-    }
     _rawInput = '';
     _pageIndex = 0;
+    if (!isNativeAvailable) {
+      _composition = _failureComposition();
+      return _composition;
+    }
     try {
       final result = await _bridge.clear(sessionId);
       _composition = _fromNative(result);
-    } on Object {
-      _nativeFailed = true;
-      _composition = await _fallback.clear();
+    } on Object catch (error) {
+      _recordNativeFailure(error);
     }
     return _composition;
   }
 
   @override
   Future<ImeComposition> nextPage() async {
-    if (_shouldUseFallback) {
-      _composition = await _fallback.nextPage();
+    if (!isNativeAvailable) {
+      _composition = _failureComposition();
       return _composition;
     }
     if (_composition.hasNextPage) {
       _pageIndex += 1;
       try {
         _composition = await _composeNative();
-      } on Object {
-        _nativeFailed = true;
-        _composition = await _syncFallbackInput();
+      } on Object catch (error) {
+        _recordNativeFailure(error);
       }
     }
     return _composition;
@@ -149,17 +126,16 @@ class RimeImeEngine implements ImeEngine {
 
   @override
   Future<ImeComposition> previousPage() async {
-    if (_shouldUseFallback) {
-      _composition = await _fallback.previousPage();
+    if (!isNativeAvailable) {
+      _composition = _failureComposition();
       return _composition;
     }
     if (_pageIndex > 0) {
       _pageIndex -= 1;
       try {
         _composition = await _composeNative();
-      } on Object {
-        _nativeFailed = true;
-        _composition = await _syncFallbackInput();
+      } on Object catch (error) {
+        _recordNativeFailure(error);
       }
     }
     return _composition;
@@ -167,11 +143,6 @@ class RimeImeEngine implements ImeEngine {
 
   @override
   Future<ImeCommitResult> commitCandidate(int index) async {
-    if (_shouldUseFallback) {
-      final result = await _fallback.commitCandidate(index);
-      _composition = result.composition;
-      return result;
-    }
     final candidates = _composition.candidates;
     final text = index >= 0 && index < candidates.length
         ? candidates[index].text
@@ -182,11 +153,6 @@ class RimeImeEngine implements ImeEngine {
 
   @override
   Future<ImeCommitResult> commitRaw() async {
-    if (_shouldUseFallback) {
-      final result = await _fallback.commitRaw();
-      _composition = result.composition;
-      return result;
-    }
     final text = _rawInput;
     await clear();
     return ImeCommitResult(text: text, composition: _composition);
@@ -199,6 +165,23 @@ class RimeImeEngine implements ImeEngine {
       pageIndex: _pageIndex,
     );
     return _fromNative(result);
+  }
+
+  void _recordNativeFailure(Object error) {
+    _nativeFailed = true;
+    _nativeError = error.toString();
+    _composition = _failureComposition();
+  }
+
+  ImeComposition _failureComposition() {
+    final reason = nativeUnavailableReason ?? '未知错误';
+    return ImeComposition(
+      mode: mode,
+      rawInput: _rawInput,
+      preedit: _rawInput,
+      candidates: const [],
+      errorMessage: '拼音输入法不可用：$reason',
+    );
   }
 
   ImeComposition _fromNative(NativeImeResult result) {

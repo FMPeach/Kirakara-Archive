@@ -2,8 +2,8 @@
 
 Phase 3 keeps the Flutter UI on the generic `ImeEngine` surface and inserts a
 `RimeImeEngine` for pinyin. Windows now routes Rime calls through the runner
-`kirakara/ime` MethodChannel and the bundled `rime.dll`; the mock engine is only
-a development fallback when the native bridge fails.
+`kirakara/ime` MethodChannel and the bundled `rime.dll`. Native failures are
+reported in the candidate bar; no runtime mock candidate fallback remains.
 
 Bundled Windows runtime:
 

@@ -173,6 +173,22 @@ class _FakeAssetHttpClient extends http.BaseClient {
   }
 }
 
+class _AlwaysStatusHttpClient extends http.BaseClient {
+  _AlwaysStatusHttpClient(this.statusCode);
+
+  final int statusCode;
+  int requestCount = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    requestCount++;
+    return http.StreamedResponse(
+      const Stream<List<int>>.empty(),
+      statusCode,
+    );
+  }
+}
+
 class _ConcurrentVideoHttpClient extends http.BaseClient {
   _ConcurrentVideoHttpClient({int count = 4, this.resumableIndex})
       : started = List.generate(count, (_) => Completer<void>()),
@@ -302,6 +318,24 @@ void main() {
 
     playback.toggleAudioTrack();
     expect(playback.state.audioTrackMode, AudioTrackMode.accompaniment);
+  });
+
+  test('failed queue rows are skipped until explicitly retried', () {
+    final search = _testSearch();
+    final queue = QueueService();
+    final failed = queue.addSong(search.featuredSongs[0]);
+    final playable = queue.addSong(search.featuredSongs[1]);
+
+    queue.markFailed(failed.id, '下载失败');
+
+    expect(queue.nextPlayableItem?.id, playable.id);
+    expect(queue.takeNext()?.id, playable.id);
+    expect(queue.items.single.id, failed.id);
+    expect(queue.isFailed(failed.id), isTrue);
+
+    queue.retry(failed.id);
+    expect(queue.isFailed(failed.id), isFalse);
+    expect(queue.nextPlayableItem?.id, failed.id);
   });
 
   test('replay emits a distinct command even when already at zero', () {
@@ -434,7 +468,7 @@ void main() {
     expect(playback.state.upNext, isNull);
   });
 
-  test('agony sample is searchable from fallback catalog', () {
+  test('agony sample is searchable from the test catalog', () {
     final search = _testSearch();
 
     final byTitle = search.searchSongs('agony');
@@ -1030,10 +1064,60 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 25));
     }
     final progress = cache.progressForSong(song);
-    expect(progress.assetCount, 4); // video + vocal + lyric + cover
-    expect(progress.completeAssets, 4);
+    expect(progress.assetCount, 3); // cover is optional for playback
+    expect(progress.completeAssets, 3);
     expect(progress.isComplete, isTrue);
   });
+
+  for (final statusCode in [
+    HttpStatus.notFound,
+    HttpStatus.serviceUnavailable,
+  ]) {
+    test('required asset HTTP $statusCode retries five times then fails',
+        () async {
+      final client = _AlwaysStatusHttpClient(statusCode);
+      final cacheDir = await Directory.systemTemp.createTemp(
+        'kirakara_cache_failure_test_',
+      );
+      addTearDown(() {
+        if (cacheDir.existsSync()) cacheDir.deleteSync(recursive: true);
+      });
+      final cache = PlaybackAssetCache(
+        baseUrl: 'http://catalog.test',
+        cacheDir: cacheDir,
+        httpClient: client,
+        mediaHttpClient: client,
+        retryDelay: Duration.zero,
+        maxAutomaticRetries: 5,
+      );
+      addTearDown(cache.dispose);
+      final video = MediaAsset(
+        id: 'failed-video-$statusCode',
+        type: MediaAssetType.video,
+        uri: Uri.parse('/media/failed-$statusCode.mp4'),
+      );
+      final song = Song(
+        id: 'failed-song-$statusCode',
+        title: 'Failed asset',
+        category: 'Test',
+        assets: [video],
+      );
+
+      await expectLater(
+        cache.ensurePlaybackAssets(song),
+        throwsA(
+          isA<PlaybackAssetDownloadException>().having(
+            (error) => error.statusCode,
+            'statusCode',
+            statusCode,
+          ),
+        ),
+      );
+
+      expect(client.requestCount, 6); // initial attempt + five retries
+      expect(cache.progressForSong(song).hasFailed, isTrue);
+    });
+  }
 
   test('display manager selects the first non-primary display as stage',
       () async {

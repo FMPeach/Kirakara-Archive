@@ -2,7 +2,8 @@
 
 Phase 4 keeps Japanese romaji input behind the same `ImeEngine` interface as
 English, Rime, and handwriting. `MozcImeEngine` now probes an app-owned Windows
-helper first and falls back to `MockJapaneseImeEngine` only when that helper is
+helper first and reports helper failures in the candidate bar instead of
+generating fixed mock candidates when that helper is
 missing or fails during development.
 
 Hard boundary:

@@ -278,7 +278,11 @@ class KirakaraShowService extends ChangeNotifier {
       return;
     }
     if (!loaded) {
-      _finishShowLoading(item.id, generation);
+      _failCurrentPreparation(
+        item,
+        generation,
+        '播放资源无法载入',
+      );
       return;
     }
 
@@ -309,6 +313,7 @@ class KirakaraShowService extends ChangeNotifier {
 
       // 外链 DASH 同样进入播放周期缓存：视频渐进，音频完整落盘。
       if (_assetCache != null) {
+        _assetCache.validateRequiredPlaybackAssets(item.song);
         await _assetCache.ensurePlaybackAssets(item.song);
       }
       if (!_isCurrentPreparation(item, generation)) return;
@@ -317,7 +322,13 @@ class KirakaraShowService extends ChangeNotifier {
       if (ffi == null) return;
 
       final videoPath = _pathFor(item.song, MediaAssetType.video);
-      if (videoPath == null) return;
+      if (videoPath == null) {
+        throw PlaybackAssetDownloadException(
+          songId: item.song.id,
+          assetType: MediaAssetType.video,
+          message: '视频不可用',
+        );
+      }
       if (!_isCurrentPreparation(item, generation)) return;
 
       // 外部歌曲不需要歌词，也不做 existsSync 检查（视频是 HTTP URL）
@@ -327,16 +338,31 @@ class KirakaraShowService extends ChangeNotifier {
       } else {
         lyricPath = item.song.lyricProject?.cachedPath ??
             _pathFor(item.song, MediaAssetType.lyric);
-        if (lyricPath == null) return;
+        if (lyricPath == null) {
+          throw PlaybackAssetDownloadException(
+            songId: item.song.id,
+            assetType: MediaAssetType.lyric,
+            message: 'KRL 不可用',
+          );
+        }
         if ((!_isHttpPath(videoPath) && !File(videoPath).existsSync()) ||
             !File(lyricPath).existsSync()) {
-          return;
+          throw PlaybackAssetDownloadException(
+            songId: item.song.id,
+            message: '视频或 KRL 缓存文件不存在',
+          );
         }
       }
 
       final vocalPath = _existingPathFor(item.song, MediaAssetType.vocal);
       final accompanimentPath =
           _existingPathFor(item.song, MediaAssetType.accompaniment);
+      if (!isExternal && (vocalPath == null || accompanimentPath == null)) {
+        throw PlaybackAssetDownloadException(
+          songId: item.song.id,
+          message: '原唱或伴奏不可用',
+        );
+      }
       if (!_isCurrentPreparation(item, generation)) return;
 
       _beginShowLoading(generation);
@@ -358,8 +384,10 @@ class KirakaraShowService extends ChangeNotifier {
         return;
       }
       if (!loaded) {
-        _finishShowLoading(item.id, generation);
-        return;
+        throw PlaybackAssetDownloadException(
+          songId: item.song.id,
+          message: '播放资源无法载入',
+        );
       }
 
       _loadedSongId = item.song.id;
@@ -377,6 +405,14 @@ class KirakaraShowService extends ChangeNotifier {
 
       _slotManager?.onPlaybackStarted();
       _syncWithPlayback();
+    } on PlaybackAssetDownloadException catch (error) {
+      if (_isCurrentPreparation(item, generation)) {
+        debugPrint(
+          'KirakaraShowService: skipping failed song ${item.song.id}: $error',
+        );
+        _finishShowLoading(item.id, generation);
+        _playbackService.failCurrent(error.toString());
+      }
     } finally {
       if (_preparingItemId == item.id && generation == _prepareGeneration) {
         _preparingItemId = null;
@@ -585,6 +621,16 @@ class KirakaraShowService extends ChangeNotifier {
     if (_showLoadingGeneration == generation) {
       _setShowLoading(false);
     }
+  }
+
+  void _failCurrentPreparation(
+    QueueItem item,
+    int generation,
+    String error,
+  ) {
+    if (!_isCurrentPreparation(item, generation)) return;
+    _finishShowLoading(item.id, generation);
+    _playbackService.failCurrent(error);
   }
 
   void _setShowLoading(bool value) {

@@ -18,11 +18,16 @@ class PlaybackAssetCache extends ChangeNotifier {
     Directory? cacheRoot,
     http.Client? httpClient,
     http.Client? mediaHttpClient,
+    Duration retryDelay = const Duration(milliseconds: 500),
+    int maxAutomaticRetries = 5,
   })  : assert(cacheDir == null || cacheRoot == null),
+        assert(maxAutomaticRetries >= 0),
         _baseUri = Uri.parse(baseUrl.endsWith('/') ? baseUrl : '$baseUrl/'),
         _cacheDir = cacheDir ?? _createSessionCacheDirectory(cacheRoot),
         _http = httpClient ?? http.Client(),
-        _mediaHttp = mediaHttpClient ?? http.Client();
+        _mediaHttp = mediaHttpClient ?? http.Client(),
+        _retryDelay = retryDelay,
+        _maxAutomaticRetries = maxAutomaticRetries;
 
   static Directory _createSessionCacheDirectory(Directory? cacheRoot) {
     final root = cacheRoot ??
@@ -77,6 +82,8 @@ class PlaybackAssetCache extends ChangeNotifier {
   final Directory _cacheDir;
   final http.Client _http;
   final http.Client _mediaHttp;
+  final Duration _retryDelay;
+  final int _maxAutomaticRetries;
   final Map<String, Future<void>> _downloads = {};
   final Map<String, MediaAsset> _streamAssets = {};
   final Map<String, _DownloadState> _downloadStates = {};
@@ -108,7 +115,14 @@ class PlaybackAssetCache extends ChangeNotifier {
   /// [song.lyricProject.cachedPath]。
   Future<void> ensureSongAssets(Song song) async {
     _songPriorities.putIfAbsent(song.id, () => 0);
-    await Future.wait(song.assets.map((asset) => _ensureOne(song.id, asset)));
+    await Future.wait(
+      song.assets
+          .where(_isPlaybackAsset)
+          .map((asset) => _ensureOne(song.id, asset)),
+    );
+    for (final cover in song.assets.where(_isOptionalAsset)) {
+      _startBackgroundDownload(song.id, cover, required: false);
+    }
     _syncLyricProject(song);
   }
 
@@ -124,10 +138,16 @@ class PlaybackAssetCache extends ChangeNotifier {
     final blocking = <Future<void>>[];
     final videos = <MediaAsset>[];
     for (final asset in song.assets) {
+      if (_isOptionalAsset(asset)) {
+        _startBackgroundDownload(song.id, asset, required: false);
+        continue;
+      }
       if (!_isPlaybackAsset(asset)) continue;
       if (asset.type == MediaAssetType.video) {
         videos.add(asset);
-        unawaited(_ensureOne(song.id, asset, background: true));
+        final availability = _downloadStateFor(asset).whenAvailable;
+        _startBackgroundDownload(song.id, asset, background: true);
+        blocking.add(availability);
       } else if (_isAudio(asset.type)) {
         final task = _ensureOne(song.id, asset);
         if (awaitAudio) {
@@ -161,11 +181,16 @@ class PlaybackAssetCache extends ChangeNotifier {
     _songPriorities.putIfAbsent(song.id, () => 2);
     final videos = <MediaAsset>[];
     for (final asset in song.assets) {
-      if (!_isPlaybackAsset(asset)) continue;
+      if (!_isPlaybackAsset(asset) && !_isOptionalAsset(asset)) continue;
       if (asset.type == MediaAssetType.video) {
         videos.add(asset);
       }
-      unawaited(_ensureOne(song.id, asset, background: true));
+      _startBackgroundDownload(
+        song.id,
+        asset,
+        background: true,
+        required: _isPlaybackAsset(asset),
+      );
     }
     final streamVideos = videos
         .where((asset) => existingLocalPathFor(asset) == null)
@@ -194,16 +219,46 @@ class PlaybackAssetCache extends ChangeNotifier {
     _downloadConnectionPool.prioritiesChanged();
   }
 
+  void validateRequiredPlaybackAssets(Song song) {
+    final availableTypes = song.assets.map((asset) => asset.type).toSet();
+    final requiredTypes = song.isExternal
+        ? const [MediaAssetType.video]
+        : const [
+            MediaAssetType.video,
+            MediaAssetType.vocal,
+            MediaAssetType.accompaniment,
+            MediaAssetType.lyric,
+          ];
+    final missing = requiredTypes
+        .where((type) => !availableTypes.contains(type))
+        .map(_assetTypeLabel)
+        .toList(growable: false);
+    if (missing.isEmpty) return;
+    throw PlaybackAssetDownloadException(
+      songId: song.id,
+      message: '缺少播放必需资源：${missing.join('、')}',
+    );
+  }
+
+  void resetFailuresForSong(Song song) {
+    for (final asset in song.assets) {
+      _downloadStateFor(asset).resetFailure();
+    }
+    _notifyProgressListeners();
+  }
+
   /// 歌曲所有已知 asset 是否已完整缓存。
   bool isSongFullyCached(Song song) {
-    if (song.assets.isEmpty) return true;
-    for (final asset in song.assets) {
+    final playbackAssets = song.assets.where(_isPlaybackAsset).toList();
+    if (playbackAssets.isEmpty) return true;
+    for (final asset in playbackAssets) {
       final local = existingLocalPathFor(asset);
       if (local == null) return false;
     }
     // 没有正在进行的下载
-    final inProgress = _downloads.keys
-        .any((key) => song.assets.any((a) => key.startsWith('${a.id}|')));
+    final inProgress = _downloads.keys.any(
+      (key) => playbackAssets.any((asset) => key.startsWith('${asset.id}|')),
+    );
     return !inProgress;
   }
 
@@ -258,7 +313,9 @@ class PlaybackAssetCache extends ChangeNotifier {
     var downloadedBytes = 0;
     var knownAssets = 0;
     var completeAssets = 0;
+    var failedAssets = 0;
     var bytesPerSecond = 0.0;
+    String? errorMessage;
 
     final assets = song.assets.where(_isPlaybackAsset).toList(growable: false);
     for (final asset in assets) {
@@ -270,6 +327,10 @@ class PlaybackAssetCache extends ChangeNotifier {
       downloadedBytes += progress.downloadedBytes;
       bytesPerSecond += progress.bytesPerSecond;
       if (progress.isComplete) completeAssets++;
+      if (progress.isFailed) {
+        failedAssets++;
+        errorMessage ??= progress.errorMessage;
+      }
     }
 
     return PlaybackAssetProgress(
@@ -281,6 +342,8 @@ class PlaybackAssetCache extends ChangeNotifier {
       knownAssets: knownAssets,
       completeAssets: completeAssets,
       assetCount: assets.length,
+      failedAssets: failedAssets,
+      errorMessage: errorMessage,
     );
   }
 
@@ -300,11 +363,19 @@ class PlaybackAssetCache extends ChangeNotifier {
     String songId,
     MediaAsset asset, {
     bool background = false,
+    bool required = true,
   }) {
+    final state = _downloadStateFor(asset);
+    final previousError = state.error;
+    if (previousError != null) return Future<void>.error(previousError);
+
     // 已有有效本地文件，跳过
     if (asset.cachedPath != null && asset.cachedPath!.isNotEmpty) {
       final f = File(asset.cachedPath!);
-      if (f.existsSync()) return Future.value();
+      if (f.existsSync()) {
+        state.markAvailable();
+        return Future.value();
+      }
     }
 
     // A completed progressive video can remain as `.part` while Media
@@ -317,12 +388,33 @@ class PlaybackAssetCache extends ChangeNotifier {
 
     // 本地 file:// 无需下载
     if (asset.uri.isScheme('file')) {
-      asset.cachedPath = asset.uri.toFilePath(windows: Platform.isWindows);
-      return Future.value();
+      final path = asset.uri.toFilePath(windows: Platform.isWindows);
+      if (File(path).existsSync()) {
+        asset.cachedPath = path;
+        state.markAvailable();
+        return Future.value();
+      }
+      return _failWithoutDownload(
+        state,
+        PlaybackAssetDownloadException(
+          songId: songId,
+          assetType: asset.type,
+          message: '本地播放资源不存在：$path',
+        ),
+      );
     }
 
     final url = _remoteUrlFor(asset);
-    if (url == null) return Future.value();
+    if (url == null) {
+      return _failWithoutDownload(
+        state,
+        PlaybackAssetDownloadException(
+          songId: songId,
+          assetType: asset.type,
+          message: '播放资源地址无效',
+        ),
+      );
+    }
 
     final localPath = _localPathFor(asset);
     final key = '${asset.id}|${asset.type.name}|${asset.version}|$url';
@@ -338,6 +430,7 @@ class PlaybackAssetCache extends ChangeNotifier {
       localPath: localPath,
       asset: asset,
       client: background ? _mediaHttp : _http,
+      required: required,
     ).whenComplete(() {
       if (identical(_downloads[key], future)) {
         _downloads.remove(key);
@@ -353,16 +446,20 @@ class PlaybackAssetCache extends ChangeNotifier {
     required String localPath,
     required MediaAsset asset,
     required http.Client client,
+    required bool required,
   }) async {
     if (await _hydrateCachedAsset(asset, localPath)) return;
 
+    var retries = 0;
     while (!_disposed) {
+      var retryAfterFailure = false;
       final connectionLease = await _downloadConnectionPool.acquire(
         priority: () => _songPriorities[songId] ?? 2,
       );
       try {
         if (_disposed) return;
         if (await _hydrateCachedAsset(asset, localPath)) return;
+        _downloadStateFor(asset).lastError = null;
         final result = await _downloadToCache(
           url,
           localPath,
@@ -370,14 +467,59 @@ class PlaybackAssetCache extends ChangeNotifier {
           client: client,
           connectionLease: connectionLease,
         );
-        if (result != _DownloadAttemptResult.preempted) return;
+        if (result == _DownloadAttemptResult.finished) return;
+        if (result == _DownloadAttemptResult.failed) {
+          retryAfterFailure = true;
+          final state = _downloadStateFor(asset);
+          final error = state.lastError ??
+              PlaybackAssetDownloadException(
+                songId: songId,
+                assetType: asset.type,
+                message: '下载失败',
+              );
+          if (retries >= (required ? _maxAutomaticRetries : 0)) {
+            state.markFailed(error);
+            _notifyProgressListeners();
+            throw error;
+          }
+          retries++;
+        }
       } finally {
         connectionLease.release();
       }
-      // Re-enter the priority queue. The existing `.part` file is preserved,
-      // so the next attempt resumes with an HTTP Range request.
-      await Future<void>.delayed(Duration.zero);
+      if (retryAfterFailure) {
+        await Future<void>.delayed(_retryDelay);
+      } else {
+        // Preemption does not consume a retry. Preserve `.part` and re-enter
+        // the priority queue immediately for an HTTP Range continuation.
+        await Future<void>.delayed(Duration.zero);
+      }
     }
+  }
+
+  void _startBackgroundDownload(
+    String songId,
+    MediaAsset asset, {
+    bool background = false,
+    bool required = true,
+  }) {
+    unawaited(
+      _ensureOne(
+        songId,
+        asset,
+        background: background,
+        required: required,
+      ).catchError((Object _) {}),
+    );
+  }
+
+  Future<void> _failWithoutDownload(
+    _DownloadState state,
+    PlaybackAssetDownloadException error,
+  ) {
+    state.markFailed(error);
+    _notifyProgressListeners();
+    return Future<void>.error(error);
   }
 
   Future<bool> _hydrateCachedAsset(
@@ -391,6 +533,7 @@ class PlaybackAssetCache extends ChangeNotifier {
     state.totalLength = await localFile.length();
     state.downloadedBytes = state.totalLength ?? 0;
     state.complete = true;
+    state.markAvailable();
     return true;
   }
 
@@ -442,25 +585,36 @@ class PlaybackAssetCache extends ChangeNotifier {
         return _DownloadAttemptResult.preempted;
       }
       if (response.statusCode == HttpStatus.requestedRangeNotSatisfiable) {
+        await response.stream.drain<void>();
         if (existingBytes > 0) {
           state.complete = true;
           state.totalLength = existingBytes;
           state.downloadedBytes = state.totalLength ?? 0;
+          state.markAvailable();
           _notifyProgressListeners();
           await _promoteCompletedPart(asset, partFile);
+          return _DownloadAttemptResult.finished;
         }
-        return _DownloadAttemptResult.finished;
+        state.lastError = PlaybackAssetDownloadException(
+          assetType: asset.type,
+          statusCode: response.statusCode,
+          message: '服务器拒绝了空文件续传请求',
+        );
+        return _DownloadAttemptResult.failed;
       }
       if (response.statusCode != HttpStatus.ok &&
           response.statusCode != HttpStatus.partialContent) {
-        // 404/403/5xx — 资源不存在，标记跳过，不阻塞进度条
-        await partFile.create(recursive: true);
-        state.complete = true;
-        state.totalLength = 0;
-        state.downloadedBytes = 0;
-        _notifyProgressListeners();
-        return _DownloadAttemptResult.finished;
+        await response.stream.drain<void>();
+        state.lastError = PlaybackAssetDownloadException(
+          assetType: asset.type,
+          statusCode: response.statusCode,
+          message: '服务器返回 HTTP ${response.statusCode}',
+        );
+        return _DownloadAttemptResult.failed;
       }
+
+      state.markAvailable();
+      state.lastError = null;
 
       final append =
           response.statusCode == HttpStatus.partialContent && existingBytes > 0;
@@ -522,13 +676,21 @@ class PlaybackAssetCache extends ChangeNotifier {
         state.markSample(actualLength);
         _notifyProgressListeners();
         await _promoteCompletedPart(asset, partFile);
+        return _DownloadAttemptResult.finished;
       }
-      return _DownloadAttemptResult.finished;
-    } catch (_) {
-      // 下载失败，asset.cachedPath 保持 null
+      state.lastError = PlaybackAssetDownloadException(
+        assetType: asset.type,
+        message: '下载提前结束：$actualLength/$expectedLength bytes',
+      );
+      return _DownloadAttemptResult.failed;
+    } catch (error) {
+      _downloadStateFor(asset).lastError = PlaybackAssetDownloadException(
+        assetType: asset.type,
+        message: '下载连接失败：$error',
+      );
       return connectionLease.preemptRequested
           ? _DownloadAttemptResult.preempted
-          : _DownloadAttemptResult.finished;
+          : _DownloadAttemptResult.failed;
     }
   }
 
@@ -817,15 +979,6 @@ class PlaybackAssetCache extends ChangeNotifier {
     await response.close();
   }
 
-  Future<bool> _waitForReadableBytes(MediaAsset asset, int minBytes) async {
-    for (var i = 0; i < 6000; i++) {
-      final file = await _readableFileFor(asset);
-      if (file != null && await file.length() >= minBytes) return true;
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
-    return false;
-  }
-
   Future<File?> _readableFileFor(MediaAsset asset) async {
     final localFile = File(_localPathFor(asset));
     if (await localFile.exists()) return localFile;
@@ -890,6 +1043,8 @@ class PlaybackAssetCache extends ChangeNotifier {
         downloadedBytes: length,
         bytesPerSecond: 0,
         isComplete: length > 0,
+        isFailed: length <= 0,
+        errorMessage: length <= 0 ? '本地文件不存在' : null,
       );
     }
 
@@ -901,6 +1056,7 @@ class PlaybackAssetCache extends ChangeNotifier {
         downloadedBytes: length,
         bytesPerSecond: 0,
         isComplete: true,
+        isFailed: false,
       );
     }
 
@@ -912,7 +1068,9 @@ class PlaybackAssetCache extends ChangeNotifier {
       totalBytes: state.totalLength,
       downloadedBytes: downloaded,
       bytesPerSecond: state.bytesPerSecond,
-      isComplete: state.complete,
+      isComplete: state.complete && !state.failed,
+      isFailed: state.failed,
+      errorMessage: state.error?.toString(),
     );
   }
 
@@ -934,8 +1092,17 @@ class PlaybackAssetCache extends ChangeNotifier {
   bool _isAudio(MediaAssetType type) =>
       type == MediaAssetType.vocal || type == MediaAssetType.accompaniment;
 
-  bool _isPlaybackAsset(MediaAsset asset) =>
-      true; // include cover — 404 handled gracefully
+  bool _isPlaybackAsset(MediaAsset asset) => asset.type != MediaAssetType.cover;
+
+  bool _isOptionalAsset(MediaAsset asset) => asset.type == MediaAssetType.cover;
+
+  static String _assetTypeLabel(MediaAssetType type) => switch (type) {
+        MediaAssetType.video => '视频',
+        MediaAssetType.vocal => '原唱',
+        MediaAssetType.accompaniment => '伴奏',
+        MediaAssetType.lyric => 'KRL',
+        MediaAssetType.cover => '封面',
+      };
 
   void _notifyProgressListeners() {
     if (!_disposed) notifyListeners();
@@ -975,8 +1142,48 @@ class _DownloadState {
   int downloadedBytes = 0;
   double bytesPerSecond = 0;
   bool complete = false;
+  bool available = false;
+  Object? lastError;
+  Object? error;
+  Completer<void>? _availability;
   int _lastSampleBytes = 0;
   DateTime? _lastSampleAt;
+
+  bool get failed => error != null;
+
+  Future<void> get whenAvailable {
+    if (available) return Future.value();
+    final failure = error;
+    if (failure != null) return Future<void>.error(failure);
+    return (_availability ??= Completer<void>()).future;
+  }
+
+  void markAvailable() {
+    available = true;
+    error = null;
+    lastError = null;
+    final availability = _availability;
+    if (availability != null && !availability.isCompleted) {
+      availability.complete();
+    }
+  }
+
+  void markFailed(Object failure) {
+    complete = false;
+    bytesPerSecond = 0;
+    error = failure;
+    lastError = failure;
+    final availability = _availability;
+    if (availability != null && !availability.isCompleted) {
+      availability.completeError(failure);
+    }
+  }
+
+  void resetFailure() {
+    error = null;
+    lastError = null;
+    if (!available) _availability = null;
+  }
 
   void markSample(int bytes) {
     final now = DateTime.now();
@@ -996,7 +1203,7 @@ class _DownloadState {
   }
 }
 
-enum _DownloadAttemptResult { finished, preempted }
+enum _DownloadAttemptResult { finished, preempted, failed }
 
 /// 全资源并发池。正常最多允许 15 条响应流同时拉取并写盘。
 ///
@@ -1158,6 +1365,8 @@ class PlaybackAssetProgress {
     required this.knownAssets,
     required this.completeAssets,
     required this.assetCount,
+    required this.failedAssets,
+    this.errorMessage,
   });
 
   final int totalBytes;
@@ -1166,11 +1375,15 @@ class PlaybackAssetProgress {
   final int knownAssets;
   final int completeAssets;
   final int assetCount;
+  final int failedAssets;
+  final String? errorMessage;
 
   double? get fraction =>
       totalBytes <= 0 ? null : (downloadedBytes / totalBytes).clamp(0.0, 1.0);
 
-  bool get isComplete => assetCount > 0 && completeAssets >= assetCount;
+  bool get hasFailed => failedAssets > 0;
+  bool get isComplete =>
+      !hasFailed && assetCount > 0 && completeAssets >= assetCount;
 }
 
 class _AssetProgress {
@@ -1179,10 +1392,36 @@ class _AssetProgress {
     required this.downloadedBytes,
     required this.bytesPerSecond,
     required this.isComplete,
+    this.isFailed = false,
+    this.errorMessage,
   });
 
   final int? totalBytes;
   final int downloadedBytes;
   final double bytesPerSecond;
   final bool isComplete;
+  final bool isFailed;
+  final String? errorMessage;
+}
+
+class PlaybackAssetDownloadException implements Exception {
+  const PlaybackAssetDownloadException({
+    this.songId,
+    this.assetType,
+    this.statusCode,
+    required this.message,
+  });
+
+  final String? songId;
+  final MediaAssetType? assetType;
+  final int? statusCode;
+  final String message;
+
+  @override
+  String toString() {
+    final type = assetType == null
+        ? ''
+        : '${PlaybackAssetCache._assetTypeLabel(assetType!)}：';
+    return '$type$message';
+  }
 }

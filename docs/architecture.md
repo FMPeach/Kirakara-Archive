@@ -98,11 +98,8 @@ Debug mode:
 - a preview window or embedded preview can simulate Stage Output.
 - Stage rendering remains independent from controller widgets.
 
-## Replacement Points
+## Remaining Replacement Points
 
-- `MockStageRenderer` -> KiraKara-Show native renderer / texture
-- `SearchService` mock list -> repository backed by synced catalog index and
-  SQLite FTS or equivalent
 - `LanServer` mock JSON endpoints -> phone ordering web app and API
 - `MockCatalogClient` -> local/cloud catalog client with manifest and delta
   sync

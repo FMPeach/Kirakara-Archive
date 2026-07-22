@@ -72,18 +72,14 @@ class _KirakaraAppState extends State<KirakaraApp> {
     searchService = SearchService(db: _localDb);
     queueService = QueueService();
 
-    for (final song in searchService.featuredSongs.take(3)) {
-      queueService.addSong(song);
-    }
-    final first = queueService.takeNext();
     playbackService = PlaybackService(
       queueService: queueService,
-      initialItem: first,
     );
     playbackService.refreshUpNext();
     _slotManager = PlaybackSlotManager(
       queueService: queueService,
       assetCache: _assetCache,
+      onQueueAvailabilityChanged: playbackService.refreshUpNext,
     );
     settingsService = SettingsService(
       initialCacheDirectoryPath: cacheRoot.path,
@@ -118,7 +114,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
         });
       }
     } catch (e) {
-      debugPrint('Catalog sync failed, using fallback data: $e');
+      debugPrint('Catalog sync failed; keeping the local catalog index: $e');
     }
   }
 

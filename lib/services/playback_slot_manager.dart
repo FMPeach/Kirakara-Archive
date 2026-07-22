@@ -18,13 +18,16 @@ class PlaybackSlotManager extends ChangeNotifier {
   PlaybackSlotManager({
     required QueueService queueService,
     PlaybackAssetCache? assetCache,
+    VoidCallback? onQueueAvailabilityChanged,
   })  : _queueService = queueService,
-        _assetCache = assetCache {
+        _assetCache = assetCache,
+        _onQueueAvailabilityChanged = onQueueAvailabilityChanged {
     _queueService.addListener(_onQueueChanged);
   }
 
   final QueueService _queueService;
   final PlaybackAssetCache? _assetCache;
+  final VoidCallback? _onQueueAvailabilityChanged;
   int _prefetchLookahead = 3;
   final Set<String> _prefetchedSongIds = {};
 
@@ -104,7 +107,9 @@ class PlaybackSlotManager extends ChangeNotifier {
     final cache = _assetCache;
     if (cache == null) return;
 
-    final items = _queueService.items;
+    final items = _queueService.items
+        .where((item) => !_queueService.isFailed(item.id))
+        .toList(growable: false);
     final limit =
         items.length < _prefetchLookahead ? items.length : _prefetchLookahead;
     final nextPrefetchedIds = <String>{
@@ -150,6 +155,7 @@ class PlaybackSlotManager extends ChangeNotifier {
     try {
       // 1) 普通曲目和外链 DASH 都进入本次运行周期缓存。
       if (_assetCache != null) {
+        _assetCache.validateRequiredPlaybackAssets(item.song);
         _assetCache.setSongPriority(item.song.id, 1);
         // 进度轮询
         unawaited(_pollSlotProgress(slot, gen));
@@ -189,6 +195,8 @@ class PlaybackSlotManager extends ChangeNotifier {
       slot.state = SlotState.failed;
       slot.error = e.toString();
       notifyListeners();
+      _queueService.markFailed(item.id, slot.error!);
+      _onQueueAvailabilityChanged?.call();
     }
   }
 
@@ -240,8 +248,7 @@ class PlaybackSlotManager extends ChangeNotifier {
   // ── helpers ───────────────────────────────────────────────────
 
   QueueItem? _peekNextQueueItem() {
-    final items = _queueService.items;
-    return items.isNotEmpty ? items.first : null;
+    return _queueService.nextPlayableItem;
   }
 
   String? _pathFor(Song song, MediaAssetType type) {

@@ -6,9 +6,7 @@ import 'package:kirakara_app/ime/native/ime_native_bridge.dart';
 import 'package:kirakara_app/ime/native/mozc_native_bridge.dart';
 
 void main() {
-  test(
-      'Mozc engine falls back to mock Japanese input when native is unavailable',
-      () async {
+  test('Mozc engine exposes native failure without fake candidates', () async {
     final engine = MozcImeEngine(
       bridge: const UnavailableNativeImeBridge(
         engineName: 'mozc',
@@ -22,9 +20,11 @@ void main() {
     }
 
     expect(engine.composition.rawInput, 'zankoku');
+    expect(engine.composition.candidates, isEmpty);
+    expect(engine.composition.errorMessage, contains('日语输入法不可用'));
     expect(
-      engine.composition.candidates.map((c) => c.text),
-      contains('残酷'),
+      engine.composition.errorMessage,
+      contains('test bridge is intentionally unavailable'),
     );
   });
 

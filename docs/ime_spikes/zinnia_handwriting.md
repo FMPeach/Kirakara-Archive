@@ -2,7 +2,7 @@
 
 Phase 5 adds the Flutter handwriting pad and routes recognition through
 `ZinniaHandwritingEngine`. Windows now uses the bundled native Zinnia runtime
-first and falls back to `MockHandwritingImeEngine` only when the runner channel
+first and reports runner/model failures in the candidate bar when the channel
 or packaged models are unavailable.
 
 Windows packaging:
