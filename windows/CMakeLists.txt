@@ -123,6 +123,12 @@ if(EXISTS "${KIRAKARA_IME_RUNTIME_DIR}")
     PATTERN "_sources" EXCLUDE
     PATTERN "source" EXCLUDE
     PATTERN "*.lib" EXCLUDE)
+  # Zinnia is statically linked; do not leave empty build-only runtime folders
+  # in the application bundle after excluding its .lib files above.
+  install(CODE "
+    file(REMOVE_RECURSE
+      \"${CMAKE_INSTALL_PREFIX}/ime/zinnia/windows/runtime\")
+    " COMPONENT Runtime)
 endif()
 
 # Install the AOT library on non-Debug builds only.

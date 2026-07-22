@@ -45,8 +45,8 @@ int zinnia_character_add(zinnia_character_t* character, size_t id, int x,
 
 zinnia_recognizer_t* zinnia_recognizer_new();
 void zinnia_recognizer_destroy(zinnia_recognizer_t* recognizer);
-int zinnia_recognizer_open(zinnia_recognizer_t* recognizer,
-                           const char* filename);
+int zinnia_recognizer_open_from_ptr(zinnia_recognizer_t* recognizer,
+                                    const char* ptr, size_t size);
 const char* zinnia_recognizer_strerror(zinnia_recognizer_t* recognizer);
 zinnia_result_t* zinnia_recognizer_classify(
     zinnia_recognizer_t* recognizer,
@@ -584,9 +584,17 @@ class ZinniaRuntime {
       return false;
     }
 
-    const auto ja_model_utf8 = WideToUtf8(ja_model.wstring());
-    const auto zh_model_utf8 = WideToUtf8(zh_model.wstring());
-    if (!zinnia_recognizer_open(recognizer_ja_, ja_model_utf8.c_str())) {
+    if (!ReadModelFile(ja_model, "Japanese", &ja_model_data_, error)) {
+      DestroyRecognizers();
+      return false;
+    }
+    if (!ReadModelFile(zh_model, "Chinese", &zh_model_data_, error)) {
+      DestroyRecognizers();
+      return false;
+    }
+
+    if (!zinnia_recognizer_open_from_ptr(
+            recognizer_ja_, ja_model_data_.data(), ja_model_data_.size())) {
       if (error) {
         *error = "Unable to open bundled Zinnia Japanese model: " +
                  RecognizerError(recognizer_ja_);
@@ -594,7 +602,8 @@ class ZinniaRuntime {
       DestroyRecognizers();
       return false;
     }
-    if (!zinnia_recognizer_open(recognizer_zh_, zh_model_utf8.c_str())) {
+    if (!zinnia_recognizer_open_from_ptr(
+            recognizer_zh_, zh_model_data_.data(), zh_model_data_.size())) {
       if (error) {
         *error = "Unable to open bundled Zinnia Chinese model: " +
                  RecognizerError(recognizer_zh_);
@@ -668,6 +677,43 @@ class ZinniaRuntime {
   bool IsErrorValue(const EncodableValue& value) const { return IsError(value); }
 
  private:
+  static bool ReadModelFile(const std::filesystem::path& path,
+                            const char* model_name,
+                            std::vector<char>* data,
+                            std::string* error) {
+    std::ifstream stream(path, std::ios::binary | std::ios::ate);
+    if (!stream) {
+      if (error) {
+        *error = std::string("Unable to read bundled Zinnia ") + model_name +
+                 " model";
+      }
+      return false;
+    }
+
+    const std::streamoff size = stream.tellg();
+    if (size <= 0 ||
+        static_cast<uintmax_t>(size) >
+            static_cast<uintmax_t>(std::numeric_limits<size_t>::max())) {
+      if (error) {
+        *error = std::string("Bundled Zinnia ") + model_name +
+                 " model is empty or too large";
+      }
+      return false;
+    }
+
+    data->resize(static_cast<size_t>(size));
+    stream.seekg(0, std::ios::beg);
+    if (!stream.read(data->data(), size)) {
+      data->clear();
+      if (error) {
+        *error = std::string("Unable to read bundled Zinnia ") + model_name +
+                 " model data";
+      }
+      return false;
+    }
+    return true;
+  }
+
   static std::vector<std::vector<StrokePoint>> ParseStrokes(
       const EncodableMap& args) {
     std::vector<std::vector<StrokePoint>> strokes;
@@ -789,6 +835,8 @@ class ZinniaRuntime {
       zinnia_recognizer_destroy(recognizer_zh_);
       recognizer_zh_ = nullptr;
     }
+    ja_model_data_.clear();
+    zh_model_data_.clear();
     loaded_ = false;
   }
 
@@ -844,6 +892,8 @@ class ZinniaRuntime {
 
   bool loaded_ = false;
   std::filesystem::path runtime_dir_;
+  std::vector<char> ja_model_data_;
+  std::vector<char> zh_model_data_;
   zinnia_recognizer_t* recognizer_ja_ = nullptr;
   zinnia_recognizer_t* recognizer_zh_ = nullptr;
 };

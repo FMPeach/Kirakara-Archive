@@ -9,10 +9,16 @@ Windows packaging:
 
 ```text
 windows runner
-  -> links third_party/ime/zinnia/windows/runtime/kirakara_zinnia.lib
+  -> statically links the configuration-matched kirakara_zinnia.lib
   -> installs ime/zinnia/windows/models/handwriting-ja.model
   -> installs ime/zinnia/windows/models/handwriting-zh_CN.model
 ```
+
+No Zinnia DLL or `runtime` directory is installed in the application bundle.
+The runner reads both
+model files with Unicode-safe Windows paths, keeps their bytes alive for the
+recognizer lifetime, and opens them through Zinnia's in-memory API. This keeps
+handwriting available when the application path contains non-ASCII text.
 
 Flutter bridge:
 
