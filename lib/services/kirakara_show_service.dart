@@ -41,11 +41,15 @@ class KirakaraShowService extends ChangeNotifier {
   bool _applyingEnginePosition = false;
   int _lastReplayRevision = 0;
   int _prepareGeneration = 0;
+  Future<bool>? _activeNativeLoad;
+  bool _showNeedsAsyncWake = true;
   String? _nativePreparedSongId;
   int? _nativePreparedSlotGeneration;
   Duration _enginePosition = Duration.zero;
   Duration _engineDuration = Duration.zero;
   bool _isBuffering = false;
+  bool _isShowLoading = false;
+  int? _showLoadingGeneration;
 
   /// The engine's render surface dimensions.
   int get engineWidth => _ffi?.width ?? 0;
@@ -53,6 +57,7 @@ class KirakaraShowService extends ChangeNotifier {
   Duration get enginePosition => _enginePosition;
   Duration get engineDuration => _engineDuration;
   bool get isBuffering => _isBuffering;
+  bool get isLoading => _isShowLoading;
   int get nativeHandleAddress => _ffi?.nativeHandleAddress ?? 0;
 
   /// Call this once after the engine DLL is available.
@@ -79,6 +84,15 @@ class KirakaraShowService extends ChangeNotifier {
       _slotManager?.removeListener(_syncPreparedSlot);
       _framePoller?.cancel();
       _started = false;
+    }
+    _prepareGeneration++;
+    final activeLoad = _activeNativeLoad;
+    if (activeLoad != null) {
+      try {
+        await activeLoad;
+      } catch (_) {
+        // The engine is being torn down; a failed in-flight load is inert.
+      }
     }
     _ffi?.dispose();
     _ffi = null;
@@ -125,6 +139,7 @@ class KirakaraShowService extends ChangeNotifier {
 
     if (item == null) {
       _prepareGeneration++;
+      _showNeedsAsyncWake = true;
       _seamlessTransitionItemId = null;
       ffi.stop();
       _loadedSongId = null;
@@ -138,6 +153,7 @@ class KirakaraShowService extends ChangeNotifier {
       _lastReplayRevision = _playbackService.replayRevision;
       _enginePosition = Duration.zero;
       _engineDuration = Duration.zero;
+      _setShowLoading(false);
       _setBuffering(false);
       return;
     }
@@ -177,13 +193,14 @@ class KirakaraShowService extends ChangeNotifier {
     _seamlessTransitionItemId = null;
     final slot = _slotManager?.consumeStandby(item.song.id);
     if (slot != null) {
-      _prepareGeneration++;
-      _preparingItemId = null;
-      _loadFromSlot(
+      final generation = ++_prepareGeneration;
+      _preparingItemId = item.id;
+      unawaited(_loadFromSlot(
         slot,
         item,
+        generation: generation,
         seamlessTransition: seamlessTransition,
-      );
+      ));
       return;
     }
 
@@ -213,32 +230,57 @@ class KirakaraShowService extends ChangeNotifier {
     );
   }
 
-  /// 从已预热 slot 加载（同步，极快）。不调用 stop，避免歌词闪回第一帧。
-  void _loadFromSlot(
+  /// 从已预热 slot 提交原生加载。不调用 stop，避免歌词闪回第一帧。
+  Future<void> _loadFromSlot(
     PlaybackSlot slot,
     QueueItem item, {
+    required int generation,
     required bool seamlessTransition,
-  }) {
+  }) async {
     final ffi = _ffi;
-    if (ffi == null) return;
-    if (!slot.isReady || slot.videoPath == null) return;
+    if (ffi == null || !slot.isReady || slot.videoPath == null) {
+      _finishShowLoading(item.id, generation);
+      return;
+    }
 
     // 外部歌曲允许 krlPath 为 null
     final isExternal = item.song.isExternal;
-    if (!isExternal && slot.krlPath == null) return;
+    if (!isExternal && slot.krlPath == null) {
+      _finishShowLoading(item.id, generation);
+      return;
+    }
 
     _loadedSongId = null;
     _loadedItemId = null;
 
-    final loaded = ffi.load(
-      slot.videoPath!,
+    final loadOffUiIsolate = _showNeedsAsyncWake || _activeNativeLoad != null;
+    if (loadOffUiIsolate) {
+      _beginShowLoading(generation);
+    }
+    if (!_isCurrentPreparation(item, generation)) {
+      _finishShowLoading(item.id, generation);
+      return;
+    }
+
+    final loaded = await _runNativeLoad(
+      ffi,
+      generation: generation,
+      videoPath: slot.videoPath!,
       lyricPath: isExternal ? null : slot.krlPath,
       vocalPath: slot.vocalPath,
       accompanimentPath: slot.instPath,
       videoMasterClock: item.song.videoMasterClock,
       seamlessTransition: seamlessTransition,
+      loadOffUiIsolate: loadOffUiIsolate,
     );
-    if (!loaded) return;
+    if (!_isCurrentPreparation(item, generation)) {
+      _finishShowLoading(item.id, generation);
+      return;
+    }
+    if (!loaded) {
+      _finishShowLoading(item.id, generation);
+      return;
+    }
 
     _loadedSongId = item.song.id;
     _loadedItemId = item.id;
@@ -250,6 +292,7 @@ class KirakaraShowService extends ChangeNotifier {
     _sawEngineProgressForItem = false;
     _enginePosition = Duration.zero;
     _engineDuration = Duration.zero;
+    _finishShowLoading(item.id, generation);
 
     _slotManager?.onPlaybackStarted();
     _syncWithPlayback();
@@ -296,15 +339,26 @@ class KirakaraShowService extends ChangeNotifier {
           _existingPathFor(item.song, MediaAssetType.accompaniment);
       if (!_isCurrentPreparation(item, generation)) return;
 
-      final loaded = ffi.load(
-        videoPath,
+      _beginShowLoading(generation);
+      if (!_isCurrentPreparation(item, generation)) return;
+
+      final loaded = await _runNativeLoad(
+        ffi,
+        generation: generation,
+        videoPath: videoPath,
         lyricPath: lyricPath,
         vocalPath: vocalPath,
         accompanimentPath: accompanimentPath,
         videoMasterClock: item.song.videoMasterClock,
         seamlessTransition: seamlessTransition,
+        loadOffUiIsolate: true,
       );
+      if (!_isCurrentPreparation(item, generation)) {
+        _finishShowLoading(item.id, generation);
+        return;
+      }
       if (!loaded) {
+        _finishShowLoading(item.id, generation);
         return;
       }
 
@@ -319,12 +373,17 @@ class KirakaraShowService extends ChangeNotifier {
       _lastPlaying = null;
       _enginePosition = Duration.zero;
       _engineDuration = Duration.zero;
+      _finishShowLoading(item.id, generation);
 
       _slotManager?.onPlaybackStarted();
       _syncWithPlayback();
     } finally {
       if (_preparingItemId == item.id && generation == _prepareGeneration) {
         _preparingItemId = null;
+      }
+      if (_showLoadingGeneration == generation &&
+          (_loadedItemId != item.id || !_isCurrentItem(item))) {
+        _setShowLoading(false);
       }
     }
   }
@@ -453,6 +512,90 @@ class KirakaraShowService extends ChangeNotifier {
     _isBuffering = value;
     notifyListeners();
   }
+
+  void _beginShowLoading(int generation) {
+    _showLoadingGeneration = generation;
+    _setShowLoading(true);
+  }
+
+  Future<bool> _runNativeLoad(
+    KirakaraShowFFI ffi, {
+    required int generation,
+    required String videoPath,
+    String? lyricPath,
+    String? vocalPath,
+    String? accompanimentPath,
+    required bool videoMasterClock,
+    required bool seamlessTransition,
+    required bool loadOffUiIsolate,
+  }) async {
+    // Cold starts and unprepared songs leave Flutter's UI isolate. A prepared
+    // standby slot keeps the existing synchronous hot transition path.
+    while (true) {
+      final active = _activeNativeLoad;
+      if (active == null) break;
+      try {
+        await active;
+      } catch (_) {
+        // A failed older request must not prevent the newest song from loading.
+      }
+    }
+    if (generation != _prepareGeneration || !_started) return false;
+
+    if (!loadOffUiIsolate && !_showNeedsAsyncWake) {
+      return ffi.load(
+        videoPath,
+        lyricPath: lyricPath,
+        vocalPath: vocalPath,
+        accompanimentPath: accompanimentPath,
+        videoMasterClock: videoMasterClock,
+        seamlessTransition: seamlessTransition,
+      );
+    }
+
+    final load = ffi.loadOffUiIsolate(
+      videoPath,
+      lyricPath: lyricPath,
+      vocalPath: vocalPath,
+      accompanimentPath: accompanimentPath,
+      videoMasterClock: videoMasterClock,
+      seamlessTransition: seamlessTransition,
+    );
+    _activeNativeLoad = load;
+    try {
+      final loaded = await load;
+      if (loaded && _playbackService.state.currentItem != null) {
+        _showNeedsAsyncWake = false;
+      }
+      return loaded;
+    } catch (error) {
+      debugPrint('KirakaraShowService: native load failed: $error');
+      return false;
+    } finally {
+      if (identical(_activeNativeLoad, load)) {
+        _activeNativeLoad = null;
+      }
+    }
+  }
+
+  void _finishShowLoading(String itemId, int generation) {
+    if (_preparingItemId == itemId && generation == _prepareGeneration) {
+      _preparingItemId = null;
+    }
+    if (_showLoadingGeneration == generation) {
+      _setShowLoading(false);
+    }
+  }
+
+  void _setShowLoading(bool value) {
+    if (_isShowLoading == value) return;
+    _isShowLoading = value;
+    if (!value) _showLoadingGeneration = null;
+    notifyListeners();
+  }
+
+  bool _isCurrentItem(QueueItem item) =>
+      _playbackService.state.currentItem?.id == item.id;
 
   // ── Helpers ────────────────────────────────────────────────────
 

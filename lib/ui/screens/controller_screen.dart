@@ -131,6 +131,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                     customAnnouncement:
                         widget.settingsService.customAnnouncement,
                     playbackService: widget.playbackService,
+                    isLoading: widget.kirakaraShowService.isLoading,
                     isBuffering: widget.kirakaraShowService.isBuffering,
                     showSearch: _browseMode == null,
                     controllerFullscreen: _controllerFullscreen,

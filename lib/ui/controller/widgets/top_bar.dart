@@ -4,6 +4,7 @@ class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.customAnnouncement,
     required this.playbackService,
+    required this.isLoading,
     required this.isBuffering,
     required this.showSearch,
     required this.controllerFullscreen,
@@ -17,6 +18,7 @@ class _TopBar extends StatelessWidget {
 
   final String customAnnouncement;
   final PlaybackService playbackService;
+  final bool isLoading;
   final bool isBuffering;
   final bool showSearch;
   final bool controllerFullscreen;
@@ -35,6 +37,7 @@ class _TopBar extends StatelessWidget {
       current: state.currentSong,
       next: state.upNext?.song,
       mode: state.mode,
+      isLoading: isLoading,
       isBuffering: isBuffering,
     );
     final brandBlock = SizedBox(
@@ -182,13 +185,16 @@ class _TopBar extends StatelessWidget {
     required Song? current,
     required Song? next,
     required PlaybackMode mode,
+    required bool isLoading,
     required bool isBuffering,
   }) {
     final custom = customAnnouncement.trim();
     final parts = <String>[
       if (custom.isNotEmpty) custom,
       '当前播放：${_songLabel(current, fallback: '等待点歌')}',
-      if (isBuffering)
+      if (isLoading)
+        '正在加载'
+      else if (isBuffering)
         '正在缓冲'
       else if (current == null || mode == PlaybackMode.stopped)
         '已停止'

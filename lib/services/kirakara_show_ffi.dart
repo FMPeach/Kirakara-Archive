@@ -1,5 +1,6 @@
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 
@@ -171,14 +172,93 @@ typedef _SetStageOverlayState = bool Function(
   Pointer<ShowHostStageOverlayStateNative>,
 );
 
+final class _ShowLoadJob {
+  const _ShowLoadJob({
+    required this.dllPath,
+    required this.handleAddress,
+    required this.videoPath,
+    required this.lyricPath,
+    required this.vocalPath,
+    required this.accompanimentPath,
+    required this.clockMode,
+    required this.transitionMode,
+  });
+
+  final String dllPath;
+  final int handleAddress;
+  final String videoPath;
+  final String lyricPath;
+  final String vocalPath;
+  final String accompanimentPath;
+  final int clockMode;
+  final int transitionMode;
+}
+
+bool _invokeSynchronousShowLoad(_ShowLoadJob job) {
+  final dylib = DynamicLibrary.open(job.dllPath);
+  final handle = Pointer<Void>.fromAddress(job.handleAddress);
+  final video = job.videoPath.toNativeUtf16();
+  final lyric = job.lyricPath.toNativeUtf16();
+  final vocal = job.vocalPath.toNativeUtf16();
+  final accompaniment = job.accompanimentPath.toNativeUtf16();
+  try {
+    try {
+      final loadWithOptions =
+          dylib.lookupFunction<LoadWithOptionsNative, _LoadWithOptions>(
+              'show_host_load_with_options');
+      return loadWithOptions(
+        handle,
+        video,
+        lyric,
+        vocal,
+        accompaniment,
+        job.clockMode,
+        job.transitionMode,
+      );
+    } on ArgumentError {
+      try {
+        final loadWithClock =
+            dylib.lookupFunction<LoadWithClockNative, _LoadWithClock>(
+          'show_host_load_with_clock',
+        );
+        return loadWithClock(
+          handle,
+          video,
+          lyric,
+          vocal,
+          accompaniment,
+          job.clockMode,
+        );
+      } on ArgumentError {
+        final load = dylib.lookupFunction<LoadNative, _Load>('show_host_load');
+        return load(handle, video, lyric, vocal, accompaniment);
+      }
+    }
+  } finally {
+    calloc.free(video);
+    calloc.free(lyric);
+    calloc.free(vocal);
+    calloc.free(accompaniment);
+    dylib.close();
+  }
+}
+
 // ── KirakaraShowFFI ───────────────────────────────────────────────
 
 class KirakaraShowFFI {
-  KirakaraShowFFI({String? dllPath})
-      : _dylib = DynamicLibrary.open(dllPath ?? _defaultDllPath()) {
+  factory KirakaraShowFFI({String? dllPath}) {
+    final resolvedPath = dllPath ?? _defaultDllPath();
+    return KirakaraShowFFI._(
+      resolvedPath,
+      DynamicLibrary.open(resolvedPath),
+    );
+  }
+
+  KirakaraShowFFI._(this._dllPath, this._dylib) {
     _bind();
   }
 
+  final String _dllPath;
   final DynamicLibrary _dylib;
   late final ShowHostHandle _handle;
 
@@ -212,6 +292,7 @@ class KirakaraShowFFI {
 
   int _width = 0;
   int _height = 0;
+  bool _disposed = false;
   int get width => _width;
   int get height => _height;
   int get nativeHandleAddress => _handle.address;
@@ -365,6 +446,36 @@ class KirakaraShowFFI {
     }
   }
 
+  /// Invokes Show's synchronous load API from an App-owned helper isolate.
+  Future<bool> loadOffUiIsolate(
+    String videoPath, {
+    String? lyricPath,
+    String? vocalPath,
+    String? accompanimentPath,
+    bool videoMasterClock = false,
+    bool seamlessTransition = false,
+  }) async {
+    if (_disposed) return false;
+    final job = _ShowLoadJob(
+      dllPath: _dllPath,
+      handleAddress: _handle.address,
+      videoPath: videoPath,
+      lyricPath: lyricPath ?? '',
+      vocalPath: vocalPath ?? '',
+      accompanimentPath: accompanimentPath ?? '',
+      clockMode: videoMasterClock ? 1 : 0,
+      transitionMode: seamlessTransition ? 1 : 0,
+    );
+    final loaded = await Isolate.run(
+      () => _invokeSynchronousShowLoad(job),
+    );
+    if (loaded && !_disposed) {
+      _width = _getWidth(_handle);
+      _height = _getHeight(_handle);
+    }
+    return loaded;
+  }
+
   bool prepareNext(
     String videoPath, {
     String? lyricPath,
@@ -480,6 +591,8 @@ class KirakaraShowFFI {
   }
 
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
     _destroy(_handle);
     _dylib.close();
   }
