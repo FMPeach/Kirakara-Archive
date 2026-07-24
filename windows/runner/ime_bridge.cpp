@@ -999,7 +999,7 @@ void HandleMethodCall(const MethodCall& call,
   if (call.method_name() == "rime.compose") {
     const auto raw_input = StringArg(*args, "rawInput");
     const auto page_index = IntArg(*args, "pageIndex", 0);
-    const auto page_size = IntArg(*args, "pageSize", 8);
+    const auto page_size = IntArg(*args, "pageSize", 25);
     result->Success(
         g_rime->Compose(session_id, raw_input, page_index, page_size));
     return;

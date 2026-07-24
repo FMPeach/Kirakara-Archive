@@ -45,7 +45,7 @@ class MozcNativeBridgeProbe {
 class MozcNativeBridge implements NativeImeBridge {
   const MozcNativeBridge({
     required this.executablePath,
-    this.pageSize = 8,
+    this.pageSize = defaultImeCandidatePageSize,
     this.timeout = const Duration(seconds: 5),
   });
 

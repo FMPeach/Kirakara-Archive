@@ -1,8 +1,17 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kirakara_app/ime/engines/rime_ime_engine.dart';
 import 'package:kirakara_app/ime/native/ime_native_bridge.dart';
+import 'package:kirakara_app/ime/native/rime_native_bridge.dart';
 
 void main() {
+  test('Rime bridge requests the shared 25 candidate page size', () {
+    const bridge = RimeNativeBridge(channel: MethodChannel('test/rime'));
+
+    expect(bridge.pageSize, defaultImeCandidatePageSize);
+    expect(bridge.pageSize, 25);
+  });
+
   test('Rime engine exposes native failure without fake candidates', () async {
     final engine = RimeImeEngine(
       bridge: const UnavailableNativeImeBridge(

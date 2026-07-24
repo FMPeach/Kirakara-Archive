@@ -6,6 +6,13 @@ import 'package:kirakara_app/ime/native/ime_native_bridge.dart';
 import 'package:kirakara_app/ime/native/mozc_native_bridge.dart';
 
 void main() {
+  test('Mozc bridge requests the shared 25 candidate page size', () {
+    const bridge = MozcNativeBridge(executablePath: 'unused');
+
+    expect(bridge.pageSize, defaultImeCandidatePageSize);
+    expect(bridge.pageSize, 25);
+  });
+
   test('Mozc engine exposes native failure without fake candidates', () async {
     final engine = MozcImeEngine(
       bridge: const UnavailableNativeImeBridge(

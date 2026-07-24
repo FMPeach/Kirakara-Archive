@@ -1,3 +1,5 @@
+const int defaultImeCandidatePageSize = 25;
+
 class NativeImeCandidate {
   const NativeImeCandidate({
     required this.text,

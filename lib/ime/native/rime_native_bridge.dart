@@ -18,10 +18,12 @@ class RimeNativeBridge implements NativeImeBridge {
   const RimeNativeBridge({
     required this.channel,
     this.schema = 'luna_pinyin_simp',
+    this.pageSize = defaultImeCandidatePageSize,
   });
 
   final MethodChannel channel;
   final String schema;
+  final int pageSize;
 
   @override
   String get engineName => 'rime';
@@ -58,7 +60,7 @@ class RimeNativeBridge implements NativeImeBridge {
       'sessionId': sessionId,
       'rawInput': rawInput,
       'pageIndex': pageIndex,
-      'pageSize': 8,
+      'pageSize': pageSize,
     });
     _throwIfNativeError(result);
     return _fromNativeMap(result);

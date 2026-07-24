@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../ime/ime_candidate.dart';
@@ -33,24 +34,35 @@ class CandidateBar extends StatelessWidget {
   }
 
   Widget _candidateScroller() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          if (preedit.isNotEmpty) ...[
-            _PreeditChip(text: preedit),
-            const SizedBox(width: 8),
-          ],
-          for (var index = 0; index < candidates.length; index++)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: _CandidateChip(
-                index: index,
-                candidate: candidates[index],
-                onTap: () => onCandidateSelected(index),
+    return ScrollConfiguration(
+      behavior: const MaterialScrollBehavior().copyWith(
+        dragDevices: const {
+          PointerDeviceKind.touch,
+          PointerDeviceKind.mouse,
+          PointerDeviceKind.stylus,
+          PointerDeviceKind.invertedStylus,
+          PointerDeviceKind.trackpad,
+        },
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            if (preedit.isNotEmpty) ...[
+              _PreeditChip(text: preedit),
+              const SizedBox(width: 8),
+            ],
+            for (var index = 0; index < candidates.length; index++)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: _CandidateChip(
+                  index: index,
+                  candidate: candidates[index],
+                  onTap: () => onCandidateSelected(index),
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
