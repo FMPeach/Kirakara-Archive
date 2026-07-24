@@ -22,14 +22,14 @@ class HandwritingPad extends StatefulWidget {
 }
 
 class _HandwritingPadState extends State<HandwritingPad> {
-  final List<ImeStroke> _strokes = [];
+  List<ImeStroke> _strokes = const [];
   ImeStroke? _activeStroke;
 
   @override
   void didUpdateWidget(covariant HandwritingPad oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.clearRevision != widget.clearRevision) {
-      _strokes.clear();
+      _strokes = const [];
       _activeStroke = null;
     }
   }
@@ -58,14 +58,23 @@ class _HandwritingPadState extends State<HandwritingPad> {
                 },
                 onPanUpdate: (details) {
                   setState(() {
-                    _activeStroke?.add(_toStrokePoint(details.localPosition));
+                    final stroke = _activeStroke;
+                    if (stroke != null) {
+                      _activeStroke = List.unmodifiable([
+                        ...stroke,
+                        _toStrokePoint(details.localPosition),
+                      ]);
+                    }
                   });
                 },
                 onPanEnd: (_) {
                   setState(() {
                     final stroke = _activeStroke;
                     if (stroke != null && stroke.isNotEmpty) {
-                      _strokes.add(stroke);
+                      _strokes = List.unmodifiable([
+                        ..._strokes,
+                        List<ImeStrokePoint>.unmodifiable(stroke),
+                      ]);
                     }
                     _activeStroke = null;
                   });
@@ -125,7 +134,9 @@ class _HandwritingPadState extends State<HandwritingPad> {
   void _undoStroke() {
     setState(() {
       if (_strokes.isNotEmpty) {
-        _strokes.removeLast();
+        _strokes = List.unmodifiable(
+          _strokes.take(_strokes.length - 1),
+        );
       }
     });
     if (_strokes.isEmpty) {
@@ -137,7 +148,7 @@ class _HandwritingPadState extends State<HandwritingPad> {
 
   void _clear() {
     setState(() {
-      _strokes.clear();
+      _strokes = const [];
       _activeStroke = null;
     });
     widget.onClear();
