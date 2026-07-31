@@ -270,3 +270,9 @@ void RegisterWindowBridge(flutter::BinaryMessenger* messenger, HWND flutter_view
 
   g_window_channel = std::move(channel);
 }
+
+void NotifyDisplayChange() {
+  if (g_window_channel) {
+    g_window_channel->InvokeMethod("onDisplayChange", nullptr);
+  }
+}

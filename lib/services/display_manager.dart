@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import 'native_window_service.dart';
@@ -81,6 +83,13 @@ class DisplayManager extends ChangeNotifier {
   bool _stagePreviewVisible = false;
   String? _selectedStageDisplayId;
 
+  // ── 热插拔检测 ─────────────────────────────────────────────────
+  Timer? _hotPlugDebounce;
+  bool _hadStageDisplay = false;
+
+  /// 第二屏从无到有时触发（热插拔插入后自动开双屏）。
+  VoidCallback? onStageDisplayAttached;
+
   List<DisplayInfo> get displays => List.unmodifiable(_displays);
   List<DisplayInfo> get stageDisplays => List.unmodifiable(
         _displays.where(
@@ -125,6 +134,7 @@ class DisplayManager extends ChangeNotifier {
     if (_mode == DisplayMode.dualScreen && !hasPhysicalStageDisplay) {
       _mode = DisplayMode.singleScreen;
     }
+    _hadStageDisplay = hasPhysicalStageDisplay;
     notifyListeners();
   }
 
@@ -153,5 +163,31 @@ class DisplayManager extends ChangeNotifier {
   Future<void> savePreference(DisplayMode mode) async {
     _mode = mode;
     notifyListeners();
+  }
+
+  // ── 热插拔 ──────────────────────────────────────────────────────
+
+  /// 启动显示器热插拔监听。应在 App 初始化后调用一次。
+  void startHotPlugDetection() {
+    _nativeWindowService.setDisplayChangeHandler(_onNativeDisplayChange);
+  }
+
+  void _onNativeDisplayChange() {
+    // WM_DISPLAYCHANGE 可能连续触发多次（分辨率协商过程），debounce 800ms
+    _hotPlugDebounce?.cancel();
+    _hotPlugDebounce = Timer(const Duration(milliseconds: 800), () async {
+      final wasPresent = _hadStageDisplay;
+      await detectDisplays();
+      // 第二屏从无到有 → 通知 App 自动开双屏
+      if (!wasPresent && hasPhysicalStageDisplay) {
+        onStageDisplayAttached?.call();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _hotPlugDebounce?.cancel();
+    super.dispose();
   }
 }

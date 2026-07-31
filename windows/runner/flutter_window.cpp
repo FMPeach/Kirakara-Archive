@@ -77,6 +77,10 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;
+    case WM_DISPLAYCHANGE:
+      // 显示器热插拔：通知 Dart 端重新枚举显示器
+      NotifyDisplayChange();
+      break;
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);

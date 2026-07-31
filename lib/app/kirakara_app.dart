@@ -98,7 +98,11 @@ class _KirakaraAppState extends State<KirakaraApp> {
       playbackService: playbackService,
     );
     stageRenderer = KirakaraStageRenderer(showService: kirakaraShowService);
+    // 热插拔：插入第二屏后自动开双屏
+    displayManager.onStageDisplayAttached = _onStageDisplayHotPlugged;
     unawaited(_initializeDisplayOutput());
+    // 启动后开始监听 WM_DISPLAYCHANGE
+    displayManager.startHotPlugDetection();
     unawaited(_syncCatalog());
   }
 
@@ -142,6 +146,24 @@ class _KirakaraAppState extends State<KirakaraApp> {
     kirakaraShowService.setStageWindowVisible(true);
   }
 
+  /// 热插拔：第二屏从无到有时自动开双屏（和启动时逻辑一致）。
+  Future<void> _onStageDisplayHotPlugged() async {
+    if (!mounted) return;
+    // 投屏占用时不抢
+    if (castService.isEnabled) return;
+    final stageDisplay = displayManager.stageDisplay;
+    if (stageDisplay == null) return;
+
+    kirakaraShowService.setStageWindowRect(
+      x: stageDisplay.left,
+      y: stageDisplay.top,
+      width: stageDisplay.width,
+      height: stageDisplay.height,
+    );
+    await displayManager.openStageWindow(preview: false);
+    kirakaraShowService.setStageWindowVisible(true);
+  }
+
   @override
   void dispose() {
     castService.dispose();
@@ -149,6 +171,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
     playbackService.disposeService();
     lanServer.stop();
     _slotManager.dispose();
+    displayManager.dispose();
     settingsService
       ..removeListener(_applySettings)
       ..dispose();

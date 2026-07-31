@@ -9,6 +9,17 @@ class NativeWindowService {
 
   final MethodChannel channel;
 
+  /// 注册显示器热插拔回调。
+  /// C++ 端收到 WM_DISPLAYCHANGE 后通过 MethodChannel 调用 "onDisplayChange"。
+  void setDisplayChangeHandler(VoidCallback callback) {
+    channel.setMethodCallHandler((call) async {
+      if (call.method == 'onDisplayChange') {
+        callback();
+      }
+      return null;
+    });
+  }
+
   Future<int?> getFlutterViewHandle() async {
     if (!Platform.isWindows) return null;
     final handle = await channel.invokeMethod<int>('getFlutterViewHandle');
