@@ -61,6 +61,32 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     }
   }
 
+  bool _pickingCacheDirectory = false;
+
+  Future<void> _pickCacheDirectory() async {
+    if (_pickingCacheDirectory) return;
+    setState(() => _pickingCacheDirectory = true);
+    try {
+      final selected = await FilePicker.getDirectoryPath(
+        dialogTitle: '选择缓存目录',
+        initialDirectory: widget.settingsService.cacheDirectoryPath,
+      );
+      if (!mounted) return;
+      if (selected == null || selected.trim().isEmpty) return;
+      await widget.settingsService.setCacheDirectoryPath(selected);
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('缓存目录已更改，重启应用后生效'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _pickingCacheDirectory = false);
+    }
+  }
+
   Widget _buildAnnouncementSection() {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       const _SectionHeader(title: '报幕文字', icon: Icons.campaign_outlined),
@@ -70,13 +96,13 @@ class _SettingsDialogState extends State<_SettingsDialog> {
         maxLength: 120,
         maxLines: 2,
         style: const TextStyle(color: KiraColors.cream),
-        decoration: InputDecoration(
+        decoration: const InputDecoration(
           hintText: '留空则不显示自定义文字',
-          hintStyle: const TextStyle(color: KiraColors.muted),
-          border: const OutlineInputBorder(),
+          hintStyle: TextStyle(color: KiraColors.muted),
+          border: OutlineInputBorder(),
           filled: true,
           fillColor: KiraColors.surface2,
-          counterStyle: const TextStyle(color: KiraColors.muted),
+          counterStyle: TextStyle(color: KiraColors.muted),
         ),
       ),
       const SizedBox(height: 8),
@@ -183,19 +209,33 @@ class _SettingsDialogState extends State<_SettingsDialog> {
             style: TextStyle(
                 color: KiraColors.muted, fontWeight: FontWeight.w700)),
         subtitle: Text(
-          widget.assetCache.cacheDirectoryPath,
+          widget.settingsService.cacheDirectoryPath,
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(color: KiraColors.muted, fontSize: 11),
         ),
+        trailing: FilledButton(
+          onPressed: _pickingCacheDirectory ? null : _pickCacheDirectory,
+          style: FilledButton.styleFrom(
+            backgroundColor: KiraColors.surface2,
+            foregroundColor: KiraColors.cream,
+          ),
+          child: _pickingCacheDirectory
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: KiraColors.cream))
+              : const Text('更改…'),
+        ),
       ),
-      ListTile(
+      const ListTile(
         contentPadding: EdgeInsets.zero,
-        title: const Text('退出应用自动清理',
+        title: Text('退出应用自动清理',
             style: TextStyle(
                 color: KiraColors.muted, fontWeight: FontWeight.w700)),
         trailing:
-            const Icon(Icons.check_circle_outline, color: KiraColors.teal),
+            Icon(Icons.check_circle_outline, color: KiraColors.teal),
       ),
     ]);
   }
