@@ -42,7 +42,9 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   }
 
   void _refreshCacheSize() {
-    setState(() => _cacheSize = _computeCacheSize());
+    setState(() {
+      _cacheSize = _computeCacheSize();
+    });
   }
 
   Future<void> _saveAnnouncement() async {
