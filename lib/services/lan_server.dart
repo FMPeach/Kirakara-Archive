@@ -197,6 +197,21 @@ class LanServer {
       return;
     }
 
+    // POST /api/playback/key — 调整变调（key）
+    if (method == 'POST' && path == '/api/playback/key') {
+      final body = await utf8.decoder.bind(request).join();
+      final payload = jsonDecode(body) as Map<String, dynamic>;
+      final delta = (payload['delta'] as num?)?.toInt() ?? 0;
+      final absolute = payload['key'] as num?;
+      if (absolute != null) {
+        _playbackService.setKey(absolute.toInt());
+      } else if (delta != 0) {
+        _playbackService.transposeBy(delta);
+      }
+      _json(request, 200, {'ok': true, 'key': _playbackService.state.key});
+      return;
+    }
+
     // GET /api/playback — 播放状态
     if (method == 'GET' && path == '/api/playback') {
       final state = _playbackService.state;

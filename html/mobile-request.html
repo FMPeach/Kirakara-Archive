@@ -103,7 +103,7 @@ body {
 .mini-ctrl.play-btn { background:var(--teal); color:#111216; width:38px; height:38px; font-size:15px; }
 .vol-btn { width:32px; height:32px; border-radius:50%; background:var(--surface2); border:none; color:var(--cream); font-size:18px; font-weight:700; display:flex; align-items:center; justify-content:center; cursor:pointer; }
 .vol-btn:active { background:var(--teal); color:#111216; }
-.vol-label { font-size:13px; font-weight:700; color:var(--cream); min-width:32px; text-align:center; }
+.vol-label { font-size:13px; font-weight:700; color:var(--cream); min-width:36px; text-align:center; }
 .section-header { padding:14px 14px 4px; font-size:11px; font-weight:800; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
 .empty { text-align:center; padding:48px 20px; color:var(--muted); font-size:13px; font-weight:600; }
 .empty .icon { font-size:40px; margin-bottom:10px; opacity:.4; }
@@ -163,6 +163,11 @@ body {
       </div>
     </div>
     <div class="qp-ctrls">
+      <div class="qp-volume">
+        <button class="vol-btn" id="qpKeyDown" onclick="doKey(-1)">♭</button>
+        <span class="vol-label" id="qpKeyLabel">0</span>
+        <button class="vol-btn" id="qpKeyUp" onclick="doKey(1)">♯</button>
+      </div>
       <button class="mini-ctrl" id="qpTrack" onclick="doToggleTrack()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/></svg>
       </button>
@@ -187,7 +192,7 @@ body {
 const API = '';
 async function api(path, opts) { const r = await fetch(API + path, opts); if (!r.ok) throw new Error(r.status); return r.json(); }
 let currentTab = 'featured', featured = [], queueData = {current:null,upcoming:[],isPlaying:false};
-let playback = {isPlaying:false, volume:72, track:'vocal', currentSong:null};
+let playback = {isPlaying:false, volume:72, key:0, track:'vocal', currentSong:null};
 
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
@@ -202,7 +207,8 @@ async function pollState() {
     const [q, p] = await Promise.all([api('/api/queue'), api('/api/playback')]);
     queueData = q; playback = p;
     document.getElementById('qpVolLabel').textContent = playback.volume;
-    document.getElementById('qpTrack').textContent = playback.track==='accompaniment'?'🎸':'🎤';
+    updateKeyUI();
+    renderTrackButton();
     if (playback.currentSong) {
       document.getElementById('botTitle').textContent = playback.currentSong.title;
       document.getElementById('botArtist').textContent = playback.currentSong.artist||'';
@@ -343,13 +349,24 @@ async function doTogglePlay() { try { await api(playback.isPlaying?'/api/playbac
 async function doNext() { try { await api('/api/playback/next', {method:'POST'}); ctime=0; await pollState(); } catch(e) {} }
 async function doToggleTrack() {
   try { const r = await api('/api/playback/track', {method:'POST'});
-    const isVocal = r.track!=='accompaniment';
-    document.getElementById('qpTrack').innerHTML = isVocal
-      ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/></svg>'
-      : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="10" r="4"/><path d="M14 14l4 6"/><path d="M10 14l-4 6"/></svg>';
-    toast(isVocal?'已切换为原唱':'已切换为伴奏'); } catch(e) {}
+    playback.track = r.track;
+    renderTrackButton();
+    toast(playback.track==='accompaniment'?'已切换为伴奏':'已切换为原唱'); } catch(e) {}
+}
+// 原唱/伴奏按钮：统一用 innerHTML 渲染完整 SVG，避免 textContent 覆盖成 emoji
+function renderTrackButton() {
+  const isVocal = playback.track!=='accompaniment';
+  document.getElementById('qpTrack').innerHTML = isVocal
+    ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="4"/><path d="M3 20c0-4 4-6 8-6s8 2 8 6"/><path d="M18 3l3.5-1V9l-3.5 1z" fill="currentColor" stroke="none"/><circle cx="17" cy="9.5" r="1.8" fill="currentColor" stroke="none"/></svg>'
+    : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>';
 }
 async function doVolume(delta) { playback.volume = Math.max(0, Math.min(100, playback.volume + delta)); document.getElementById('qpVolLabel').textContent = playback.volume; try { await api('/api/playback/volume', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({volume:playback.volume})}); } catch(e) {} }
+async function doKey(delta) { playback.key = Math.max(-6, Math.min(6, playback.key + delta)); updateKeyUI(); try { await api('/api/playback/key', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({delta})}); } catch(e) {} }
+// label 显示 key 数字（+1 表示升 1 key）；−/+ 按钮分别用 ♭ / ♯ 符号
+function updateKeyUI() {
+  const k = playback.key;
+  document.getElementById('qpKeyLabel').textContent = (k>0?'+':'')+k;
+}
 
 function openQueue() { document.getElementById('queuePanel').classList.add('open'); document.getElementById('qpBackdrop').classList.add('open'); }
 function closeQueue() { document.getElementById('queuePanel').classList.remove('open'); document.getElementById('qpBackdrop').classList.remove('open'); }
