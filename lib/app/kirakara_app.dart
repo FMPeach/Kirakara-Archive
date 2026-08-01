@@ -27,10 +27,12 @@ class KirakaraApp extends StatefulWidget {
     super.key,
     required this.databasePath,
     this.cacheDirectoryPath,
+    this.settingsFilePath,
   });
 
   final String databasePath;
   final String? cacheDirectoryPath;
+  final String? settingsFilePath;
 
   @override
   State<KirakaraApp> createState() => _KirakaraAppState();
@@ -83,6 +85,8 @@ class _KirakaraAppState extends State<KirakaraApp> {
     );
     settingsService = SettingsService(
       initialCacheDirectoryPath: cacheRoot.path,
+      settingsFilePath:
+          widget.settingsFilePath ?? p.join(cacheRoot.path, 'settings.json'),
     )..addListener(_applySettings);
     unawaited(settingsService.load());
     kirakaraShowService = KirakaraShowService(

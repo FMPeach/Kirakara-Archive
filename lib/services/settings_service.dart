@@ -1,17 +1,22 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+/// 设置持久化 — 便携版：所有设置写入 exe 目录旁 settings/settings.json，
+/// 不依赖 %APPDATA% / SharedPreferences。
 class SettingsService extends ChangeNotifier {
-  SettingsService({required String initialCacheDirectoryPath})
-      : _cacheDirectoryPath = initialCacheDirectoryPath;
+  SettingsService({
+    required String initialCacheDirectoryPath,
+    required String settingsFilePath,
+  })  : _cacheDirectoryPath = initialCacheDirectoryPath,
+        _settingsFilePath = settingsFilePath;
 
   static const _customAnnouncementKey = 'custom_announcement';
   static const _prefetchLookaheadKey = 'prefetch_lookahead';
   static const _cacheDirectoryKey = 'cache_directory';
 
-  SharedPreferences? _preferences;
+  final String _settingsFilePath;
   bool _disposed = false;
   String _customAnnouncement = '';
   int _prefetchLookahead = 3;
@@ -21,9 +26,52 @@ class SettingsService extends ChangeNotifier {
   int get prefetchLookahead => _prefetchLookahead;
   String get cacheDirectoryPath => _cacheDirectoryPath;
 
-  static Future<String> resolveCacheDirectory(String defaultPath) async {
-    final preferences = await SharedPreferences.getInstance();
-    final saved = preferences.getString(_cacheDirectoryKey)?.trim() ?? '';
+  // ── settings/settings.json 读写 ────────────────────────────────
+
+  File get _settingsFile => File(_settingsFilePath);
+
+  void _write() {
+    try {
+      _settingsFile.parent.createSync(recursive: true);
+      _settingsFile.writeAsStringSync(
+        const JsonEncoder.withIndent('  ').convert(<String, Object?>{
+          _customAnnouncementKey: _customAnnouncement,
+          _prefetchLookaheadKey: _prefetchLookahead,
+          _cacheDirectoryKey: _cacheDirectoryPath,
+        }),
+        flush: true,
+      );
+    } on FileSystemException {
+      // 便携目录只读时静默失败，保留内存态
+    }
+  }
+
+  Map<String, Object?>? _read() {
+    try {
+      if (!_settingsFile.existsSync()) return null;
+      final decoded = jsonDecode(_settingsFile.readAsStringSync());
+      return decoded is Map<String, Object?> ? decoded : null;
+    } on Exception {
+      return null;
+    }
+  }
+
+  /// 解析缓存目录：优先 settings.json 中的用户选择，其次默认路径。
+  static Future<String> resolveCacheDirectory(
+      String defaultPath, String settingsFilePath) async {
+    var saved = '';
+    try {
+      final file = File(settingsFilePath);
+      if (file.existsSync()) {
+        final decoded = jsonDecode(file.readAsStringSync());
+        if (decoded is Map) {
+          final value = decoded[_cacheDirectoryKey];
+          if (value is String) saved = value.trim();
+        }
+      }
+    } on Exception {
+      saved = '';
+    }
     final selected = saved.isEmpty ? defaultPath : saved;
     try {
       final directory = Directory(selected).absolute;
@@ -32,20 +80,20 @@ class SettingsService extends ChangeNotifier {
     } on FileSystemException {
       final fallback = Directory(defaultPath).absolute;
       fallback.createSync(recursive: true);
-      await preferences.setString(_cacheDirectoryKey, fallback.path);
       return fallback.path;
     }
   }
 
   Future<void> load() async {
-    final preferences = await SharedPreferences.getInstance();
-    _preferences = preferences;
+    final stored = _read() ?? <String, Object?>{};
     _customAnnouncement =
-        preferences.getString(_customAnnouncementKey)?.trim() ?? '';
+        (stored[_customAnnouncementKey] as String?)?.trim() ?? '';
     _prefetchLookahead =
-        (preferences.getInt(_prefetchLookaheadKey) ?? 3).clamp(1, 3).toInt();
+        ((stored[_prefetchLookaheadKey] as num?)?.toInt() ?? 3)
+            .clamp(1, 3)
+            .toInt();
     final cacheDirectory =
-        preferences.getString(_cacheDirectoryKey)?.trim() ?? '';
+        (stored[_cacheDirectoryKey] as String?)?.trim() ?? '';
     if (cacheDirectory.isNotEmpty) {
       _cacheDirectoryPath = cacheDirectory;
     }
@@ -57,7 +105,7 @@ class SettingsService extends ChangeNotifier {
     if (_customAnnouncement == normalized) return;
     _customAnnouncement = normalized;
     if (!_disposed) notifyListeners();
-    await _preferences?.setString(_customAnnouncementKey, normalized);
+    _write();
   }
 
   Future<void> setPrefetchLookahead(int value) async {
@@ -65,7 +113,7 @@ class SettingsService extends ChangeNotifier {
     if (_prefetchLookahead == normalized) return;
     _prefetchLookahead = normalized;
     if (!_disposed) notifyListeners();
-    await _preferences?.setInt(_prefetchLookaheadKey, normalized);
+    _write();
   }
 
   Future<void> setCacheDirectoryPath(String value) async {
@@ -73,9 +121,7 @@ class SettingsService extends ChangeNotifier {
     if (normalized.isEmpty || _cacheDirectoryPath == normalized) return;
     _cacheDirectoryPath = normalized;
     if (!_disposed) notifyListeners();
-    final preferences = _preferences ?? await SharedPreferences.getInstance();
-    _preferences = preferences;
-    await preferences.setString(_cacheDirectoryKey, normalized);
+    _write();
   }
 
   @override

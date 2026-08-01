@@ -1,8 +1,28 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kirakara_app/app/kirakara_app.dart';
 import 'package:kirakara_app/ui/widgets/kira_design_canvas.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+/// 在临时目录预写 settings.json 并返回路径；随 tearDown 自动清理。
+String _prepareSettingsFile(String announcement) {
+  final dir = Directory.systemTemp.createTempSync('kirakara_widget_test');
+  final path = '${dir.path}${Platform.pathSeparator}settings.json';
+  File(path).writeAsStringSync(
+    jsonEncode({'custom_announcement': announcement}),
+    flush: true,
+  );
+  addTearDown(() {
+    try {
+      dir.deleteSync(recursive: true);
+    } on FileSystemException {
+      // 测试清理失败可忽略
+    }
+  });
+  return path;
+}
 
 void main() {
   testWidgets('Kirakara controller shell renders', (tester) async {
@@ -111,14 +131,16 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    SharedPreferences.setMockInitialValues({
-      'custom_announcement': List.filled(
+    final settingsFile = _prepareSettingsFile(
+      List.filled(
         10,
         '欢迎使用 Kira Karaoke，请使用手机点歌并留意下一首歌曲',
       ).join('，'),
-    });
+    );
 
-    await tester.pumpWidget(const KirakaraApp(databasePath: ':memory:'));
+    await tester.pumpWidget(
+      KirakaraApp(databasePath: ':memory:', settingsFilePath: settingsFile),
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
@@ -145,13 +167,12 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    SharedPreferences.setMockInitialValues({
-      'custom_announcement': '',
-    });
+    final settingsFile = _prepareSettingsFile('');
 
-    await tester.pumpWidget(const TickerMode(
+    await tester.pumpWidget(TickerMode(
       enabled: false,
-      child: KirakaraApp(databasePath: ':memory:'),
+      child:
+          KirakaraApp(databasePath: ':memory:', settingsFilePath: settingsFile),
     ));
     await tester.pump();
 

@@ -10,17 +10,28 @@ import 'services/settings_service.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final exeDir = p.dirname(Platform.resolvedExecutable);
+  // 便携版：数据库与设置统一放到 exe 旁 settings/ 目录。
+  final settingsDir = p.join(exeDir, 'settings');
+  try {
+    Directory(settingsDir).createSync(recursive: true);
+  } on FileSystemException {
+    // exe 目录只读时回退到临时目录，保证可运行
+  }
+  final settingsFilePath = p.join(settingsDir, 'settings.json');
   final defaultCacheDirectory = Platform.isWindows
       ? (Directory(r'D:\').existsSync()
           ? r'D:\Kirakara_Cache'
           : p.join(exeDir, 'Kirakara_Cache'))
       : p.join((await getTemporaryDirectory()).path, 'Kirakara_Cache');
-  final cacheDirectory =
-      await SettingsService.resolveCacheDirectory(defaultCacheDirectory);
+  final cacheDirectory = await SettingsService.resolveCacheDirectory(
+    defaultCacheDirectory,
+    settingsFilePath,
+  );
   runApp(
     KirakaraApp(
-      databasePath: p.join(exeDir, 'kirakara_index.db'),
+      databasePath: p.join(settingsDir, 'kirakara_index.db'),
       cacheDirectoryPath: cacheDirectory,
+      settingsFilePath: settingsFilePath,
     ),
   );
 }
