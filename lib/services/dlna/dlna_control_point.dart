@@ -162,6 +162,7 @@ class DlnaControlPoint {
         action: action,
         arguments: arguments,
       );
+      final encodedBody = utf8.encode(body);
       final request = await client.postUrl(endpoint.controlUrl);
       request.headers.contentType = ContentType(
         'text',
@@ -173,7 +174,12 @@ class DlnaControlPoint {
         '"${endpoint.serviceType}#$action"',
       );
       request.headers.set(HttpHeaders.connectionHeader, 'close');
-      request.add(utf8.encode(body));
+      // DLNA/UPnP SOAP must be sent with an explicit Content-Length. Dart's
+      // HttpClient otherwise falls back to Transfer-Encoding: chunked, which
+      // simple renderers (e.g. macast's CherryPy handler) reject with a 500
+      // "KeyError: 'Content-Length'" crash.
+      request.contentLength = encodedBody.length;
+      request.add(encodedBody);
       final response = await request.close();
       final responseBody = await utf8.decoder.bind(response).join();
       if (response.statusCode < 200 || response.statusCode >= 300) {

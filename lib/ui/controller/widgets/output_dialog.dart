@@ -75,28 +75,42 @@ class _OutputDialogState extends State<_OutputDialog> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _buildHeader(),
-                _OutputModeSection(
-                  icon: Icons.connected_tv_outlined,
-                  title: '双屏异显',
-                  active: dualActive,
-                  enabled: !_busy &&
-                      (dualActive ||
-                          widget.displayManager.hasPhysicalStageDisplay),
-                  onChanged: (value) => _run(
-                    () => widget.onDualChanged(value),
+                // Device lists (esp. many DLNA receivers like macast) can
+                // exceed the dialog height when both details are expanded.
+                // Keep the header fixed and let the mode sections scroll.
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _OutputModeSection(
+                          icon: Icons.connected_tv_outlined,
+                          title: '双屏异显',
+                          active: dualActive,
+                          enabled: !_busy &&
+                              (dualActive ||
+                                  widget.displayManager
+                                      .hasPhysicalStageDisplay),
+                          onChanged: (value) => _run(
+                            () => widget.onDualChanged(value),
+                          ),
+                          detail: dualActive ? _buildDisplayDetail() : null,
+                        ),
+                        const Divider(height: 1, color: KiraColors.line),
+                        _OutputModeSection(
+                          icon: Icons.cast,
+                          title: '无线投屏',
+                          active: castActive,
+                          enabled: !_busy,
+                          onChanged: (value) => _run(
+                            () => widget.onCastChanged(value),
+                          ),
+                          detail: castActive ? _buildCastDetail() : null,
+                        ),
+                      ],
+                    ),
                   ),
-                  detail: dualActive ? _buildDisplayDetail() : null,
-                ),
-                const Divider(height: 1, color: KiraColors.line),
-                _OutputModeSection(
-                  icon: Icons.cast,
-                  title: '无线投屏',
-                  active: castActive,
-                  enabled: !_busy,
-                  onChanged: (value) => _run(
-                    () => widget.onCastChanged(value),
-                  ),
-                  detail: castActive ? _buildCastDetail() : null,
                 ),
               ],
             ),
