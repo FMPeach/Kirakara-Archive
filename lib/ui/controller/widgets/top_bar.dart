@@ -224,16 +224,47 @@ class _MarqueeText extends StatefulWidget {
   State<_MarqueeText> createState() => _MarqueeTextState();
 }
 
-class _MarqueeTextState extends State<_MarqueeText>
-    with SingleTickerProviderStateMixin {
+class _MarqueeTextState extends State<_MarqueeText> implements TickerProvider {
+  // 滚动报幕是矢量滚动（每帧重建文字层），把 ticker 节流到 30fps：
+  // 主控端 build/paint 开销减半，30fps 视觉仍平滑；可按需调低到 24。
+  static const int _marqueeTickerFps = 30;
   static const double _overflowSafetyMargin = 12;
 
   late final AnimationController _controller;
+
+  final Duration _marqueeStep =
+      Duration(microseconds: 1000000 ~/ _marqueeTickerFps);
+  Duration _marqueeLastEmit = Duration.zero;
+  Duration _marqueeNextEmit = Duration.zero;
+  Ticker? _marqueeTicker;
 
   @override
   void initState() {
     super.initState();
     _controller = AnimationController(vsync: this);
+  }
+
+  @override
+  Ticker createTicker(TickerCallback onTick) {
+    assert(
+      _marqueeTicker == null,
+      'createTicker 只能调用一次；滚动报幕只应有一个 ticker',
+    );
+    _marqueeTicker = Ticker(
+      (Duration elapsed) {
+        if (elapsed < _marqueeLastEmit) {
+          // ticker 重启（AnimationController.repeat 会从 0 重新计时）
+          _marqueeLastEmit = Duration.zero;
+          _marqueeNextEmit = Duration.zero;
+        }
+        if (elapsed < _marqueeNextEmit) return;
+        _marqueeLastEmit = elapsed;
+        _marqueeNextEmit = elapsed + _marqueeStep;
+        onTick(elapsed);
+      },
+      debugLabel: 'marquee-throttled-${_marqueeTickerFps}fps',
+    );
+    return _marqueeTicker!;
   }
 
   @override

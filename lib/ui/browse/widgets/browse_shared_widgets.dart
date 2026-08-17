@@ -1,56 +1,5 @@
 ﻿part of '../../screens/browse_screen.dart';
 
-class _CompactSearchField extends StatelessWidget {
-  const _CompactSearchField({
-    required this.controller,
-    required this.hintText,
-    required this.onChanged,
-  });
-
-  final TextEditingController controller;
-  final String hintText;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 56,
-      child: TextField(
-        controller: controller,
-        onChanged: onChanged,
-        decoration: InputDecoration(
-          hintText: hintText,
-          hintStyle: const TextStyle(
-            color: Color(0x99ffffff),
-            fontWeight: FontWeight.w700,
-          ),
-          prefixIcon: const Icon(Icons.search, color: Color(0xccffffff)),
-          filled: true,
-          fillColor: const Color(0x18ffffff),
-          contentPadding: EdgeInsets.zero,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: KiraColors.line),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: KiraColors.line),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: KiraColors.lineStrong),
-          ),
-        ),
-        style: const TextStyle(
-          color: KiraColors.cream,
-          fontSize: 16,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-}
-
 class _BackButton extends StatelessWidget {
   const _BackButton({required this.onPressed});
 
