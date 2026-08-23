@@ -190,6 +190,47 @@ class SearchService {
     return (count is int) ? count : 0;
   }
 
+  // ── Rankings ──────────────────────────────────────────────────
+
+  /// 服务器下发的榜单定义（按 rank 排序）。空表返回 []。
+  List<CatalogRanking> get rankings {
+    final rows = _db.selectMaps(
+      'SELECT category_id, name, song_id, rank, score, play_count '
+      'FROM rankings ORDER BY rank',
+      ['categoryId', 'name', 'songId', 'rank', 'score', 'playCount'],
+    );
+    if (rows.isEmpty) return const [];
+    final names = <String, String>{};
+    final grouped = <String, List<CatalogRankingEntry>>{};
+    for (final r in rows) {
+      final key = (r['categoryId'] as String?) ?? '';
+      names[key] = r['name'] as String;
+      (grouped[key] ??= []).add(CatalogRankingEntry(
+        rank: (r['rank'] as num).toInt(),
+        songId: r['songId'] as String,
+        score: r['score'] as num?,
+        playCount: (r['playCount'] as num?)?.toInt(),
+      ));
+    }
+    return grouped.entries.map((e) {
+      final list = e.value..sort((a, b) => a.rank.compareTo(b.rank));
+      return CatalogRanking(
+        categoryId: e.key.isEmpty ? null : e.key,
+        name: names[e.key] ?? '',
+        entries: list,
+      );
+    }).toList();
+  }
+
+  /// 榜单条目映射为 Song（按 rank 排序，曲库里缺失的跳过）。
+  List<Song> songsForRanking(CatalogRanking ranking) {
+    final byId = {for (final s in _allSongs()) s.id: s};
+    return ranking.entries
+        .map((e) => byId[e.songId])
+        .whereType<Song>()
+        .toList();
+  }
+
   // ── Categories ─────────────────────────────────────────────────
 
   List<CategorySummary> get categories {

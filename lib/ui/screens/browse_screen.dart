@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../domain/song.dart';
 import '../../ime/ime_controller.dart';
 import '../../ime/search_query_controller.dart';
+import '../../data/catalog/catalog_models.dart';
 import '../../services/bilibili_resolver.dart';
 import '../../services/search_service.dart';
 import '../browse/browse_mode.dart';
