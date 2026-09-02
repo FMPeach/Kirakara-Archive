@@ -15,14 +15,13 @@ class BilibiliQualityOption {
 /// qualities and therefore never enter this video-only list.
 const bilibiliQualityOptions = <BilibiliQualityOption>[
   BilibiliQualityOption(qn: 120, label: '4K 超清'),
-  BilibiliQualityOption(qn: 116, label: '1080P60 高帧率'),
-  BilibiliQualityOption(qn: 112, label: '1080P+ 高码率'),
+  BilibiliQualityOption(qn: 116, label: '1080P 60帧'),
+  BilibiliQualityOption(qn: 112, label: '1080P 高码率'),
   BilibiliQualityOption(qn: 80, label: '1080P 高清'),
-  BilibiliQualityOption(qn: 74, label: '720P60 高帧率'),
+  BilibiliQualityOption(qn: 74, label: '720P 60帧'),
   BilibiliQualityOption(qn: 64, label: '720P 高清'),
   BilibiliQualityOption(qn: 32, label: '480P 清晰'),
   BilibiliQualityOption(qn: 16, label: '360P 流畅'),
-  BilibiliQualityOption(qn: 6, label: '240P 极速'),
 ];
 
 const defaultBilibiliQualityQn = 116;
