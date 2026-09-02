@@ -4,9 +4,17 @@ extension _ExternalLinkPage on _BrowseScreenState {
   Widget _buildExternalLinkPage() {
     return Row(
       children: [
+        SizedBox(
+          width: KiraLayout.browseRailWidth,
+          child: _BilibiliAccountRail(
+            accountService: widget.bilibiliAccountService,
+            onBack: widget.onExit,
+          ),
+        ),
+        const SizedBox(width: KiraLayout.sectionGap),
         Expanded(
           child: _ExternalLinkPanel(
-            onBack: widget.onExit,
+            accountService: widget.bilibiliAccountService,
             onAddSong: widget.onAddSong,
             onBumpSong: widget.onBumpSong,
           ),

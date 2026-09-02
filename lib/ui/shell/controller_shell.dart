@@ -20,6 +20,7 @@ class ControllerShell extends StatelessWidget {
       assetCache: services.assetCache,
       slotManager: services.slotManager,
       settingsService: services.settingsService,
+      bilibiliAccountService: services.bilibiliAccountService,
       displayManager: services.displayManager,
       kirakaraShowService: services.kirakaraShowService,
       castService: services.castService,

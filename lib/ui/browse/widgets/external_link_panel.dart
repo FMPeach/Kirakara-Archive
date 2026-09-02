@@ -2,12 +2,12 @@ part of '../../screens/browse_screen.dart';
 
 class _ExternalLinkPanel extends StatefulWidget {
   const _ExternalLinkPanel({
-    required this.onBack,
+    required this.accountService,
     required this.onAddSong,
     required this.onBumpSong,
   });
 
-  final VoidCallback onBack;
+  final BilibiliAccountService accountService;
   final ValueChanged<Song> onAddSong;
   final ValueChanged<Song> onBumpSong;
 
@@ -41,7 +41,11 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
     });
 
     try {
-      final result = await resolveBilibiliUrl(input);
+      final result = await resolveBilibiliUrl(
+        input,
+        preferredQuality: widget.accountService.preferredQualityQn,
+        cookieHeader: widget.accountService.cookieHeader,
+      );
       if (!mounted) return;
       setState(() {
         _result = result;
@@ -90,21 +94,23 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
 
     setState(() => _pageLoading = true);
     try {
-      final newSong = await resolveBilibiliPage(
+      final pageResult = await resolveBilibiliPage(
         bvid: r.bvid,
         pageInfo: target,
         ownerName: r.ownerName,
         ownerMid: r.ownerMid,
         mainTitle: r.song.title,
+        preferredQuality: widget.accountService.preferredQualityQn,
+        cookieHeader: widget.accountService.cookieHeader,
       );
       if (!mounted) return;
       setState(() {
         _result = BilibiliResolveResult(
-          song: newSong,
+          song: pageResult.song,
           bvid: r.bvid,
           cid: target.cid,
-          quality: r.quality,
-          qualityDesc: r.qualityDesc,
+          quality: pageResult.quality,
+          qualityDesc: pageResult.qualityDesc,
           pages: r.pages,
           selectedPage: target.page,
           ownerName: r.ownerName,
@@ -139,8 +145,6 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _BackButton(onPressed: widget.onBack),
-            const SizedBox(height: 28),
             // ── Input row ──
             _buildInputRow(),
             const SizedBox(height: 16),
@@ -484,7 +488,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
               color: KiraColors.muted, size: 70),
           const SizedBox(height: 20),
           const Text(
-            '粘贴 B站视频链接或 BV/AV 号\n点击「解析」自动获取播放地址',
+            '粘贴 Bilibili 视频链接或 BV/AV 号\n点击「解析」后选择分P点歌',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: KiraColors.muted,
@@ -495,7 +499,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
           ),
           const SizedBox(height: 10),
           Text(
-            '支持：bilibili.com/video/BV... / b23.tv 短链 / 纯 BV/AV 号',
+            '支持 Bilibili 长链，b23.tv短链，BV/AV号',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: KiraColors.muted.withValues(alpha: 0.6),

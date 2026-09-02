@@ -8,6 +8,7 @@ import '../data/catalog/catalog_client.dart';
 import '../data/local_db/local_database.dart';
 import '../engine/kirakara_stage_renderer.dart';
 import '../engine/stage_renderer.dart';
+import '../services/bilibili_account_service.dart';
 import '../services/cast_service.dart';
 import '../services/display_manager.dart';
 import '../services/kirakara_show_service.dart';
@@ -50,6 +51,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
   late final PlaybackAssetCache _assetCache;
   late final PlaybackSlotManager _slotManager;
   late final SettingsService settingsService;
+  late final BilibiliAccountService bilibiliAccountService;
   late final KirakaraShowService kirakaraShowService;
   late final StageRenderer stageRenderer;
 
@@ -83,12 +85,20 @@ class _KirakaraAppState extends State<KirakaraApp> {
       assetCache: _assetCache,
       onQueueAvailabilityChanged: playbackService.refreshUpNext,
     );
+    final settingsFilePath =
+        widget.settingsFilePath ?? p.join(cacheRoot.path, 'settings.json');
     settingsService = SettingsService(
       initialCacheDirectoryPath: cacheRoot.path,
-      settingsFilePath:
-          widget.settingsFilePath ?? p.join(cacheRoot.path, 'settings.json'),
+      settingsFilePath: settingsFilePath,
     )..addListener(_applySettings);
     unawaited(settingsService.load());
+    bilibiliAccountService = BilibiliAccountService(
+      sessionFilePath: p.join(
+        p.dirname(settingsFilePath),
+        'bilibili_session.json',
+      ),
+    );
+    unawaited(bilibiliAccountService.load());
     kirakaraShowService = KirakaraShowService(
       playbackService: playbackService,
       assetCache: _assetCache,
@@ -100,6 +110,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
       queueService: queueService,
       searchService: searchService,
       playbackService: playbackService,
+      bilibiliAccountService: bilibiliAccountService,
     );
     stageRenderer = KirakaraStageRenderer(showService: kirakaraShowService);
     // 热插拔：插入第二屏后自动开双屏
@@ -179,6 +190,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
     settingsService
       ..removeListener(_applySettings)
       ..dispose();
+    bilibiliAccountService.dispose();
     _assetCache.clear();
     _assetCache.dispose();
     _catalogClient.dispose();
@@ -200,6 +212,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
           assetCache: _assetCache,
           slotManager: _slotManager,
           settingsService: settingsService,
+          bilibiliAccountService: bilibiliAccountService,
           displayManager: displayManager,
           kirakaraShowService: kirakaraShowService,
           castService: castService,

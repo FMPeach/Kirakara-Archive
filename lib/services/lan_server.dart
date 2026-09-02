@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../domain/queue_item.dart';
 import '../domain/song.dart';
+import 'bilibili_account_service.dart';
 import 'bilibili_resolver.dart';
 import 'lan_address_resolver.dart';
 import 'playback_service.dart';
@@ -16,13 +17,16 @@ class LanServer {
     required QueueService queueService,
     required SearchService searchService,
     required PlaybackService playbackService,
+    required BilibiliAccountService bilibiliAccountService,
   })  : _queueService = queueService,
         _searchService = searchService,
-        _playbackService = playbackService;
+        _playbackService = playbackService,
+        _bilibiliAccountService = bilibiliAccountService;
 
   final QueueService _queueService;
   final SearchService _searchService;
   final PlaybackService _playbackService;
+  final BilibiliAccountService _bilibiliAccountService;
   HttpServer? _server;
   String? _lanIp;
 
@@ -298,6 +302,7 @@ class LanServer {
   // ── resolve ──────────────────────────────────────────────
 
   Future<void> _handleResolve(HttpRequest request) async {
+    await _bilibiliAccountService.load();
     final body = await utf8.decoder.bind(request).join();
     final payload = jsonDecode(body) as Map<String, dynamic>;
     final url = payload['url'] as String?;
@@ -310,18 +315,25 @@ class LanServer {
       // 指定分P → 直接加入队列
       if (page != null && page > 0) {
         // 用之前缓存的结果或重新解析
-        final result = await resolveBilibiliUrl(url.trim());
+        final result = await resolveBilibiliUrl(
+          url.trim(),
+          preferredQuality: _bilibiliAccountService.preferredQualityQn,
+          cookieHeader: _bilibiliAccountService.cookieHeader,
+        );
         final pageInfo = result.pages.firstWhere(
           (p) => p.page == page,
           orElse: () => result.pages.first,
         );
-        final song = await resolveBilibiliPage(
+        final pageResult = await resolveBilibiliPage(
           bvid: result.bvid,
           pageInfo: pageInfo,
           ownerName: result.ownerName,
           ownerMid: result.ownerMid,
           mainTitle: result.song.title,
+          preferredQuality: _bilibiliAccountService.preferredQualityQn,
+          cookieHeader: _bilibiliAccountService.cookieHeader,
         );
+        final song = pageResult.song;
         final item = _queueService.addSong(song, requestedBy: '手机点歌');
         _onQueueChanged();
         _json(request, 200, {
@@ -332,12 +344,18 @@ class LanServer {
         return;
       }
       // 第一步：返回预览信息供用户确认
-      final result = await resolveBilibiliUrl(url.trim());
+      final result = await resolveBilibiliUrl(
+        url.trim(),
+        preferredQuality: _bilibiliAccountService.preferredQualityQn,
+        cookieHeader: _bilibiliAccountService.cookieHeader,
+      );
       _json(request, 200, {
         'title': result.song.title,
         'bvid': result.bvid,
         'ownerName': result.ownerName,
         'coverUrl': result.coverUrl,
+        'quality': result.quality,
+        'qualityDesc': result.qualityDesc,
         'selectedPage': result.selectedPage,
         'pages': result.pages.map((p) => {
           'page': p.page,

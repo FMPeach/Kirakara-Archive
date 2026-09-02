@@ -1,15 +1,21 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../domain/song.dart';
 import '../../ime/ime_controller.dart';
 import '../../ime/search_query_controller.dart';
-import '../../data/catalog/catalog_models.dart';
+import '../../services/bilibili_account_service.dart';
+import '../../services/bilibili_quality.dart';
 import '../../services/bilibili_resolver.dart';
 import '../../services/search_service.dart';
 import '../browse/browse_mode.dart';
 import '../input/karaoke_input_panel.dart';
 import '../theme/kirakara_theme.dart';
 import '../theme/layout_tokens.dart';
+import '../widgets/kira_design_canvas.dart';
 
 part '../browse/pages/song_browse_page.dart';
 part '../browse/pages/artist_browse_page.dart';
@@ -19,6 +25,7 @@ part '../browse/pages/external_link_page.dart';
 part '../browse/pages/ranking_page.dart';
 part '../browse/widgets/song_result_panel.dart';
 part '../browse/widgets/external_link_panel.dart';
+part '../browse/widgets/bilibili_account_rail.dart';
 part '../browse/widgets/artist_result_panel.dart';
 part '../browse/widgets/browse_rails.dart';
 part '../browse/widgets/browse_shared_widgets.dart';
@@ -27,6 +34,7 @@ class BrowseScreen extends StatefulWidget {
   const BrowseScreen({
     super.key,
     required this.searchService,
+    required this.bilibiliAccountService,
     required this.initialMode,
     required this.onExit,
     required this.onAddSong,
@@ -35,6 +43,7 @@ class BrowseScreen extends StatefulWidget {
   });
 
   final SearchService searchService;
+  final BilibiliAccountService bilibiliAccountService;
   final BrowseMode initialMode;
   final String initialQuery;
   final VoidCallback onExit;

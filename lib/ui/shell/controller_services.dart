@@ -1,4 +1,5 @@
 import '../../engine/stage_renderer.dart';
+import '../../services/bilibili_account_service.dart';
 import '../../services/cast_service.dart';
 import '../../services/display_manager.dart';
 import '../../services/kirakara_show_service.dart';
@@ -18,6 +19,7 @@ class ControllerServices {
     required this.assetCache,
     required this.slotManager,
     required this.settingsService,
+    required this.bilibiliAccountService,
     required this.displayManager,
     required this.kirakaraShowService,
     required this.castService,
@@ -31,6 +33,7 @@ class ControllerServices {
   final PlaybackAssetCache assetCache;
   final PlaybackSlotManager slotManager;
   final SettingsService settingsService;
+  final BilibiliAccountService bilibiliAccountService;
   final DisplayManager displayManager;
   final KirakaraShowService kirakaraShowService;
   final CastService castService;

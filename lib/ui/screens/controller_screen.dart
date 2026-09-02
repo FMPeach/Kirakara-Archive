@@ -3,7 +3,8 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart' show Ticker, TickerCallback, TickerProvider;
+import 'package:flutter/scheduler.dart'
+    show Ticker, TickerCallback, TickerProvider;
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../domain/media_asset.dart';
@@ -11,6 +12,7 @@ import '../../domain/playback_state.dart';
 import '../../domain/queue_item.dart';
 import '../../domain/song.dart';
 import '../../engine/stage_renderer.dart';
+import '../../services/bilibili_account_service.dart';
 import '../../services/cast_service.dart';
 import '../../services/dlna/dlna_device.dart';
 import '../../services/display_manager.dart';
@@ -48,6 +50,7 @@ class ControllerScreen extends StatefulWidget {
     required this.assetCache,
     required this.slotManager,
     required this.settingsService,
+    required this.bilibiliAccountService,
     required this.displayManager,
     required this.kirakaraShowService,
     required this.castService,
@@ -61,6 +64,7 @@ class ControllerScreen extends StatefulWidget {
   final PlaybackAssetCache assetCache;
   final PlaybackSlotManager slotManager;
   final SettingsService settingsService;
+  final BilibiliAccountService bilibiliAccountService;
   final DisplayManager displayManager;
   final KirakaraShowService kirakaraShowService;
   final CastService castService;
@@ -172,6 +176,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
                         : BrowseScreen(
                             key: ValueKey(_browseSerial),
                             searchService: widget.searchService,
+                            bilibiliAccountService:
+                                widget.bilibiliAccountService,
                             initialMode: _browseMode!,
                             initialQuery: _browseInitialQuery,
                             onExit: _closeBrowsePage,

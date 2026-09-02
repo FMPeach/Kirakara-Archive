@@ -5,6 +5,7 @@ import 'dart:io';
 import '../domain/artist.dart';
 import '../domain/media_asset.dart';
 import '../domain/song.dart';
+import 'bilibili_quality.dart';
 
 // ── Result types ──────────────────────────────────────────────────
 
@@ -52,6 +53,18 @@ class BilibiliResolveResult {
   final int? danmakuCount;
 }
 
+class BilibiliPageResolveResult {
+  const BilibiliPageResolveResult({
+    required this.song,
+    required this.quality,
+    required this.qualityDesc,
+  });
+
+  final Song song;
+  final int quality;
+  final String qualityDesc;
+}
+
 class BilibiliResolveError {
   const BilibiliResolveError({required this.code, required this.message});
 
@@ -70,17 +83,6 @@ const _referer = 'https://www.bilibili.com';
 const _mediaHeaders = <String, String>{
   'User-Agent': _userAgent,
   'Referer': _referer,
-};
-
-const _qualityMap = {
-  6: '240P',
-  16: '360P',
-  32: '480P',
-  64: '720P',
-  74: '720P60',
-  80: '1080P',
-  112: '1080P+',
-  116: '1080P60',
 };
 
 // ── AV → BV ──────────────────────────────────────────────────────
@@ -148,30 +150,68 @@ class _HttpResult {
   final String body;
 }
 
+Map<String, String>? _cookieHeaders(String? cookieHeader) {
+  final normalized = cookieHeader?.trim() ?? '';
+  if (normalized.isEmpty) return null;
+  return <String, String>{'Cookie': normalized};
+}
+
+/// Builds playurl parameters without letting guest preview mode cap a signed-in
+/// account's premium DASH ladder at 1080P.
+Map<String, String> buildBilibiliPlayUrlParameters({
+  required int cid,
+  required int preferredQuality,
+  required bool authenticated,
+}) {
+  final qn = normalizeBilibiliQualityQn(preferredQuality);
+  final wants240p = qn == 6;
+  return <String, String>{
+    'cid': cid.toString(),
+    'fnval': wants240p ? '1' : (qn >= 120 ? '144' : '16'),
+    'fnver': '0',
+    'qn': qn.toString(),
+    'fourk': qn >= 120 ? '1' : '0',
+    if (!authenticated) 'try_look': '1',
+    if (wants240p) 'platform': 'html5',
+  };
+}
+
 ({String videoUrl, String? audioUrl, int quality, String qualityDesc})
-    _selectPlaybackStreams(Map<String, dynamic> data) {
+    _selectPlaybackStreams(
+  Map<String, dynamic> data, {
+  required int preferredQuality,
+}) {
+  final normalizedPreference = normalizeBilibiliQualityQn(preferredQuality);
   final dash = data['dash'] as Map<String, dynamic>?;
   if (dash != null) {
     final videos = (dash['video'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
         .where((stream) => selectBilibiliStreamUrl(stream) != null)
-        .toList();
+        .where((stream) {
+      final id = (stream['id'] as num?)?.toInt();
+      return id != null && bilibiliAllowedQualityQns.contains(id);
+    }).toList();
     final audios = (dash['audio'] as List<dynamic>? ?? const [])
         .whereType<Map<String, dynamic>>()
         .where((stream) => selectBilibiliStreamUrl(stream) != null)
         .toList();
     if (videos.isNotEmpty && audios.isNotEmpty) {
       final reportedQuality = (data['quality'] as num?)?.toInt() ?? 0;
-      var compatibleVideos = videos
+      final qualityLimit =
+          reportedQuality > 0 && reportedQuality < normalizedPreference
+              ? reportedQuality
+              : normalizedPreference;
+      final atOrBelowPreference = videos.where((stream) {
+        final id = (stream['id'] as num?)?.toInt() ?? 0;
+        return id <= qualityLimit;
+      }).toList();
+      var qualityCandidates =
+          atOrBelowPreference.isNotEmpty ? atOrBelowPreference : videos;
+      var compatibleVideos = qualityCandidates
           .where((stream) => (stream['codecid'] as num?)?.toInt() == 7)
           .toList();
-      if (compatibleVideos.isEmpty) compatibleVideos = videos;
-      final entitledVideos = compatibleVideos.where((stream) {
-        final id = (stream['id'] as num?)?.toInt() ?? 0;
-        return reportedQuality <= 0 || id <= reportedQuality;
-      }).toList();
-      final candidates =
-          entitledVideos.isNotEmpty ? entitledVideos : compatibleVideos;
+      if (compatibleVideos.isEmpty) compatibleVideos = qualityCandidates;
+      final candidates = compatibleVideos;
       candidates.sort(_compareDashStreams);
       audios.sort(_compareDashStreams);
       final video = candidates.first;
@@ -181,7 +221,7 @@ class _HttpResult {
         videoUrl: selectBilibiliStreamUrl(video)!,
         audioUrl: selectBilibiliStreamUrl(audio),
         quality: quality,
-        qualityDesc: _qualityMap[quality] ?? '${quality}P',
+        qualityDesc: bilibiliQualityLabel(quality),
       );
     }
   }
@@ -196,7 +236,7 @@ class _HttpResult {
         videoUrl: url,
         audioUrl: null,
         quality: quality,
-        qualityDesc: _qualityMap[quality] ?? '${quality}P',
+        qualityDesc: bilibiliQualityLabel(quality),
       );
     }
   }
@@ -277,7 +317,13 @@ List<MediaAsset> _streamAssets({
 /// 解析 B站链接或 BV/AV 号，返回可播放的 Song 对象。
 ///
 /// 支持格式：完整链接、短链 b23.tv、纯 BV 号、纯 AV 号。
-Future<BilibiliResolveResult> resolveBilibiliUrl(String input) async {
+Future<BilibiliResolveResult> resolveBilibiliUrl(
+  String input, {
+  int preferredQuality = defaultBilibiliQualityQn,
+  String? cookieHeader,
+}) async {
+  final normalizedQuality = normalizeBilibiliQualityQn(preferredQuality);
+  final authHeaders = _cookieHeaders(cookieHeader);
   // 1. Resolve short links
   var url = input.trim();
   if (url.contains('b23.tv')) {
@@ -333,7 +379,7 @@ Future<BilibiliResolveResult> resolveBilibiliUrl(String input) async {
   }
   final viewUri = Uri.parse('https://api.bilibili.com/x/web-interface/view')
       .replace(queryParameters: viewParams);
-  final viewResult = await _get(viewUri);
+  final viewResult = await _get(viewUri, headers: authHeaders);
   if (viewResult.statusCode != 200 || viewResult.body.isEmpty) {
     throw BilibiliResolveError(
       code: 'network',
@@ -399,14 +445,11 @@ Future<BilibiliResolveResult> resolveBilibiliUrl(String input) async {
   }
 
   // 5. Playurl API — get stream URL
-  final playParams = <String, String>{
-    'cid': cid.toString(),
-    'fnval': '16',
-    'fnver': '0',
-    'qn': '80',
-    'fourk': '0',
-    'try_look': '1',
-  };
+  final playParams = buildBilibiliPlayUrlParameters(
+    cid: cid,
+    preferredQuality: normalizedQuality,
+    authenticated: authHeaders != null,
+  );
   if (bvid != null) {
     playParams['bvid'] = bvid;
   } else {
@@ -416,7 +459,7 @@ Future<BilibiliResolveResult> resolveBilibiliUrl(String input) async {
       Uri.parse('https://api.bilibili.com/x/player/playurl').replace(
     queryParameters: playParams,
   );
-  final playResult = await _get(playUri);
+  final playResult = await _get(playUri, headers: authHeaders);
   if (playResult.statusCode != 200 || playResult.body.isEmpty) {
     throw BilibiliResolveError(
       code: 'network',
@@ -446,7 +489,10 @@ Future<BilibiliResolveResult> resolveBilibiliUrl(String input) async {
   }
 
   final playResultData = playData['data'] as Map<String, dynamic>;
-  final streams = _selectPlaybackStreams(playResultData);
+  final streams = _selectPlaybackStreams(
+    playResultData,
+    preferredQuality: normalizedQuality,
+  );
 
   // 6. Construct Song
   final videoId = bvid ?? 'av$aid';
@@ -485,26 +531,30 @@ Future<BilibiliResolveResult> resolveBilibiliUrl(String input) async {
 
 /// 为指定分P获取可播放的 Song 对象（复用已有的 bvid 和 page info）。
 /// 不重新请求 View API，只请求 Playurl API。
-Future<Song> resolveBilibiliPage({
+Future<BilibiliPageResolveResult> resolveBilibiliPage({
   required String bvid,
   required BilibiliPageInfo pageInfo,
   required String ownerName,
   required int ownerMid,
   required String mainTitle,
+  int preferredQuality = defaultBilibiliQualityQn,
+  String? cookieHeader,
 }) async {
+  final normalizedQuality = normalizeBilibiliQualityQn(preferredQuality);
+  final authHeaders = _cookieHeaders(cookieHeader);
+  final queryParameters = buildBilibiliPlayUrlParameters(
+    cid: pageInfo.cid,
+    preferredQuality: normalizedQuality,
+    authenticated: authHeaders != null,
+  )..['bvid'] = bvid;
   final playUri =
       Uri.parse('https://api.bilibili.com/x/player/playurl').replace(
-    queryParameters: {
-      'bvid': bvid,
-      'cid': pageInfo.cid.toString(),
-      'fnval': '16',
-      'fnver': '0',
-      'qn': '80',
-      'fourk': '0',
-      'try_look': '1',
-    },
+    queryParameters: queryParameters,
   );
-  final playResult = await _get(playUri);
+  final playResult = await _get(
+    playUri,
+    headers: authHeaders,
+  );
   if (playResult.statusCode != 200 || playResult.body.isEmpty) {
     throw BilibiliResolveError(
       code: 'network',
@@ -527,9 +577,12 @@ Future<Song> resolveBilibiliPage({
   }
 
   final playResultData = playData['data'] as Map<String, dynamic>;
-  final streams = _selectPlaybackStreams(playResultData);
+  final streams = _selectPlaybackStreams(
+    playResultData,
+    preferredQuality: normalizedQuality,
+  );
 
-  return Song(
+  final song = Song(
     id: 'bili-$bvid-${pageInfo.cid}',
     title: mainTitle,
     category: '外链',
@@ -544,5 +597,10 @@ Future<Song> resolveBilibiliPage({
       videoUrl: streams.videoUrl,
       audioUrl: streams.audioUrl,
     ),
+  );
+  return BilibiliPageResolveResult(
+    song: song,
+    quality: streams.quality,
+    qualityDesc: streams.qualityDesc,
   );
 }

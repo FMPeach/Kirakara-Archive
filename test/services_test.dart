@@ -10,6 +10,7 @@ import 'package:kirakara_app/domain/media_asset.dart';
 import 'package:kirakara_app/domain/playback_state.dart';
 import 'package:kirakara_app/domain/queue_item.dart';
 import 'package:kirakara_app/domain/song.dart';
+import 'package:kirakara_app/services/bilibili_account_service.dart';
 import 'package:kirakara_app/services/display_manager.dart';
 import 'package:kirakara_app/services/lan_server.dart';
 import 'package:kirakara_app/services/native_window_service.dart';
@@ -486,12 +487,18 @@ void main() {
     final search = _testSearch();
     final queue = QueueService();
     final playback = PlaybackService(queueService: queue);
+    final account = BilibiliAccountService(
+      sessionFilePath: '${Directory.systemTemp.path}${Platform.pathSeparator}'
+          'kirakara_bilibili_test_$pid.json',
+    );
     final server = LanServer(
       queueService: queue,
       searchService: search,
       playbackService: playback,
+      bilibiliAccountService: account,
     );
     addTearDown(playback.disposeService);
+    addTearDown(account.dispose);
     addTearDown(server.stop);
 
     await server.start(port: 0);
