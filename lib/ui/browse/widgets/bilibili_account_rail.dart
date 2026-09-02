@@ -68,12 +68,13 @@ class _BilibiliAccountRailState extends State<_BilibiliAccountRail> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _BackButton(onPressed: widget.onBack),
-            const SizedBox(height: 20),
-            const Divider(color: KiraColors.line, height: 1),
-            const SizedBox(height: 24),
+            const SizedBox(height: 45),
             Expanded(
               child: service.isLoggedIn
-                  ? _buildSignedIn(service)
+                  ? Transform.translate(
+                      offset: const Offset(0, -72),
+                      child: _buildSignedIn(service),
+                    )
                   : _buildSignedOut(service),
             ),
           ],

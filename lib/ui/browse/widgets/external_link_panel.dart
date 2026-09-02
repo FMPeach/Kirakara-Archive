@@ -145,6 +145,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const SizedBox(height: 72),
             // ── Input row ──
             _buildInputRow(),
             const SizedBox(height: 16),
@@ -499,7 +500,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
           ),
           const SizedBox(height: 10),
           Text(
-            '支持 Bilibili 长链，b23.tv短链，BV/AV号',
+            '',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: KiraColors.muted.withValues(alpha: 0.6),
