@@ -435,12 +435,5 @@ BoxDecoration _surfaceDecoration({Color color = KiraColors.surface}) {
     color: color,
     borderRadius: BorderRadius.circular(10),
     border: Border.all(color: KiraColors.line),
-    boxShadow: const [
-      BoxShadow(
-        color: Color(0x38000000),
-        blurRadius: 32,
-        offset: Offset(0, 12),
-      ),
-    ],
   );
 }

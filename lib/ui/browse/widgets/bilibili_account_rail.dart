@@ -267,7 +267,7 @@ class _BilibiliAccountRailState extends State<_BilibiliAccountRail> {
           position: PopupMenuPosition.under,
           color: KiraColors.surface2,
           surfaceTintColor: Colors.transparent,
-          elevation: 8,
+          elevation: 0,
           menuPadding: EdgeInsets.symmetric(vertical: 4 * canvasScale),
           constraints: BoxConstraints.tightFor(width: visibleWidth),
           shape: RoundedRectangleBorder(
