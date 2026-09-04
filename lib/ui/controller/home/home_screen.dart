@@ -39,9 +39,9 @@ class _LeftPane extends StatelessWidget {
                   border: Border.all(color: KiraColors.lineStrong),
                   boxShadow: const [
                     BoxShadow(
-                      color: Color(0x57000000),
-                      blurRadius: 58,
-                      offset: Offset(0, 22),
+                      color: Color(0x40000000),
+                      blurRadius: 12,
+                      offset: Offset(0, 6),
                     ),
                   ],
                 ),

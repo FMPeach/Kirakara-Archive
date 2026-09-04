@@ -114,90 +114,102 @@ class _ControllerScreenState extends State<ControllerScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: KiraDesignCanvas(
-        child: AnimatedBuilder(
-          animation: Listenable.merge([
-            widget.playbackService,
-            widget.castService,
-            widget.kirakaraShowService,
-            widget.settingsService,
-          ]),
-          builder: (context, _) {
-            return DecoratedBox(
-              decoration: const BoxDecoration(
-                color: KiraColors.bg,
-                boxShadow: [
-                  BoxShadow(
-                    color: Color(0xaa000000),
-                    blurRadius: 48,
-                  ),
-                ],
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            color: KiraColors.bg,
+            // A full-screen gaussian blur (large blurRadius) is very expensive
+            // on low-end iGPUs (1130G7). Keep the flat backdrop and let each
+            // panel repaint lazily instead of blurring the whole screen each
+            // frame.
+          ),
+          child: Column(
+            children: [
+              // Each panel listens only to the services it actually needs, so
+              // a high-frequency notification (playback tick / cast state /
+              // buffering) can no longer rebuild the entire screen.
+              ListenableBuilder(
+                listenable: Listenable.merge([
+                  widget.playbackService,
+                  widget.castService,
+                  widget.kirakaraShowService,
+                  widget.settingsService,
+                ]),
+                builder: (context, _) => _TopBar(
+                  customAnnouncement:
+                      widget.settingsService.customAnnouncement,
+                  playbackService: widget.playbackService,
+                  isLoading: widget.kirakaraShowService.isLoading,
+                  isBuffering: widget.kirakaraShowService.isBuffering,
+                  showSearch: _browseMode == null,
+                  controllerFullscreen: _controllerFullscreen,
+                  isCasting: widget.castService.isCasting,
+                  onSearchTap: () => _runSearch(''),
+                  onQr: _showQrDialog,
+                  onSettings: _showSettingsDialog,
+                  onFullscreen: _toggleControllerFullscreen,
+                  onCast: _showCastDialog,
+                ),
               ),
-              child: Column(
-                children: [
-                  _TopBar(
-                    customAnnouncement:
-                        widget.settingsService.customAnnouncement,
-                    playbackService: widget.playbackService,
-                    isLoading: widget.kirakaraShowService.isLoading,
-                    isBuffering: widget.kirakaraShowService.isBuffering,
-                    showSearch: _browseMode == null,
-                    controllerFullscreen: _controllerFullscreen,
-                    isCasting: widget.castService.isCasting,
-                    onSearchTap: () => _runSearch(''),
-                    onQr: _showQrDialog,
-                    onSettings: _showSettingsDialog,
-                    onFullscreen: _toggleControllerFullscreen,
-                    onCast: _showCastDialog,
-                  ),
-                  Expanded(
-                    child: _browseMode == null
-                        ? Padding(
-                            padding: KiraLayout.pagePadding,
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  flex: 2,
-                                  child: _LeftPane(
-                                    playbackService: widget.playbackService,
-                                    castService: widget.castService,
-                                    stageRenderer: widget.stageRenderer,
-                                  ),
+              Expanded(
+                child: _browseMode == null
+                    ? Padding(
+                        padding: KiraLayout.pagePadding,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              flex: 2,
+                              child: ListenableBuilder(
+                                listenable: Listenable.merge([
+                                  widget.playbackService,
+                                  widget.castService,
+                                ]),
+                                builder: (context, _) => _LeftPane(
+                                  playbackService: widget.playbackService,
+                                  castService: widget.castService,
+                                  stageRenderer: widget.stageRenderer,
                                 ),
-                                const SizedBox(width: KiraLayout.sectionGap),
-                                Expanded(
-                                  flex: 1,
-                                  child: _RightPane(
-                                    onPanel: _showPanel,
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
-                          )
-                        : BrowseScreen(
-                            key: ValueKey(_browseSerial),
-                            searchService: widget.searchService,
-                            bilibiliAccountService:
-                                widget.bilibiliAccountService,
-                            initialMode: _browseMode!,
-                            initialQuery: _browseInitialQuery,
-                            onExit: _closeBrowsePage,
-                            onAddSong: _addSong,
-                            onBumpSong: _bumpSong,
-                          ),
-                  ),
-                  _BottomBar(
-                    playbackService: widget.playbackService,
-                    queueService: widget.queueService,
-                    castService: widget.castService,
-                    onQueue: _showQueueDialog,
-                    onAfterQueueChanged: () {
-                      widget.playbackService.refreshUpNext();
-                    },
-                  ),
-                ],
+                            const SizedBox(width: KiraLayout.sectionGap),
+                            Expanded(
+                              flex: 1,
+                              child: _RightPane(
+                                onPanel: _showPanel,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : BrowseScreen(
+                        key: ValueKey(_browseSerial),
+                        searchService: widget.searchService,
+                        bilibiliAccountService:
+                            widget.bilibiliAccountService,
+                        initialMode: _browseMode!,
+                        initialQuery: _browseInitialQuery,
+                        onExit: _closeBrowsePage,
+                        onAddSong: _addSong,
+                        onBumpSong: _bumpSong,
+                      ),
               ),
-            );
-          },
+              ListenableBuilder(
+                listenable: Listenable.merge([
+                  widget.playbackService,
+                  widget.castService,
+                  widget.queueService,
+                ]),
+                builder: (context, _) => _BottomBar(
+                  playbackService: widget.playbackService,
+                  queueService: widget.queueService,
+                  castService: widget.castService,
+                  onQueue: _showQueueDialog,
+                  onAfterQueueChanged: () {
+                    widget.playbackService.refreshUpNext();
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
