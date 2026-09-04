@@ -224,63 +224,88 @@ class _MarqueeText extends StatefulWidget {
   State<_MarqueeText> createState() => _MarqueeTextState();
 }
 
-class _MarqueeTextState extends State<_MarqueeText> implements TickerProvider {
-  // 滚动报幕是矢量滚动（每帧重建文字层），把 ticker 节流到 30fps：
-  // 主控端 build/paint 开销减半，30fps 视觉仍平滑；可按需调低到 24。
-  static const int _marqueeTickerFps = 30;
+class _MarqueeTextState extends State<_MarqueeText>
+    with WidgetsBindingObserver {
+  // A continuous Flutter animation keeps the entire Windows surface in the
+  // VSync frame pump even when only this text moves. Show long announcements
+  // as instant pages instead: one frame per page, then a completely idle UI.
   static const double _overflowSafetyMargin = 12;
+  static const Duration _pageInterval = Duration(seconds: 5);
 
-  late final AnimationController _controller;
-
-  final Duration _marqueeStep =
-      Duration(microseconds: 1000000 ~/ _marqueeTickerFps);
-  Duration _marqueeLastEmit = Duration.zero;
-  Duration _marqueeNextEmit = Duration.zero;
-  Ticker? _marqueeTicker;
+  Timer? _pageTimer;
+  int _pageIndex = 0;
+  bool _appVisible = true;
+  List<String> _pages = const [];
+  String? _cachedText;
+  TextStyle? _cachedStyle;
+  TextScaler? _cachedTextScaler;
+  TextDirection? _cachedTextDirection;
+  Locale? _cachedLocale;
+  double? _cachedAvailableWidth;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this);
+    WidgetsBinding.instance.addObserver(this);
+    _appVisible = _isVisible(WidgetsBinding.instance.lifecycleState);
   }
 
   @override
-  Ticker createTicker(TickerCallback onTick) {
-    assert(
-      _marqueeTicker == null,
-      'createTicker 只能调用一次；滚动报幕只应有一个 ticker',
-    );
-    _marqueeTicker = Ticker(
-      (Duration elapsed) {
-        if (elapsed < _marqueeLastEmit) {
-          // ticker 重启（AnimationController.repeat 会从 0 重新计时）
-          _marqueeLastEmit = Duration.zero;
-          _marqueeNextEmit = Duration.zero;
-        }
-        if (elapsed < _marqueeNextEmit) return;
-        _marqueeLastEmit = elapsed;
-        _marqueeNextEmit = elapsed + _marqueeStep;
-        onTick(elapsed);
-      },
-      debugLabel: 'marquee-throttled-${_marqueeTickerFps}fps',
-    );
-    return _marqueeTicker!;
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final visible = _isVisible(state);
+    if (_appVisible == visible) return;
+    _appVisible = visible;
+    if (visible) {
+      _scheduleNextPage();
+    } else {
+      _pageTimer?.cancel();
+      _pageTimer = null;
+    }
   }
 
   @override
   void didUpdateWidget(covariant _MarqueeText oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text) {
-      _controller
-        ..stop()
-        ..value = 0;
+    if (oldWidget.text != widget.text || oldWidget.style != widget.style) {
+      _invalidatePages();
     }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _pageTimer?.cancel();
     super.dispose();
+  }
+
+  static bool _isVisible(AppLifecycleState? state) {
+    return state == null ||
+        state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive;
+  }
+
+  void _invalidatePages() {
+    _pageTimer?.cancel();
+    _pageTimer = null;
+    _pageIndex = 0;
+    _pages = const [];
+    _cachedText = null;
+    _cachedStyle = null;
+    _cachedTextScaler = null;
+    _cachedTextDirection = null;
+    _cachedLocale = null;
+    _cachedAvailableWidth = null;
+  }
+
+  void _scheduleNextPage() {
+    if (!_appVisible || _pages.length <= 1 || _pageTimer != null) return;
+    _pageTimer = Timer(_pageInterval, () {
+      _pageTimer = null;
+      if (!mounted || !_appVisible || _pages.length <= 1) return;
+      setState(() {
+        _pageIndex = (_pageIndex + 1) % _pages.length;
+      });
+    });
   }
 
   @override
@@ -288,68 +313,39 @@ class _MarqueeTextState extends State<_MarqueeText> implements TickerProvider {
     return LayoutBuilder(
       key: const ValueKey('marquee-viewport'),
       builder: (context, constraints) {
-        final textWidth = _measureText(context, widget.text, widget.style);
         final availableWidth = constraints.maxWidth;
-        if (!textWidth.isFinite ||
-            !availableWidth.isFinite ||
-            textWidth <= availableWidth - _overflowSafetyMargin) {
-          _controller.stop();
-          return Text(
-            key: const ValueKey('marquee-static-run'),
-            widget.text,
-            maxLines: 1,
-            overflow: TextOverflow.clip,
-            softWrap: false,
-            style: widget.style,
-          );
-        }
-
-        const gap = 96.0;
-        final distance = textWidth + gap;
-        final duration = Duration(
-          milliseconds: (distance / 68 * 1000).round().clamp(5000, 30000),
+        final effectiveStyle = DefaultTextStyle.of(context).style.merge(
+              widget.style,
+            );
+        final textScaler = MediaQuery.textScalerOf(context);
+        final textDirection = Directionality.of(context);
+        final locale = Localizations.maybeLocaleOf(context);
+        final pages = _pagesFor(
+          text: widget.text,
+          style: effectiveStyle,
+          textScaler: textScaler,
+          textDirection: textDirection,
+          locale: locale,
+          availableWidth: availableWidth,
         );
-        if (!_controller.isAnimating || _controller.duration != duration) {
-          _controller
-            ..duration = duration
-            ..repeat();
-        }
+        _pages = pages;
+        if (_pageIndex >= pages.length) _pageIndex = 0;
+        _scheduleNextPage();
 
-        return ClipRect(
-          child: SizedBox.expand(
-            child: OverflowBox(
-              alignment: Alignment.centerLeft,
-              minWidth: 0,
-              maxWidth: double.infinity,
-              child: AnimatedBuilder(
-                animation: _controller,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _MarqueeTextRun(
-                      key: const ValueKey('marquee-leading-run'),
-                      text: widget.text,
-                      style: widget.style,
-                    ),
-                    const SizedBox(width: gap),
-                    _MarqueeTextRun(
-                      key: const ValueKey('marquee-trailing-run'),
-                      text: widget.text,
-                      style: widget.style,
-                    ),
-                    const SizedBox(width: gap),
-                  ],
-                ),
-                builder: (context, child) {
-                  return FractionalTranslation(
-                    // The track contains two identical text-and-gap segments.
-                    // Moving by half its actual laid-out width makes the second
-                    // segment land exactly where the first one started.
-                    translation: Offset(-0.5 * _controller.value, 0),
-                    child: child,
-                  );
-                },
+        final paged = pages.length > 1;
+        return RepaintBoundary(
+          child: Semantics(
+            label: widget.text,
+            excludeSemantics: true,
+            child: Text(
+              key: ValueKey(
+                paged ? 'marquee-page-run' : 'marquee-static-run',
               ),
+              pages[_pageIndex],
+              maxLines: 1,
+              overflow: TextOverflow.clip,
+              softWrap: false,
+              style: widget.style,
             ),
           ),
         );
@@ -357,44 +353,109 @@ class _MarqueeTextState extends State<_MarqueeText> implements TickerProvider {
     );
   }
 
-  static double _measureText(
-    BuildContext context,
-    String text,
-    TextStyle style,
-  ) {
-    final effectiveStyle = DefaultTextStyle.of(context).style.merge(style);
-    final painter = TextPainter(
-      text: TextSpan(text: text, style: effectiveStyle),
-      maxLines: 1,
-      textDirection: Directionality.of(context),
-      textScaler: MediaQuery.textScalerOf(context),
-      locale: Localizations.maybeLocaleOf(context),
-    )..layout();
-    final width = painter.width;
-    painter.dispose();
-    return width;
-  }
-}
+  List<String> _pagesFor({
+    required String text,
+    required TextStyle style,
+    required TextScaler textScaler,
+    required TextDirection textDirection,
+    required Locale? locale,
+    required double availableWidth,
+  }) {
+    if (_cachedText == text &&
+        _cachedStyle == style &&
+        _cachedTextScaler == textScaler &&
+        _cachedTextDirection == textDirection &&
+        _cachedLocale == locale &&
+        _cachedAvailableWidth == availableWidth &&
+        _pages.isNotEmpty) {
+      return _pages;
+    }
 
-class _MarqueeTextRun extends StatelessWidget {
-  const _MarqueeTextRun({
-    super.key,
-    required this.text,
-    required this.style,
-  });
+    _pageTimer?.cancel();
+    _pageTimer = null;
+    _pageIndex = 0;
+    _cachedText = text;
+    _cachedStyle = style;
+    _cachedTextScaler = textScaler;
+    _cachedTextDirection = textDirection;
+    _cachedLocale = locale;
+    _cachedAvailableWidth = availableWidth;
 
-  final String text;
-  final TextStyle style;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
+    if (!availableWidth.isFinite || availableWidth <= 0 || text.isEmpty) {
+      return <String>[text];
+    }
+    final maxWidth = availableWidth - _overflowSafetyMargin;
+    if (_fits(
       text,
-      maxLines: 1,
-      overflow: TextOverflow.visible,
-      softWrap: false,
+      maxWidth: maxWidth,
       style: style,
-    );
+      textScaler: textScaler,
+      textDirection: textDirection,
+      locale: locale,
+    )) {
+      return <String>[text];
+    }
+
+    final characters = text.runes.map(String.fromCharCode).toList();
+    final pages = <String>[];
+    var start = 0;
+    while (start < characters.length) {
+      while (start < characters.length && characters[start].trim().isEmpty) {
+        start++;
+      }
+      if (start >= characters.length) break;
+
+      var low = 1;
+      var high = characters.length - start;
+      var best = 1;
+      while (low <= high) {
+        final middle = (low + high) ~/ 2;
+        final hasMore = start + middle < characters.length;
+        final candidate =
+            '${characters.sublist(start, start + middle).join()}${hasMore ? '…' : ''}';
+        if (_fits(
+          candidate,
+          maxWidth: maxWidth,
+          style: style,
+          textScaler: textScaler,
+          textDirection: textDirection,
+          locale: locale,
+        )) {
+          best = middle;
+          low = middle + 1;
+        } else {
+          high = middle - 1;
+        }
+      }
+
+      final end = start + best;
+      final hasMore = end < characters.length;
+      final page = characters.sublist(start, end).join().trim();
+      pages.add('$page${hasMore ? '…' : ''}');
+      start = end;
+    }
+    return pages.isEmpty ? <String>[text] : pages;
+  }
+
+  static bool _fits(
+    String text, {
+    required double maxWidth,
+    required TextStyle style,
+    required TextScaler textScaler,
+    required TextDirection textDirection,
+    required Locale? locale,
+  }) {
+    if (maxWidth <= 0) return false;
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      maxLines: 1,
+      textDirection: textDirection,
+      textScaler: textScaler,
+      locale: locale,
+    )..layout();
+    final fits = painter.width <= maxWidth;
+    painter.dispose();
+    return fits;
   }
 }
 

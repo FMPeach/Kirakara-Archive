@@ -1,10 +1,9 @@
+import 'dart:async' show Timer;
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart'
-    show Ticker, TickerCallback, TickerProvider;
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../domain/media_asset.dart';
@@ -135,8 +134,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                   widget.settingsService,
                 ]),
                 builder: (context, _) => _TopBar(
-                  customAnnouncement:
-                      widget.settingsService.customAnnouncement,
+                  customAnnouncement: widget.settingsService.customAnnouncement,
                   playbackService: widget.playbackService,
                   isLoading: widget.kirakaraShowService.isLoading,
                   isBuffering: widget.kirakaraShowService.isBuffering,
@@ -183,8 +181,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                     : BrowseScreen(
                         key: ValueKey(_browseSerial),
                         searchService: widget.searchService,
-                        bilibiliAccountService:
-                            widget.bilibiliAccountService,
+                        bilibiliAccountService: widget.bilibiliAccountService,
                         initialMode: _browseMode!,
                         initialQuery: _browseInitialQuery,
                         onExit: _closeBrowsePage,
