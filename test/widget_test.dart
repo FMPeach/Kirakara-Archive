@@ -154,7 +154,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('long ticker advances by idle pages without a VSync ticker',
+  testWidgets('long ticker keeps a clear gap between repeated runs',
       (tester) async {
     tester.view.physicalSize = const Size(1920, 1080);
     tester.view.devicePixelRatio = 1;
@@ -173,20 +173,21 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
 
-    final page = find.byKey(const ValueKey('marquee-page-run'));
-    expect(page, findsOneWidget);
-    expect(
-      tester.binding.transientCallbackCount,
-      0,
-      reason: 'Paged announcements must not keep a VSync Ticker alive.',
-    );
-    final firstPage = tester.widget<Text>(page).data;
-    await tester.pump(const Duration(seconds: 5));
-    expect(tester.widget<Text>(page).data, isNot(firstPage));
-    expect(tester.takeException(), isNull);
+    final leading = find.byKey(const ValueKey('marquee-leading-run'));
+    final trailing = find.byKey(const ValueKey('marquee-trailing-run'));
+    expect(leading, findsOneWidget);
+    expect(trailing, findsOneWidget);
 
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
+    void expectRunGap() {
+      final leadingRect = tester.getRect(leading);
+      final trailingRect = tester.getRect(trailing);
+      expect(trailingRect.left - leadingRect.right, greaterThanOrEqualTo(95));
+    }
+
+    expectRunGap();
+    await tester.pump(const Duration(seconds: 12));
+    expectRunGap();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('near-boundary ticker scrolls before punctuation can overflow',
@@ -261,13 +262,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(
-      find.byKey(const ValueKey('marquee-page-run')),
+      find.byKey(const ValueKey('marquee-leading-run')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('marquee-trailing-run')),
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('marquee-static-run')), findsNothing);
     expect(tester.takeException(), isNull);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
   });
 }

@@ -9,6 +9,7 @@ class _TopBar extends StatelessWidget {
     required this.showSearch,
     required this.controllerFullscreen,
     required this.isCasting,
+    required this.reduceMotionForCast,
     required this.onSearchTap,
     required this.onQr,
     required this.onSettings,
@@ -23,6 +24,7 @@ class _TopBar extends StatelessWidget {
   final bool showSearch;
   final bool controllerFullscreen;
   final bool isCasting;
+  final bool reduceMotionForCast;
   final VoidCallback onSearchTap;
   final VoidCallback onQr;
   final VoidCallback onSettings;
@@ -32,7 +34,7 @@ class _TopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = playbackService.state;
-    final tickerText = _tickerText(
+    final tickerItems = _tickerItems(
       customAnnouncement: customAnnouncement,
       current: state.currentSong,
       next: state.upNext?.song,
@@ -40,6 +42,7 @@ class _TopBar extends StatelessWidget {
       isLoading: isLoading,
       isBuffering: isBuffering,
     );
+    final tickerText = tickerItems.join('  ·  ');
     final brandBlock = SizedBox(
       width: 325,
       child: Row(
@@ -90,14 +93,23 @@ class _TopBar extends StatelessWidget {
           const _TickerTag(text: '报幕'),
           const SizedBox(width: 15),
           Expanded(
-            child: _MarqueeText(
-              text: tickerText,
-              style: const TextStyle(
-                color: KiraColors.cream,
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+            child: reduceMotionForCast
+                ? _CastAnnouncementRotator(
+                    items: tickerItems,
+                    style: const TextStyle(
+                      color: KiraColors.cream,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  )
+                : _MarqueeText(
+                    text: tickerText,
+                    style: const TextStyle(
+                      color: KiraColors.cream,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
           ),
         ],
       ),
@@ -180,7 +192,7 @@ class _TopBar extends StatelessWidget {
     );
   }
 
-  static String _tickerText({
+  static List<String> _tickerItems({
     required String customAnnouncement,
     required Song? current,
     required Song? next,
@@ -189,20 +201,21 @@ class _TopBar extends StatelessWidget {
     required bool isBuffering,
   }) {
     final custom = customAnnouncement.trim();
-    final parts = <String>[
+    var currentText = '当前播放：${_songLabel(current, fallback: '等待点歌')}';
+    if (isLoading) {
+      currentText += ' · 正在加载';
+    } else if (isBuffering) {
+      currentText += ' · 正在缓冲';
+    } else if (current == null || mode == PlaybackMode.stopped) {
+      currentText += ' · 已停止';
+    } else if (mode == PlaybackMode.paused) {
+      currentText += ' · 暂停中';
+    }
+    return <String>[
       if (custom.isNotEmpty) custom,
-      '当前播放：${_songLabel(current, fallback: '等待点歌')}',
-      if (isLoading)
-        '正在加载'
-      else if (isBuffering)
-        '正在缓冲'
-      else if (current == null || mode == PlaybackMode.stopped)
-        '已停止'
-      else if (mode == PlaybackMode.paused)
-        '暂停中',
+      currentText,
       next == null ? '下一首：暂无，快去点一首吧' : '下一首：${_songLabel(next)}',
     ];
-    return parts.join('  ·  ');
   }
 
   static String _songLabel(Song? song, {String fallback = '暂无'}) {
@@ -224,24 +237,192 @@ class _MarqueeText extends StatefulWidget {
   State<_MarqueeText> createState() => _MarqueeTextState();
 }
 
-class _MarqueeTextState extends State<_MarqueeText>
-    with WidgetsBindingObserver {
-  // A continuous Flutter animation keeps the entire Windows surface in the
-  // VSync frame pump even when only this text moves. Show long announcements
-  // as instant pages instead: one frame per page, then a completely idle UI.
+class _MarqueeTextState extends State<_MarqueeText> implements TickerProvider {
+  static const int _marqueeTickerFps = 30;
   static const double _overflowSafetyMargin = 12;
-  static const Duration _pageInterval = Duration(seconds: 5);
 
-  Timer? _pageTimer;
-  int _pageIndex = 0;
+  late final AnimationController _controller;
+  final Duration _marqueeStep =
+      Duration(microseconds: 1000000 ~/ _marqueeTickerFps);
+  Duration _marqueeLastEmit = Duration.zero;
+  Duration _marqueeNextEmit = Duration.zero;
+  Ticker? _marqueeTicker;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this);
+  }
+
+  @override
+  Ticker createTicker(TickerCallback onTick) {
+    assert(
+      _marqueeTicker == null,
+      'createTicker 只能调用一次；滚动报幕只应有一个 ticker',
+    );
+    _marqueeTicker = Ticker(
+      (Duration elapsed) {
+        if (elapsed < _marqueeLastEmit) {
+          _marqueeLastEmit = Duration.zero;
+          _marqueeNextEmit = Duration.zero;
+        }
+        if (elapsed < _marqueeNextEmit) return;
+        _marqueeLastEmit = elapsed;
+        _marqueeNextEmit = elapsed + _marqueeStep;
+        onTick(elapsed);
+      },
+      debugLabel: 'marquee-throttled-${_marqueeTickerFps}fps',
+    );
+    return _marqueeTicker!;
+  }
+
+  @override
+  void didUpdateWidget(covariant _MarqueeText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) {
+      _controller
+        ..stop()
+        ..value = 0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      key: const ValueKey('marquee-viewport'),
+      builder: (context, constraints) {
+        final textWidth = _measureText(context, widget.text, widget.style);
+        final availableWidth = constraints.maxWidth;
+        if (!textWidth.isFinite ||
+            !availableWidth.isFinite ||
+            textWidth <= availableWidth - _overflowSafetyMargin) {
+          _controller.stop();
+          return Text(
+            key: const ValueKey('marquee-static-run'),
+            widget.text,
+            maxLines: 1,
+            overflow: TextOverflow.clip,
+            softWrap: false,
+            style: widget.style,
+          );
+        }
+
+        const gap = 96.0;
+        final distance = textWidth + gap;
+        final duration = Duration(
+          milliseconds: (distance / 68 * 1000).round().clamp(5000, 30000),
+        );
+        if (!_controller.isAnimating || _controller.duration != duration) {
+          _controller
+            ..duration = duration
+            ..repeat();
+        }
+
+        return ClipRect(
+          child: SizedBox.expand(
+            child: OverflowBox(
+              alignment: Alignment.centerLeft,
+              minWidth: 0,
+              maxWidth: double.infinity,
+              child: AnimatedBuilder(
+                animation: _controller,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _MarqueeTextRun(
+                      key: const ValueKey('marquee-leading-run'),
+                      text: widget.text,
+                      style: widget.style,
+                    ),
+                    const SizedBox(width: gap),
+                    _MarqueeTextRun(
+                      key: const ValueKey('marquee-trailing-run'),
+                      text: widget.text,
+                      style: widget.style,
+                    ),
+                    const SizedBox(width: gap),
+                  ],
+                ),
+                builder: (context, child) => FractionalTranslation(
+                  translation: Offset(-0.5 * _controller.value, 0),
+                  child: child,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  static double _measureText(
+    BuildContext context,
+    String text,
+    TextStyle style,
+  ) {
+    final effectiveStyle = DefaultTextStyle.of(context).style.merge(style);
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: effectiveStyle),
+      maxLines: 1,
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
+}
+
+class _MarqueeTextRun extends StatelessWidget {
+  const _MarqueeTextRun({
+    super.key,
+    required this.text,
+    required this.style,
+  });
+
+  final String text;
+  final TextStyle style;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      maxLines: 1,
+      overflow: TextOverflow.visible,
+      softWrap: false,
+      style: style,
+    );
+  }
+}
+
+class _CastAnnouncementRotator extends StatefulWidget {
+  const _CastAnnouncementRotator({
+    required this.items,
+    required this.style,
+  });
+
+  final List<String> items;
+  final TextStyle style;
+
+  @override
+  State<_CastAnnouncementRotator> createState() =>
+      _CastAnnouncementRotatorState();
+}
+
+class _CastAnnouncementRotatorState extends State<_CastAnnouncementRotator>
+    with WidgetsBindingObserver {
+  static const Duration _switchInterval = Duration(seconds: 5);
+
+  Timer? _switchTimer;
+  int _index = 0;
   bool _appVisible = true;
-  List<String> _pages = const [];
-  String? _cachedText;
-  TextStyle? _cachedStyle;
-  TextScaler? _cachedTextScaler;
-  TextDirection? _cachedTextDirection;
-  Locale? _cachedLocale;
-  double? _cachedAvailableWidth;
 
   @override
   void initState() {
@@ -251,30 +432,32 @@ class _MarqueeTextState extends State<_MarqueeText>
   }
 
   @override
+  void didUpdateWidget(covariant _CastAnnouncementRotator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!listEquals(oldWidget.items, widget.items)) {
+      _switchTimer?.cancel();
+      _switchTimer = null;
+      _index = 0;
+    }
+  }
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final visible = _isVisible(state);
     if (_appVisible == visible) return;
     _appVisible = visible;
     if (visible) {
-      _scheduleNextPage();
+      _scheduleNext();
     } else {
-      _pageTimer?.cancel();
-      _pageTimer = null;
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant _MarqueeText oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.text != widget.text || oldWidget.style != widget.style) {
-      _invalidatePages();
+      _switchTimer?.cancel();
+      _switchTimer = null;
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _pageTimer?.cancel();
+    _switchTimer?.cancel();
     super.dispose();
   }
 
@@ -284,178 +467,36 @@ class _MarqueeTextState extends State<_MarqueeText>
         state == AppLifecycleState.inactive;
   }
 
-  void _invalidatePages() {
-    _pageTimer?.cancel();
-    _pageTimer = null;
-    _pageIndex = 0;
-    _pages = const [];
-    _cachedText = null;
-    _cachedStyle = null;
-    _cachedTextScaler = null;
-    _cachedTextDirection = null;
-    _cachedLocale = null;
-    _cachedAvailableWidth = null;
-  }
-
-  void _scheduleNextPage() {
-    if (!_appVisible || _pages.length <= 1 || _pageTimer != null) return;
-    _pageTimer = Timer(_pageInterval, () {
-      _pageTimer = null;
-      if (!mounted || !_appVisible || _pages.length <= 1) return;
-      setState(() {
-        _pageIndex = (_pageIndex + 1) % _pages.length;
-      });
+  void _scheduleNext() {
+    if (!_appVisible || widget.items.length <= 1 || _switchTimer != null) {
+      return;
+    }
+    _switchTimer = Timer(_switchInterval, () {
+      _switchTimer = null;
+      if (!mounted || !_appVisible || widget.items.length <= 1) return;
+      setState(() => _index = (_index + 1) % widget.items.length);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      key: const ValueKey('marquee-viewport'),
-      builder: (context, constraints) {
-        final availableWidth = constraints.maxWidth;
-        final effectiveStyle = DefaultTextStyle.of(context).style.merge(
-              widget.style,
-            );
-        final textScaler = MediaQuery.textScalerOf(context);
-        final textDirection = Directionality.of(context);
-        final locale = Localizations.maybeLocaleOf(context);
-        final pages = _pagesFor(
-          text: widget.text,
-          style: effectiveStyle,
-          textScaler: textScaler,
-          textDirection: textDirection,
-          locale: locale,
-          availableWidth: availableWidth,
-        );
-        _pages = pages;
-        if (_pageIndex >= pages.length) _pageIndex = 0;
-        _scheduleNextPage();
-
-        final paged = pages.length > 1;
-        return RepaintBoundary(
-          child: Semantics(
-            label: widget.text,
-            excludeSemantics: true,
-            child: Text(
-              key: ValueKey(
-                paged ? 'marquee-page-run' : 'marquee-static-run',
-              ),
-              pages[_pageIndex],
-              maxLines: 1,
-              overflow: TextOverflow.clip,
-              softWrap: false,
-              style: widget.style,
-            ),
-          ),
-        );
-      },
+    if (_index >= widget.items.length) _index = 0;
+    _scheduleNext();
+    final text = widget.items.isEmpty ? '' : widget.items[_index];
+    return RepaintBoundary(
+      child: Semantics(
+        label: text,
+        excludeSemantics: true,
+        child: Text(
+          key: const ValueKey('cast-announcement-item'),
+          text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          softWrap: false,
+          style: widget.style,
+        ),
+      ),
     );
-  }
-
-  List<String> _pagesFor({
-    required String text,
-    required TextStyle style,
-    required TextScaler textScaler,
-    required TextDirection textDirection,
-    required Locale? locale,
-    required double availableWidth,
-  }) {
-    if (_cachedText == text &&
-        _cachedStyle == style &&
-        _cachedTextScaler == textScaler &&
-        _cachedTextDirection == textDirection &&
-        _cachedLocale == locale &&
-        _cachedAvailableWidth == availableWidth &&
-        _pages.isNotEmpty) {
-      return _pages;
-    }
-
-    _pageTimer?.cancel();
-    _pageTimer = null;
-    _pageIndex = 0;
-    _cachedText = text;
-    _cachedStyle = style;
-    _cachedTextScaler = textScaler;
-    _cachedTextDirection = textDirection;
-    _cachedLocale = locale;
-    _cachedAvailableWidth = availableWidth;
-
-    if (!availableWidth.isFinite || availableWidth <= 0 || text.isEmpty) {
-      return <String>[text];
-    }
-    final maxWidth = availableWidth - _overflowSafetyMargin;
-    if (_fits(
-      text,
-      maxWidth: maxWidth,
-      style: style,
-      textScaler: textScaler,
-      textDirection: textDirection,
-      locale: locale,
-    )) {
-      return <String>[text];
-    }
-
-    final characters = text.runes.map(String.fromCharCode).toList();
-    final pages = <String>[];
-    var start = 0;
-    while (start < characters.length) {
-      while (start < characters.length && characters[start].trim().isEmpty) {
-        start++;
-      }
-      if (start >= characters.length) break;
-
-      var low = 1;
-      var high = characters.length - start;
-      var best = 1;
-      while (low <= high) {
-        final middle = (low + high) ~/ 2;
-        final hasMore = start + middle < characters.length;
-        final candidate =
-            '${characters.sublist(start, start + middle).join()}${hasMore ? '…' : ''}';
-        if (_fits(
-          candidate,
-          maxWidth: maxWidth,
-          style: style,
-          textScaler: textScaler,
-          textDirection: textDirection,
-          locale: locale,
-        )) {
-          best = middle;
-          low = middle + 1;
-        } else {
-          high = middle - 1;
-        }
-      }
-
-      final end = start + best;
-      final hasMore = end < characters.length;
-      final page = characters.sublist(start, end).join().trim();
-      pages.add('$page${hasMore ? '…' : ''}');
-      start = end;
-    }
-    return pages.isEmpty ? <String>[text] : pages;
-  }
-
-  static bool _fits(
-    String text, {
-    required double maxWidth,
-    required TextStyle style,
-    required TextScaler textScaler,
-    required TextDirection textDirection,
-    required Locale? locale,
-  }) {
-    if (maxWidth <= 0) return false;
-    final painter = TextPainter(
-      text: TextSpan(text: text, style: style),
-      maxLines: 1,
-      textDirection: textDirection,
-      textScaler: textScaler,
-      locale: locale,
-    )..layout();
-    final fits = painter.width <= maxWidth;
-    painter.dispose();
-    return fits;
   }
 }
 

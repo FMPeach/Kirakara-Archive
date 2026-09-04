@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart'
+    show Ticker, TickerCallback, TickerProvider;
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../domain/media_asset.dart';
@@ -141,6 +143,8 @@ class _ControllerScreenState extends State<ControllerScreen> {
                   showSearch: _browseMode == null,
                   controllerFullscreen: _controllerFullscreen,
                   isCasting: widget.castService.isCasting,
+                  reduceMotionForCast:
+                      widget.castService.state != CastState.idle,
                   onSearchTap: () => _runSearch(''),
                   onQr: _showQrDialog,
                   onSettings: _showSettingsDialog,
