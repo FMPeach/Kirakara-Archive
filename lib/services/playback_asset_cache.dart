@@ -970,6 +970,9 @@ class PlaybackAssetCache extends ChangeNotifier {
         final chunk = await raf.read(toRead);
         if (chunk.isEmpty) break;
         response.add(chunk);
+        // 读到多少就立刻推给下游（MF SourceReader）。不刷新的话，响应会在
+        // 缓冲区里停留到整段写完，渐进读取会退化成“等整条下载完才出字节”。
+        await response.flush();
         remaining -= chunk.length;
       }
       await response.flush();
@@ -1060,10 +1063,14 @@ class PlaybackAssetCache extends ChangeNotifier {
       );
     }
 
-    final partFile = File('${_localPathFor(asset)}.part');
     final state = _downloadStateFor(asset);
-    final downloaded =
-        partFile.existsSync() ? partFile.lengthSync() : state.downloadedBytes;
+    // 活动下载的每个数据块都会更新 downloadedBytes，因此无需在每次 UI 重建
+    // 里做同步 stat；只有本会话尚无字节状态时（例如遗留的 .part）才查磁盘。
+    var downloaded = state.downloadedBytes;
+    if (downloaded <= 0) {
+      final partFile = File('${_localPathFor(asset)}.part');
+      if (partFile.existsSync()) downloaded = partFile.lengthSync();
+    }
     return _AssetProgress(
       totalBytes: state.totalLength,
       downloadedBytes: downloaded,
@@ -1104,8 +1111,27 @@ class PlaybackAssetCache extends ChangeNotifier {
         MediaAssetType.cover => '封面',
       };
 
+  /// 进度通知合并窗口。下载池最多允许 15 条响应流同时写盘，逐块直发会以
+  /// 数百赫兹的节奏重建监听 UI（点歌列表对话框），并连带触发同步文件查询。
+  static const _progressNotifyInterval = Duration(milliseconds: 120);
+  DateTime? _lastProgressNotifyAt;
+  Timer? _progressNotifyTimer;
+
   void _notifyProgressListeners() {
-    if (!_disposed) notifyListeners();
+    if (_disposed) return;
+    final now = DateTime.now();
+    final last = _lastProgressNotifyAt;
+    if (last == null || now.difference(last) >= _progressNotifyInterval) {
+      _lastProgressNotifyAt = now;
+      notifyListeners();
+      return;
+    }
+    _progressNotifyTimer ??= Timer(_progressNotifyInterval, () {
+      _progressNotifyTimer = null;
+      if (_disposed) return;
+      _lastProgressNotifyAt = DateTime.now();
+      notifyListeners();
+    });
   }
 
   /// 清理所有缓存文件。
@@ -1128,6 +1154,8 @@ class PlaybackAssetCache extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _progressNotifyTimer?.cancel();
+    _progressNotifyTimer = null;
     _downloadConnectionPool.dispose();
     _http.close();
     _mediaHttp.close();

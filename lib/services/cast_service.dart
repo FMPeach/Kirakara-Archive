@@ -127,18 +127,24 @@ class CastService extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final startWatch = Stopwatch()..start();
       final streamUri = _startNativeStream(
         showService,
         localAddress: device.localAddress,
       );
+      debugPrint('[cast-timing] startCastStream '
+          '${startWatch.elapsedMilliseconds}ms');
       _activeShowService = showService;
       _mpegTsUrl = streamUri.toString();
 
+      startWatch.reset();
       await _controlPoint.setTransportUriAndPlay(
         device,
         streamUri,
         title: 'Kira Karaoke',
       );
+      debugPrint('[cast-timing] dlna setTransportUriAndPlay '
+          '${startWatch.elapsedMilliseconds}ms');
       if (generation != _sessionGeneration) return;
       _state = CastState.casting;
       _startReceiverMonitor(device, generation);
@@ -195,6 +201,7 @@ class CastService extends ChangeNotifier {
   Future<void> stopCast({KirakaraShowService? showService}) async {
     _sessionGeneration++;
     _cancelReceiverMonitor();
+    final stopWatch = Stopwatch()..start();
     final device = _activeDevice;
     if (device != null) {
       try {
@@ -204,6 +211,7 @@ class CastService extends ChangeNotifier {
       }
     }
     (showService ?? _activeShowService)?.stopCastStream();
+    debugPrint('[cast-timing] stopCast ${stopWatch.elapsedMilliseconds}ms');
     _activeShowService = null;
     _activeDevice = null;
     _targetName = null;

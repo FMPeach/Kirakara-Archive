@@ -545,9 +545,8 @@ class _SongCover extends StatelessWidget {
           orElse: () => null,
         );
     final coverPath = coverAsset?.cachedPath;
-    final hasCover = coverPath != null &&
-        coverPath.isNotEmpty &&
-        File(coverPath).existsSync();
+    // 构建期间不做同步文件检查：Image.file 自带 errorBuilder，缺图会回退占位图。
+    final hasCover = coverPath != null && coverPath.isNotEmpty;
 
     return Container(
       width: size,
