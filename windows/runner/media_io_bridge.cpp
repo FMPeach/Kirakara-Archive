@@ -7,6 +7,7 @@
 #include <winhttp.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -482,6 +483,7 @@ class NativeDownload : public std::enable_shared_from_this<NativeDownload> {
     constexpr size_t kWriteBatchBytes = 1024 * 1024;
     std::vector<uint8_t> buffer(kWriteBatchBytes);
     size_t buffered_bytes = 0;
+    auto buffered_since = std::chrono::steady_clock::time_point{};
     size_t write_threshold = static_cast<size_t>(initial_flush_bytes_);
     if (write_threshold == 0 || write_threshold > kWriteBatchBytes) {
       write_threshold = kWriteBatchBytes;
@@ -504,6 +506,7 @@ class NativeDownload : public std::enable_shared_from_this<NativeDownload> {
         state_.write_calls++;
       }
       buffered_bytes = 0;
+      buffered_since = std::chrono::steady_clock::time_point{};
       write_threshold = kWriteBatchBytes;
       return true;
     };
@@ -541,6 +544,9 @@ class NativeDownload : public std::enable_shared_from_this<NativeDownload> {
       if (bytes_read == 0) {
         continue;
       }
+      if (buffered_bytes == 0) {
+        buffered_since = std::chrono::steady_clock::now();
+      }
       buffered_bytes += bytes_read;
       {
         std::lock_guard<std::mutex> lock(state_mutex_);
@@ -551,7 +557,16 @@ class NativeDownload : public std::enable_shared_from_this<NativeDownload> {
           state_.peak_buffered_bytes = buffered_bytes;
         }
       }
-      if (buffered_bytes >= write_threshold && !persist_buffer()) {
+      // Keep large sequential writes on fast links, but do not leave a small
+      // tail invisible to the progressive HTTP reader for seconds. This is a
+      // normal WriteFile only; deliberately avoid FlushFileBuffers here.
+      constexpr auto kMaxBufferedLatency = std::chrono::milliseconds(200);
+      const bool latency_elapsed =
+          buffered_since != std::chrono::steady_clock::time_point{} &&
+          std::chrono::steady_clock::now() - buffered_since >=
+              kMaxBufferedLatency;
+      if ((buffered_bytes >= write_threshold || latency_elapsed) &&
+          !persist_buffer()) {
         io_ok = false;
         break;
       }

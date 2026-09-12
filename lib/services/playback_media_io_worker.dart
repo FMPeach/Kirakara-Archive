@@ -156,6 +156,7 @@ class PlaybackMediaIoWorker {
     required String localPath,
     required int? totalLength,
     required int persistedBytes,
+    required bool producerActive,
   }) {
     unawaited(() async {
       await _ensureStarted();
@@ -165,6 +166,7 @@ class PlaybackMediaIoWorker {
         'localPath': localPath,
         'totalLength': totalLength,
         'persistedBytes': persistedBytes,
+        'producerActive': producerActive,
       });
     }());
   }
@@ -382,6 +384,10 @@ class _MediaIoWorkerRuntime {
           state
             ..totalLength = raw['totalLength'] as int?
             ..persistedBytes = raw['persistedBytes'] as int? ?? 0;
+          final producerActive = raw['producerActive'];
+          if (producerActive is bool) {
+            state.producerActive = producerActive;
+          }
         }
       case 'shutdown':
         unawaited(_shutdown().whenComplete(() {
@@ -530,6 +536,7 @@ class _MediaIoWorkerRuntime {
       final result = await _writeProgressiveRange(
         response: request.response,
         source: partFile,
+        localPath: asset.localPath,
         start: range.start,
         end: range.end,
       );
@@ -651,6 +658,7 @@ class _MediaIoWorkerRuntime {
   Future<({int flushes, int bytes})> _writeProgressiveRange({
     required HttpResponse response,
     required File source,
+    required String localPath,
     required int start,
     required int end,
   }) async {
@@ -668,7 +676,12 @@ class _MediaIoWorkerRuntime {
         final currentLen = await source.length();
         final available = (currentLen - readPosition).clamp(0, remaining);
         if (available <= 0) {
-          if (DateTime.now().difference(lastGrowthAt) >= noGrowthTimeout) break;
+          final producerActive =
+              downloadStates[localPath]?.producerActive ?? false;
+          if (!producerActive &&
+              DateTime.now().difference(lastGrowthAt) >= noGrowthTimeout) {
+            break;
+          }
           await Future<void>.delayed(const Duration(milliseconds: 100));
           continue;
         }
@@ -768,6 +781,7 @@ class _WorkerDownloadTask {
     var actualLength = 0;
     int? statusCode;
     String? errorMessage;
+    sharedState.producerActive = true;
     try {
       final localFile = File(localPath);
       final partFile = File('$localPath.part');
@@ -892,6 +906,7 @@ class _WorkerDownloadTask {
         if (await part.exists()) actualLength = await part.length();
       } catch (_) {}
     } finally {
+      sharedState.producerActive = false;
       _progressTimer?.cancel();
       _progressTimer = null;
       _sendProgress(force: true);
@@ -955,6 +970,7 @@ class _WorkerDownloadTask {
 class _WorkerDownloadState {
   int? totalLength;
   int persistedBytes = 0;
+  bool producerActive = false;
 }
 
 class _WorkerStreamAsset {

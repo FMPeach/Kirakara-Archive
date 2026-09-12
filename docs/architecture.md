@@ -64,8 +64,12 @@ Production byte transport follows this order:
 
 All paths are unlimited-rate transfers. Backpressure pauses only a source whose
 bounded write buffer is full; it is not bandwidth throttling. The first video
-runway is persisted promptly, later writes are normally 1 MiB, completed files
-use `addStream`, and remote range proxying never flushes once per source chunk.
+runway is persisted promptly, later Windows writes are normally 1 MiB but have
+a 200 ms visibility bound for partial batches, completed files use `addStream`,
+and remote range proxying never flushes once per source chunk. The progressive
+server also tracks whether the matching producer is active, so a slow
+sub-batch tail cannot be mistaken for a dead download and truncate Media
+Foundation's response.
 
 Capability results, counters, URLs, request headers, and cookies are never
 persisted by this subsystem. Native capability failure is remembered only for

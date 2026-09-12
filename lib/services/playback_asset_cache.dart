@@ -786,11 +786,18 @@ class PlaybackAssetCache extends ChangeNotifier {
             localPath: localPath,
             totalLength: progress.totalLength,
             persistedBytes: progress.persistedBytes,
+            producerActive: true,
           );
         }
       },
     );
     if (operation == null) return null;
+    _mediaIoWorker?.updateStreamAssetState(
+      localPath: localPath,
+      totalLength: state.totalLength,
+      persistedBytes: state.persistedBytes,
+      producerActive: true,
+    );
     try {
       _ioMetrics.preemptionHandlerRegistered();
       connectionLease.setPreemptHandler(() {
@@ -814,6 +821,12 @@ class PlaybackAssetCache extends ChangeNotifier {
       return _DownloadAttemptResult.failed;
     } finally {
       connectionLease.clearPreemptHandler();
+      _mediaIoWorker?.updateStreamAssetState(
+        localPath: localPath,
+        totalLength: state.totalLength,
+        persistedBytes: state.persistedBytes,
+        producerActive: false,
+      );
     }
   }
 
@@ -917,6 +930,7 @@ class PlaybackAssetCache extends ChangeNotifier {
           localPath: localPath,
           totalLength: actualLength,
           persistedBytes: actualLength,
+          producerActive: false,
         );
         await _promoteCompletedPart(asset, File('$localPath.part'));
         return _DownloadAttemptResult.finished;
@@ -985,6 +999,7 @@ class PlaybackAssetCache extends ChangeNotifier {
       localPath: _localPathFor(asset),
       totalLength: state.totalLength,
       persistedBytes: state.persistedBytes,
+      producerActive: !state.complete && !state.failed,
     );
   }
 
