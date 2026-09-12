@@ -4,6 +4,7 @@
 
 #include "flutter/generated_plugin_registrant.h"
 #include "ime_bridge.h"
+#include "media_io_bridge.h"
 #include "stage_texture_bridge.h"
 #include "window_bridge.h"
 
@@ -29,6 +30,7 @@ bool FlutterWindow::OnCreate() {
   }
   RegisterPlugins(flutter_controller_->engine());
   RegisterImeBridge(flutter_controller_->engine()->messenger());
+  RegisterMediaIoBridge(flutter_controller_->engine()->messenger());
   RegisterWindowBridge(flutter_controller_->engine()->messenger(),
                        flutter_controller_->view()->GetNativeWindow());
   stage_texture_bridge_ = std::make_unique<StageTextureBridge>(
@@ -48,6 +50,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  ShutdownMediaIoBridge();
   if (stage_texture_bridge_) {
     stage_texture_bridge_->BeginShutdown();
   }

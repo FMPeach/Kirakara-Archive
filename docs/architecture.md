@@ -43,6 +43,44 @@ Local volatile playback cache:
 Asset cache is disposable. It should be cleared after playback, app exit, cache
 pressure, or a server version/hash mismatch. It is not an offline song library.
 
+## Playback Media I/O
+
+`PlaybackAssetCache` owns policy, not byte transport. It keeps the public asset
+API, the 15-permit global connection pool, song priorities, latest-lowest
+priority preemption, retry policy, and the main-isolate metadata mirror.
+
+Production byte transport follows this order:
+
+1. On Windows, negotiate the process-local `kirakara/media_io` bridge once.
+   WinHTTP worker threads read network data into bounded buffers and write
+   `.part` files directly. A single 4 Hz poll is active only while native
+   downloads exist; media chunks never cross the platform channel.
+2. If that bridge is unavailable, use one long-lived Dart media I/O isolate.
+   The isolate owns its HTTP clients, batched file writers, and the progressive
+   loopback HTTP server. Only commands and low-rate progress snapshots cross
+   back to Flutter.
+3. Injected HTTP clients use the same bounded Dart stream pump in the caller
+   isolate. This path exists for deterministic tests and custom embedders.
+
+All paths are unlimited-rate transfers. Backpressure pauses only a source whose
+bounded write buffer is full; it is not bandwidth throttling. The first video
+runway is persisted promptly, later writes are normally 1 MiB, completed files
+use `addStream`, and remote range proxying never flushes once per source chunk.
+
+Capability results, counters, URLs, request headers, and cookies are never
+persisted by this subsystem. Native capability failure is remembered only for
+the current `PlaybackAssetCache` lifetime. `PlaybackAssetIoDiagnostics` stores
+aggregate byte/call/connection counters in memory and logs only when explicitly
+requested in a debug build.
+
+Regression commands:
+
+```powershell
+flutter test test/services_test.dart test/playback_media_io_worker_test.dart test/windows_native_media_io_test.dart
+flutter test integration_test/media_io_integration_test.dart -d windows
+flutter build windows --release
+```
+
 Playback duration and auto-advance should come from the actual selected audio
 stream/file after it is opened. The server does not need to send duration
 metadata.

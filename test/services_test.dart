@@ -720,6 +720,128 @@ void main() {
     expect(ready, isTrue);
   });
 
+  test('playback cache batches tiny network chunks with bounded buffering',
+      () async {
+    const chunkBytes = 1024;
+    const chunkCount = 2048;
+    const totalBytes = chunkBytes * chunkCount;
+    final cacheDir =
+        await Directory.systemTemp.createTemp('kirakara_cache_batch_test_');
+    addTearDown(() {
+      if (cacheDir.existsSync()) cacheDir.deleteSync(recursive: true);
+    });
+    final client = _FakeAssetHttpClient(
+      videoTotalLength: totalBytes,
+      videoChunks: List<List<int>>.generate(
+        chunkCount,
+        (_) => List<int>.filled(chunkBytes, 7),
+      ),
+    );
+    final cache = PlaybackAssetCache(
+      baseUrl: 'http://catalog.test',
+      cacheDir: cacheDir,
+      httpClient: client,
+      mediaHttpClient: client,
+    );
+    addTearDown(cache.dispose);
+    final video = MediaAsset(
+      id: 'batch-video',
+      type: MediaAssetType.video,
+      uri: Uri.parse('/media/video.mp4'),
+    );
+    final song = Song(
+      id: 'batch-song',
+      title: 'Batch',
+      category: 'Test',
+      assets: [video],
+    );
+
+    await cache.ensureSongAssets(song).timeout(const Duration(seconds: 2));
+
+    final diagnostics = cache.ioDiagnostics;
+    expect(diagnostics.receivedChunks, chunkCount);
+    expect(diagnostics.receivedBytes, totalBytes);
+    expect(diagnostics.writtenBytes, totalBytes);
+    expect(diagnostics.writeCalls, lessThanOrEqualTo(3));
+    expect(diagnostics.peakBufferedBytes, lessThanOrEqualTo(1024 * 1024));
+    expect(diagnostics.bufferedBytes, 0);
+    expect(diagnostics.preemptionHandlers, 1);
+  });
+
+  test('production cache downloads and serves video through its I/O worker',
+      () async {
+    final origin = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final originSubscription = origin.listen((request) async {
+      const bytes = <int>[10, 11, 12, 13, 14, 15, 16, 17];
+      final rangeHeader = request.headers.value(HttpHeaders.rangeHeader);
+      var start = 0;
+      var end = bytes.length - 1;
+      if (rangeHeader != null) {
+        final match = RegExp(r'bytes=(\d+)-(\d*)').firstMatch(rangeHeader)!;
+        start = int.parse(match.group(1)!);
+        final endText = match.group(2)!;
+        if (endText.isNotEmpty) end = int.parse(endText);
+        request.response.statusCode = HttpStatus.partialContent;
+        request.response.headers.set(
+          HttpHeaders.contentRangeHeader,
+          'bytes $start-$end/${bytes.length}',
+        );
+      }
+      final body = bytes.sublist(start, end + 1);
+      request.response.headers.contentLength = body.length;
+      request.response.headers.set(HttpHeaders.acceptRangesHeader, 'bytes');
+      request.response.add(body);
+      await request.response.close();
+    });
+    addTearDown(() async {
+      await originSubscription.cancel();
+      await origin.close(force: true);
+    });
+    final cacheDir =
+        await Directory.systemTemp.createTemp('kirakara_worker_cache_test_');
+    final cache = PlaybackAssetCache(
+      baseUrl: 'http://${origin.address.address}:${origin.port}',
+      cacheDir: cacheDir,
+      videoReadyBytes: 2,
+      enableNativeMediaIo: false,
+    );
+    addTearDown(() async {
+      cache.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      if (cacheDir.existsSync()) cacheDir.deleteSync(recursive: true);
+    });
+    final video = MediaAsset(
+      id: 'worker-video',
+      type: MediaAssetType.video,
+      uri: Uri.parse('/video.mp4'),
+    );
+    final song = Song(
+      id: 'worker-song',
+      title: 'Worker',
+      category: 'Test',
+      assets: [video],
+    );
+
+    await cache.ensurePlaybackAssets(song).timeout(const Duration(seconds: 3));
+    final playbackUrl = cache.playbackPathFor(video);
+    expect(playbackUrl, startsWith('http://127.0.0.1:'));
+    final response = await http.get(
+      Uri.parse(playbackUrl!),
+      headers: {HttpHeaders.rangeHeader: 'bytes=2-5'},
+    );
+    expect(response.statusCode, HttpStatus.partialContent);
+    expect(response.bodyBytes, [12, 13, 14, 15]);
+
+    for (var i = 0; i < 40 && video.cachedPath == null; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    expect(video.cachedPath, isNotNull);
+    expect(await File(video.cachedPath!).readAsBytes(),
+        [10, 11, 12, 13, 14, 15, 16, 17]);
+    expect(cache.ioDiagnostics.receivedBytes, 8);
+    expect(cache.ioDiagnostics.preemptionHandlers, 1);
+  });
+
   test('local progressive response flushes cached bytes before EOF', () async {
     const prefixBytes = 64 * 1024;
     const totalBytes = prefixBytes * 2;
@@ -1091,9 +1213,16 @@ void main() {
     for (var i = 0; i < 40 && client.requestCount[14] < 2; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 25));
     }
-    expect(client.requestCount[14], 2);
+    expect(
+      client.requestCount[14],
+      2,
+      reason:
+          'requests=${client.requestCount}, diagnostics=${cache.ioDiagnostics}',
+    );
     expect(client.requestRanges[14], [null, 'bytes=2-']);
     expect(client.requestCount.take(14), everyElement(1));
+    expect(cache.ioDiagnostics.preemptions, 1);
+    expect(cache.ioDiagnostics.preemptionHandlers, 17);
 
     for (var i = 0; i < 15; i++) {
       client.release[i].complete();

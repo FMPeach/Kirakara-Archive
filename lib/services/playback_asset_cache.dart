@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -8,6 +7,9 @@ import 'package:path/path.dart' as p;
 
 import '../domain/media_asset.dart';
 import '../domain/song.dart';
+import 'media_stream_pump.dart';
+import 'playback_media_io_worker.dart';
+import 'windows_native_media_io.dart';
 
 /// 播放周期缓存 — 下载歌曲媒体文件到本地临时目录。
 ///
@@ -22,6 +24,8 @@ class PlaybackAssetCache extends ChangeNotifier {
     Duration retryDelay = const Duration(milliseconds: 500),
     int maxAutomaticRetries = 5,
     int videoReadyBytes = 512 * 1024,
+    bool enableNativeMediaIo = true,
+    bool debugMediaIo = false,
   })  : assert(cacheDir == null || cacheRoot == null),
         assert(maxAutomaticRetries >= 0),
         assert(videoReadyBytes > 0),
@@ -31,7 +35,16 @@ class PlaybackAssetCache extends ChangeNotifier {
         _mediaHttp = mediaHttpClient ?? http.Client(),
         _retryDelay = retryDelay,
         _maxAutomaticRetries = maxAutomaticRetries,
-        _videoReadyBytes = videoReadyBytes;
+        _videoReadyBytes = videoReadyBytes {
+    if (httpClient == null && mediaHttpClient == null) {
+      _mediaIoWorker = PlaybackMediaIoWorker(
+        onServerMetrics: _ioMetrics.addWorkerServerMetrics,
+      );
+      if (Platform.isWindows && enableNativeMediaIo) {
+        _nativeMediaIo = WindowsNativeMediaIo(debugLogging: debugMediaIo);
+      }
+    }
+  }
 
   static Directory _createSessionCacheDirectory(Directory? cacheRoot) {
     final root = cacheRoot ??
@@ -95,11 +108,30 @@ class PlaybackAssetCache extends ChangeNotifier {
   final Map<String, int> _songPriorities = {};
   final _AsyncPreemptivePermitPool _downloadConnectionPool =
       _AsyncPreemptivePermitPool(15);
+  final _PlaybackAssetIoMetrics _ioMetrics = _PlaybackAssetIoMetrics();
+  PlaybackMediaIoWorker? _mediaIoWorker;
+  WindowsNativeMediaIo? _nativeMediaIo;
+  int? _workerStreamPort;
+  Future<int>? _workerStreamServerFuture;
   HttpServer? _streamServer;
   Future<HttpServer>? _streamServerFuture;
   bool _disposed = false;
 
   String get cacheDirectoryPath => _cacheDir.path;
+
+  /// Current-process counters for diagnosing media I/O overhead.
+  ///
+  /// The snapshot is never persisted and contains no URLs, cookies, headers,
+  /// account data, or file names. Reading it does not notify listeners.
+  PlaybackAssetIoDiagnostics get ioDiagnostics => _ioMetrics.snapshot();
+
+  /// Emits one explicitly requested diagnostics sample in debug builds.
+  void debugLogIoDiagnostics() {
+    assert(() {
+      debugPrint('[playback-io] $ioDiagnostics');
+      return true;
+    }());
+  }
 
   Future<int> cacheSizeBytes() async {
     if (!await _cacheDir.exists()) return 0;
@@ -169,9 +201,7 @@ class PlaybackAssetCache extends ChangeNotifier {
         .toList(growable: false);
     if (streamVideos.isNotEmpty) {
       await _ensureStreamServer();
-      for (final asset in streamVideos) {
-        _registerStreamAsset(asset);
-      }
+      await Future.wait(streamVideos.map(_prepareStreamAsset));
     }
     await Future.wait(blocking);
     _syncLyricProject(song);
@@ -201,11 +231,9 @@ class PlaybackAssetCache extends ChangeNotifier {
         .where((asset) => existingLocalPathFor(asset) == null)
         .toList(growable: false);
     if (streamVideos.isNotEmpty) {
-      unawaited(_ensureStreamServer().then((_) {
-        for (final asset in streamVideos) {
-          _registerStreamAsset(asset);
-        }
-      }));
+      unawaited(_ensureStreamServer().then(
+        (_) => Future.wait(streamVideos.map(_prepareStreamAsset)),
+      ));
     }
   }
 
@@ -461,6 +489,7 @@ class PlaybackAssetCache extends ChangeNotifier {
       final connectionLease = await _downloadConnectionPool.acquire(
         priority: () => _songPriorities[songId] ?? 2,
       );
+      _ioMetrics.connectionOpened();
       try {
         if (_disposed) return;
         if (await _hydrateCachedAsset(asset, localPath)) return;
@@ -490,6 +519,7 @@ class PlaybackAssetCache extends ChangeNotifier {
           retries++;
         }
       } finally {
+        _ioMetrics.connectionClosed();
         connectionLease.release();
       }
       if (retryAfterFailure) {
@@ -569,6 +599,27 @@ class PlaybackAssetCache extends ChangeNotifier {
     required http.Client client,
     required _PreemptiblePermitLease connectionLease,
   }) async {
+    final native = _nativeMediaIo;
+    if (native != null && await native.isAvailable()) {
+      final nativeResult = await _downloadToCacheNative(
+        native: native,
+        url: url,
+        localPath: localPath,
+        asset: asset,
+        connectionLease: connectionLease,
+      );
+      if (nativeResult != null) return nativeResult;
+    }
+    final worker = _mediaIoWorker;
+    if (worker != null) {
+      return _downloadToCacheInWorker(
+        worker: worker,
+        url: url,
+        localPath: localPath,
+        asset: asset,
+        connectionLease: connectionLease,
+      );
+    }
     try {
       if (connectionLease.preemptRequested) {
         return _DownloadAttemptResult.preempted;
@@ -641,28 +692,18 @@ class PlaybackAssetCache extends ChangeNotifier {
       final writer = await partFile.open(
         mode: append ? FileMode.append : FileMode.write,
       );
-      final iterator = StreamIterator<List<int>>(response.stream);
-      var preempted = false;
-      // 网络分块通常只有几 KB~64 KB，逐块 writeFrom 会在高速下载时产生与
-      // 网速成正比的系统调用和事件循环开销（在 iGPU 机器上挤占整包功耗、
-      // 拉低 GPU 频率）。先攒成大块再一次落盘；同时用定时器保证已收字节
-      // 最迟 100ms 内落到 .part，本地渐进流服务才能即时读到（否则换歌时
-      // 流服务会对着“还没有字节”的 .part 空等）。
-      const writeBatchBytes = 256 * 1024;
-      const flushInterval = Duration(milliseconds: 100);
-      final pending = BytesBuilder(copy: false);
-      var pendingBytes = 0;
-      Timer? flushTimer;
-      Future<void>? flushing;
-      Object? flushError;
-      StackTrace? flushStackTrace;
-      Future<void> flushPendingNow() async {
-        try {
-          while (pendingBytes > 0) {
-            final written = pending.takeBytes();
-            await writer.writeFrom(written);
-            pendingBytes -= written.length;
-            state.persistedBytes += written.length;
+      late final MediaStreamPumpResult pumpResult;
+      try {
+        final pump = MediaStreamPump(
+          stream: response.stream,
+          writer: writer,
+          onReceived: (length) {
+            _ioMetrics.receivedChunk(length);
+            state.downloadedBytes += length;
+          },
+          onPersisted: (length) {
+            _ioMetrics.writeCompleted(length);
+            state.persistedBytes += length;
             state.markSample(state.persistedBytes);
             if (!state.available &&
                 state.persistedBytes >=
@@ -670,81 +711,24 @@ class PlaybackAssetCache extends ChangeNotifier {
               state.markAvailable();
             }
             _notifyProgressListeners();
-          }
-        } catch (error, stackTrace) {
-          // Timer-driven flushes are intentionally detached from the network
-          // read, but their failures still belong to this download attempt.
-          // Capture the first one and rethrow it on the owning async path so
-          // there is no unhandled-zone error or writer-close race.
-          flushError ??= error;
-          flushStackTrace ??= stackTrace;
-          pendingBytes = 0;
-        } finally {
-          flushing = null;
-        }
-      }
-
-      Future<void> flushPending() {
-        if (pendingBytes == 0) return Future<void>.value();
-        return flushing ??= flushPendingNow();
-      }
-
-      void scheduleFlush() {
-        if (pendingBytes == 0) return;
-        if (pendingBytes >= writeBatchBytes) {
-          flushTimer?.cancel();
-          flushTimer = null;
-          unawaited(flushPending());
-          return;
-        }
-        flushTimer ??= Timer(flushInterval, () {
-          flushTimer = null;
-          unawaited(flushPending());
+          },
+          onBufferedBytesChanged: _ioMetrics.bufferedBytesChanged,
+        );
+        _ioMetrics.preemptionHandlerRegistered();
+        connectionLease.setPreemptHandler(() {
+          _ioMetrics.preemptionRequested();
+          pump.cancel();
         });
-      }
-
-      try {
-        while (true) {
-          if (connectionLease.preemptRequested) {
-            preempted = true;
-            break;
-          }
-          final read = await Future.any<({bool preempted, bool hasNext})>([
-            iterator.moveNext().then(
-                  (hasNext) => (preempted: false, hasNext: hasNext),
-                ),
-            connectionLease.whenPreempted.then(
-              (_) => (preempted: true, hasNext: false),
-            ),
-          ]);
-          if (read.preempted || connectionLease.preemptRequested) {
-            preempted = true;
-            break;
-          }
-          if (flushError != null) {
-            Error.throwWithStackTrace(flushError!, flushStackTrace!);
-          }
-          if (!read.hasNext) break;
-          final chunk = iterator.current;
-          pending.add(chunk);
-          pendingBytes += chunk.length;
-          state.downloadedBytes += chunk.length;
-          scheduleFlush();
-        }
-        flushTimer?.cancel();
-        flushTimer = null;
-        if (flushing != null) await flushing;
-        if (pendingBytes > 0) await flushPending();
-        if (flushError != null) {
-          Error.throwWithStackTrace(flushError!, flushStackTrace!);
-        }
+        if (connectionLease.preemptRequested) pump.cancel();
+        pumpResult = await pump.run();
+        connectionLease.clearPreemptHandler();
       } finally {
-        flushTimer?.cancel();
-        flushTimer = null;
-        await iterator.cancel();
+        connectionLease.clearPreemptHandler();
         await writer.close();
       }
-      if (preempted) return _DownloadAttemptResult.preempted;
+      if (pumpResult == MediaStreamPumpResult.cancelled) {
+        return _DownloadAttemptResult.preempted;
+      }
 
       final expectedLength = _expectedLength(response, existingBytes);
       final actualLength = await partFile.length();
@@ -778,11 +762,181 @@ class PlaybackAssetCache extends ChangeNotifier {
     }
   }
 
-  Future<HttpServer> _ensureStreamServer() {
+  Future<_DownloadAttemptResult?> _downloadToCacheNative({
+    required WindowsNativeMediaIo native,
+    required String url,
+    required String localPath,
+    required MediaAsset asset,
+    required _PreemptiblePermitLease connectionLease,
+  }) async {
+    final state = _downloadStateFor(asset);
+    if (connectionLease.preemptRequested) {
+      return _DownloadAttemptResult.preempted;
+    }
+    final operation = await native.startDownload(
+      url: url,
+      localPath: localPath,
+      headers: asset.headers,
+      readyBytes: _videoReadyBytes,
+      isVideo: asset.type == MediaAssetType.video,
+      onProgress: (progress) {
+        _applyIoProgress(state, progress);
+        if (asset.type == MediaAssetType.video) {
+          _mediaIoWorker?.updateStreamAssetState(
+            localPath: localPath,
+            totalLength: progress.totalLength,
+            persistedBytes: progress.persistedBytes,
+          );
+        }
+      },
+    );
+    if (operation == null) return null;
+    try {
+      _ioMetrics.preemptionHandlerRegistered();
+      connectionLease.setPreemptHandler(() {
+        _ioMetrics.preemptionRequested();
+        operation.cancel();
+      });
+      if (connectionLease.preemptRequested) operation.cancel();
+      final result = await operation.result;
+      _ioMetrics.addWorkerDownloadResult(result);
+      return _applyIoResult(
+        result: result,
+        state: state,
+        localPath: localPath,
+        asset: asset,
+      );
+    } catch (error) {
+      state.lastError = PlaybackAssetDownloadException(
+        assetType: asset.type,
+        message: 'Windows 原生下载连接失败：$error',
+      );
+      return _DownloadAttemptResult.failed;
+    } finally {
+      connectionLease.clearPreemptHandler();
+    }
+  }
+
+  Future<_DownloadAttemptResult> _downloadToCacheInWorker({
+    required PlaybackMediaIoWorker worker,
+    required String url,
+    required String localPath,
+    required MediaAsset asset,
+    required _PreemptiblePermitLease connectionLease,
+  }) async {
+    final state = _downloadStateFor(asset);
+    try {
+      if (connectionLease.preemptRequested) {
+        return _DownloadAttemptResult.preempted;
+      }
+      state.lastError = null;
+      state.complete = false;
+      final operation = await worker.startDownload(
+        url: url,
+        localPath: localPath,
+        headers: asset.headers,
+        readyBytes: _videoReadyBytes,
+        isVideo: asset.type == MediaAssetType.video,
+        onProgress: (progress) {
+          _applyIoProgress(state, progress);
+        },
+      );
+      _ioMetrics.preemptionHandlerRegistered();
+      connectionLease.setPreemptHandler(() {
+        _ioMetrics.preemptionRequested();
+        operation.cancel();
+      });
+      if (connectionLease.preemptRequested) operation.cancel();
+      final result = await operation.result;
+      connectionLease.clearPreemptHandler();
+      _ioMetrics.addWorkerDownloadResult(result);
+      return _applyIoResult(
+        result: result,
+        state: state,
+        localPath: localPath,
+        asset: asset,
+      );
+    } catch (error) {
+      state.lastError = PlaybackAssetDownloadException(
+        assetType: asset.type,
+        message: '下载连接失败：$error',
+      );
+      return connectionLease.preemptRequested
+          ? _DownloadAttemptResult.preempted
+          : _DownloadAttemptResult.failed;
+    } finally {
+      connectionLease.clearPreemptHandler();
+    }
+  }
+
+  void _applyIoProgress(
+    _DownloadState state,
+    MediaIoWorkerProgress progress,
+  ) {
+    state.totalLength = progress.totalLength;
+    state.downloadedBytes = progress.downloadedBytes;
+    state.persistedBytes = progress.persistedBytes;
+    state.markSample(progress.persistedBytes);
+    if (progress.available) state.markAvailable();
+    _notifyProgressListeners();
+  }
+
+  Future<_DownloadAttemptResult> _applyIoResult({
+    required MediaIoWorkerAttemptResult result,
+    required _DownloadState state,
+    required String localPath,
+    required MediaAsset asset,
+  }) async {
+    switch (result.status) {
+      case MediaIoWorkerAttemptStatus.preempted:
+        return _DownloadAttemptResult.preempted;
+      case MediaIoWorkerAttemptStatus.failed:
+        state.lastError = PlaybackAssetDownloadException(
+          assetType: asset.type,
+          statusCode: result.statusCode,
+          message: result.errorMessage ?? '下载失败',
+        );
+        return _DownloadAttemptResult.failed;
+      case MediaIoWorkerAttemptStatus.finished:
+        final actualLength = result.actualLength;
+        if (actualLength <= 0) {
+          state.lastError = PlaybackAssetDownloadException(
+            assetType: asset.type,
+            message: '下载完成但文件为空',
+          );
+          return _DownloadAttemptResult.failed;
+        }
+        state.complete = true;
+        state.totalLength = actualLength;
+        state.downloadedBytes = actualLength;
+        state.persistedBytes = actualLength;
+        state.markAvailable();
+        state.markSample(actualLength);
+        _notifyProgressListeners();
+        _mediaIoWorker?.updateStreamAssetState(
+          localPath: localPath,
+          totalLength: actualLength,
+          persistedBytes: actualLength,
+        );
+        await _promoteCompletedPart(asset, File('$localPath.part'));
+        return _DownloadAttemptResult.finished;
+    }
+  }
+
+  Future<void> _ensureStreamServer() async {
+    final worker = _mediaIoWorker;
+    if (worker != null) {
+      final pending = _workerStreamServerFuture ??= worker.ensureServer();
+      _workerStreamPort = await pending;
+      return;
+    }
     final server = _streamServer;
-    if (server != null) return Future.value(server);
+    if (server != null) return;
     final pending = _streamServerFuture;
-    if (pending != null) return pending;
+    if (pending != null) {
+      await pending;
+      return;
+    }
 
     final future = HttpServer.bind(InternetAddress.loopbackIPv4, 0).then((s) {
       _streamServer = s;
@@ -790,17 +944,18 @@ class PlaybackAssetCache extends ChangeNotifier {
       return s;
     });
     _streamServerFuture = future;
-    return future;
+    await future;
   }
 
   String? _localStreamUrlFor(MediaAsset asset) {
-    final server = _streamServer;
-    if (server == null) return null;
+    final port =
+        _mediaIoWorker != null ? _workerStreamPort : _streamServer?.port;
+    if (port == null) return null;
     final token = _registerStreamAsset(asset);
     return Uri(
       scheme: 'http',
       host: InternetAddress.loopbackIPv4.address,
-      port: server.port,
+      port: port,
       pathSegments: ['cache', token],
     ).toString();
   }
@@ -811,6 +966,26 @@ class PlaybackAssetCache extends ChangeNotifier {
     );
     _streamAssets[token] = asset;
     return token;
+  }
+
+  Future<void> _prepareStreamAsset(MediaAsset asset) async {
+    final token = _registerStreamAsset(asset);
+    final worker = _mediaIoWorker;
+    if (worker == null) return;
+    final url = _remoteUrlFor(asset);
+    if (url == null) return;
+    await worker.registerStreamAsset(
+      token: token,
+      localPath: _localPathFor(asset),
+      url: url,
+      headers: asset.headers,
+    );
+    final state = _downloadStateFor(asset);
+    worker.updateStreamAssetState(
+      localPath: _localPathFor(asset),
+      totalLength: state.totalLength,
+      persistedBytes: state.persistedBytes,
+    );
   }
 
   Future<void> _handleStreamRequest(HttpRequest request) async {
@@ -1008,10 +1183,8 @@ class PlaybackAssetCache extends ChangeNotifier {
         return;
       }
 
-      await for (final chunk in remoteResponse.stream) {
-        request.response.add(chunk);
-        await request.response.flush();
-      }
+      _ioMetrics.remoteProxyOpened(contentLength);
+      await request.response.addStream(remoteResponse.stream);
       await request.response.close();
     } catch (_) {
       try {
@@ -1028,6 +1201,14 @@ class PlaybackAssetCache extends ChangeNotifier {
   }) async {
     final source = await _readableFileFor(asset);
     if (source == null) {
+      await response.close();
+      return;
+    }
+
+    final completedPath = _localPathFor(asset);
+    if (source.path == completedPath) {
+      _ioMetrics.completedFileStreamOpened(end - start + 1);
+      await response.addStream(source.openRead(start, end + 1));
       await response.close();
       return;
     }
@@ -1061,10 +1242,12 @@ class PlaybackAssetCache extends ChangeNotifier {
         // 读到多少就立刻推给下游（MF SourceReader）。不刷新的话，响应会在
         // 缓冲区里停留到整段写完，渐进读取会退化成“等整条下载完才出字节”。
         await response.flush();
+        _ioMetrics.progressiveFlush(chunk.length);
         remaining -= chunk.length;
         readPosition += chunk.length;
       }
       await response.flush();
+      _ioMetrics.progressiveFinalFlush();
     } finally {
       await raf.close();
     }
@@ -1255,10 +1438,168 @@ class PlaybackAssetCache extends ChangeNotifier {
     _downloadConnectionPool.dispose();
     _http.close();
     _mediaHttp.close();
+    unawaited(_mediaIoWorker?.dispose());
+    _mediaIoWorker = null;
+    _nativeMediaIo?.dispose();
+    _nativeMediaIo = null;
     unawaited(_streamServer?.close(force: true));
     _streamServer = null;
     super.dispose();
   }
+}
+
+/// Immutable, process-local media I/O counters.
+class PlaybackAssetIoDiagnostics {
+  const PlaybackAssetIoDiagnostics({
+    required this.receivedChunks,
+    required this.receivedBytes,
+    required this.writeCalls,
+    required this.writtenBytes,
+    required this.preemptionHandlers,
+    required this.preemptions,
+    required this.bufferedBytes,
+    required this.peakBufferedBytes,
+    required this.activeConnections,
+    required this.peakActiveConnections,
+    required this.remoteProxyStreams,
+    required this.remoteProxyBytes,
+    required this.completedFileStreams,
+    required this.completedFileBytes,
+    required this.progressiveFlushes,
+    required this.progressiveBytes,
+  });
+
+  final int receivedChunks;
+  final int receivedBytes;
+  final int writeCalls;
+  final int writtenBytes;
+  final int preemptionHandlers;
+  final int preemptions;
+  final int bufferedBytes;
+  final int peakBufferedBytes;
+  final int activeConnections;
+  final int peakActiveConnections;
+  final int remoteProxyStreams;
+  final int remoteProxyBytes;
+  final int completedFileStreams;
+  final int completedFileBytes;
+  final int progressiveFlushes;
+  final int progressiveBytes;
+
+  @override
+  String toString() => 'received=$receivedBytes/$receivedChunks '
+      'writes=$writtenBytes/$writeCalls '
+      'buffered=$bufferedBytes peakBuffered=$peakBufferedBytes '
+      'connections=$activeConnections peakConnections=$peakActiveConnections '
+      'preemptions=$preemptions handlers=$preemptionHandlers '
+      'proxy=$remoteProxyBytes/$remoteProxyStreams '
+      'fileStream=$completedFileBytes/$completedFileStreams '
+      'progressive=$progressiveBytes/$progressiveFlushes';
+}
+
+class _PlaybackAssetIoMetrics {
+  int receivedChunks = 0;
+  int receivedBytes = 0;
+  int writeCalls = 0;
+  int writtenBytes = 0;
+  int preemptionHandlers = 0;
+  int preemptions = 0;
+  int bufferedBytes = 0;
+  int peakBufferedBytes = 0;
+  int activeConnections = 0;
+  int peakActiveConnections = 0;
+  int remoteProxyStreams = 0;
+  int remoteProxyBytes = 0;
+  int completedFileStreams = 0;
+  int completedFileBytes = 0;
+  int progressiveFlushes = 0;
+  int progressiveBytes = 0;
+
+  void receivedChunk(int length) {
+    receivedChunks++;
+    receivedBytes += length;
+  }
+
+  void writeCompleted(int length) {
+    writeCalls++;
+    writtenBytes += length;
+  }
+
+  void preemptionHandlerRegistered() => preemptionHandlers++;
+  void preemptionRequested() => preemptions++;
+
+  void bufferedBytesChanged(int delta) {
+    bufferedBytes += delta;
+    if (bufferedBytes > peakBufferedBytes) peakBufferedBytes = bufferedBytes;
+    assert(bufferedBytes >= 0);
+  }
+
+  void connectionOpened() {
+    activeConnections++;
+    if (activeConnections > peakActiveConnections) {
+      peakActiveConnections = activeConnections;
+    }
+  }
+
+  void connectionClosed() {
+    activeConnections--;
+    assert(activeConnections >= 0);
+  }
+
+  void remoteProxyOpened(int? length) {
+    remoteProxyStreams++;
+    if (length != null && length > 0) remoteProxyBytes += length;
+  }
+
+  void completedFileStreamOpened(int length) {
+    completedFileStreams++;
+    completedFileBytes += length;
+  }
+
+  void progressiveFlush(int length) {
+    progressiveFlushes++;
+    progressiveBytes += length;
+  }
+
+  void progressiveFinalFlush() => progressiveFlushes++;
+
+  void addWorkerDownloadResult(MediaIoWorkerAttemptResult result) {
+    receivedChunks += result.receivedChunks;
+    receivedBytes += result.receivedBytes;
+    writeCalls += result.writeCalls;
+    writtenBytes += result.writtenBytes;
+    if (result.peakBufferedBytes > peakBufferedBytes) {
+      peakBufferedBytes = result.peakBufferedBytes;
+    }
+  }
+
+  void addWorkerServerMetrics(MediaIoWorkerServerMetrics metrics) {
+    remoteProxyStreams += metrics.remoteProxyStreams;
+    remoteProxyBytes += metrics.remoteProxyBytes;
+    completedFileStreams += metrics.completedFileStreams;
+    completedFileBytes += metrics.completedFileBytes;
+    progressiveFlushes += metrics.progressiveFlushes;
+    progressiveBytes += metrics.progressiveBytes;
+  }
+
+  PlaybackAssetIoDiagnostics snapshot() => PlaybackAssetIoDiagnostics(
+        receivedChunks: receivedChunks,
+        receivedBytes: receivedBytes,
+        writeCalls: writeCalls,
+        writtenBytes: writtenBytes,
+        preemptionHandlers: preemptionHandlers,
+        preemptions: preemptions,
+        bufferedBytes: bufferedBytes,
+        peakBufferedBytes: peakBufferedBytes,
+        activeConnections: activeConnections,
+        peakActiveConnections: peakActiveConnections,
+        remoteProxyStreams: remoteProxyStreams,
+        remoteProxyBytes: remoteProxyBytes,
+        completedFileStreams: completedFileStreams,
+        completedFileBytes: completedFileBytes,
+        progressiveFlushes: progressiveFlushes,
+        progressiveBytes: progressiveBytes,
+      );
 }
 
 class _DownloadState {
@@ -1453,29 +1794,35 @@ class _PreemptiblePermitLease {
   _PreemptiblePermitLease.cancelled(this.priority)
       : sequence = -1,
         _onRelease = _noop,
-        _preemptRequested = true {
-    _preempted.complete();
-  }
+        _preemptRequested = true;
 
   final int Function() priority;
   final int sequence;
   final void Function() _onRelease;
-  final Completer<void> _preempted = Completer<void>();
+  void Function()? _preemptHandler;
   bool _preemptRequested = false;
   bool _released = false;
 
   bool get preemptRequested => _preemptRequested;
-  Future<void> get whenPreempted => _preempted.future;
+
+  void setPreemptHandler(void Function() handler) {
+    assert(_preemptHandler == null);
+    _preemptHandler = handler;
+    if (_preemptRequested) handler();
+  }
+
+  void clearPreemptHandler() => _preemptHandler = null;
 
   void requestPreempt() {
     if (_preemptRequested) return;
     _preemptRequested = true;
-    _preempted.complete();
+    _preemptHandler?.call();
   }
 
   void release() {
     if (_released) return;
     _released = true;
+    _preemptHandler = null;
     _onRelease();
   }
 
