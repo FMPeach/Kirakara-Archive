@@ -34,6 +34,8 @@ class PlaybackSlotManager extends ChangeNotifier {
   PlaybackSlot? _activeSlot;
   PlaybackSlot? _standbySlot;
   int _prepGeneration = 0;
+  bool _queueRefreshScheduled = false;
+  bool _disposed = false;
 
   // ── 暴露给 UI ─────────────────────────────────────────────────
 
@@ -65,6 +67,7 @@ class PlaybackSlotManager extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _queueService.removeListener(_onQueueChanged);
     super.dispose();
   }
@@ -72,7 +75,19 @@ class PlaybackSlotManager extends ChangeNotifier {
   // ── 队列变化 ──────────────────────────────────────────────────
 
   void _onQueueChanged() {
-    _maybePrepareNext();
+    // QueueService.takeNext() notifies synchronously before PlaybackService
+    // publishes the newly-current item. Replacing standby in this callback
+    // destroys the exact prepared slot that the following playback
+    // notification is about to consume, forcing every natural transition
+    // through the slow load path. Coalesce queue churn until the current call
+    // stack has completed; consumeStandby then wins, and its own microtask
+    // prepares the following song.
+    if (_queueRefreshScheduled) return;
+    _queueRefreshScheduled = true;
+    scheduleMicrotask(() {
+      _queueRefreshScheduled = false;
+      if (!_disposed) _maybePrepareNext();
+    });
   }
 
   /// 在 active 开始播放后调用，启动 standby 预热。

@@ -16,6 +16,7 @@ import 'package:kirakara_app/services/lan_server.dart';
 import 'package:kirakara_app/services/native_window_service.dart';
 import 'package:kirakara_app/services/playback_asset_cache.dart';
 import 'package:kirakara_app/services/playback_service.dart';
+import 'package:kirakara_app/services/playback_slot_manager.dart';
 import 'package:kirakara_app/services/queue_service.dart';
 import 'package:kirakara_app/services/search_service.dart';
 
@@ -66,6 +67,10 @@ class _FakeAssetHttpClient extends http.BaseClient {
     this.accompanimentStarted,
     this.releaseAccompaniment,
     this.videoTotalLength = 4,
+    this.videoChunks = const [
+      [1, 2],
+      [3, 4],
+    ],
   });
 
   final Completer<void>? videoStarted;
@@ -75,6 +80,7 @@ class _FakeAssetHttpClient extends http.BaseClient {
   final Completer<void>? accompanimentStarted;
   final Completer<void>? releaseAccompaniment;
   final int videoTotalLength;
+  final List<List<int>> videoChunks;
   int fullVideoRequests = 0;
   int notFoundRequests = 0;
 
@@ -107,12 +113,14 @@ class _FakeAssetHttpClient extends http.BaseClient {
       }
       final controller = StreamController<List<int>>();
       unawaited(() async {
-        controller.add([1, 2]);
+        controller.add(videoChunks.first);
         final gate = releaseVideo;
         if (gate != null) {
           await gate.future;
         }
-        controller.add([3, 4]);
+        for (final chunk in videoChunks.skip(1)) {
+          controller.add(chunk);
+        }
         await controller.close();
       }());
       return http.StreamedResponse(
@@ -446,6 +454,39 @@ void main() {
     expect(queue.items, isEmpty);
   });
 
+  test('taking next preserves its prepared standby until consumption',
+      () async {
+    Song externalSong(String id) => Song(
+          id: id,
+          title: id,
+          category: 'External',
+          isExternal: true,
+          assets: [
+            MediaAsset(
+              id: '$id-video',
+              type: MediaAssetType.video,
+              uri: Uri.parse('https://media.test/$id.mp4'),
+            ),
+          ],
+        );
+
+    final queue = QueueService();
+    final slots = PlaybackSlotManager(queueService: queue);
+    addTearDown(slots.dispose);
+    final second = queue.addSong(externalSong('external-second'));
+    final third = queue.addSong(externalSong('external-third'));
+    await Future<void>.delayed(Duration.zero);
+    expect(slots.preparedSongId, second.song.id);
+
+    final taken = queue.takeNext();
+    expect(taken?.id, second.id);
+    final consumed = slots.consumeStandby(taken!.song.id);
+    expect(consumed?.songId, second.song.id);
+
+    await Future<void>.delayed(Duration.zero);
+    expect(slots.preparedSongId, third.song.id);
+  });
+
   test('refreshing up next clears stale value when queue becomes empty', () {
     final search = _testSearch();
     final queue = QueueService();
@@ -561,6 +602,7 @@ void main() {
     final cache = PlaybackAssetCache(
       baseUrl: baseUrl,
       cacheDir: cacheDir,
+      videoReadyBytes: 2,
       httpClient: _FakeAssetHttpClient(),
       mediaHttpClient: _FakeAssetHttpClient(
         videoStarted: videoStarted,
@@ -633,6 +675,141 @@ void main() {
     expect(cache.playbackPathFor(video), startsWith('http://127.0.0.1:'));
   });
 
+  test('playback cache waits for the configured persisted video runway',
+      () async {
+    final videoStarted = Completer<void>();
+    final releaseVideo = Completer<void>();
+    final cacheDir =
+        await Directory.systemTemp.createTemp('kirakara_cache_runway_test_');
+    addTearDown(() {
+      if (cacheDir.existsSync()) cacheDir.deleteSync(recursive: true);
+    });
+    final cache = PlaybackAssetCache(
+      baseUrl: 'http://catalog.test',
+      cacheDir: cacheDir,
+      videoReadyBytes: 4,
+      httpClient: _FakeAssetHttpClient(),
+      mediaHttpClient: _FakeAssetHttpClient(
+        videoStarted: videoStarted,
+        releaseVideo: releaseVideo,
+      ),
+    );
+    addTearDown(cache.dispose);
+    final video = MediaAsset(
+      id: 'runway-video',
+      type: MediaAssetType.video,
+      uri: Uri.parse('/media/video.mp4'),
+    );
+    final song = Song(
+      id: 'runway-song',
+      title: 'Runway',
+      category: 'Test',
+      assets: [video],
+    );
+
+    var ready = false;
+    final preparation = cache.ensurePlaybackAssets(song).then((_) {
+      ready = true;
+    });
+    await videoStarted.future.timeout(const Duration(seconds: 1));
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(ready, isFalse);
+
+    releaseVideo.complete();
+    await preparation.timeout(const Duration(seconds: 1));
+    expect(ready, isTrue);
+  });
+
+  test('local progressive response flushes cached bytes before EOF', () async {
+    const prefixBytes = 64 * 1024;
+    const totalBytes = prefixBytes * 2;
+    final releaseVideo = Completer<void>();
+    addTearDown(() {
+      if (!releaseVideo.isCompleted) releaseVideo.complete();
+    });
+    final cacheDir =
+        await Directory.systemTemp.createTemp('kirakara_cache_flush_test_');
+    addTearDown(() {
+      if (cacheDir.existsSync()) cacheDir.deleteSync(recursive: true);
+    });
+    final cache = PlaybackAssetCache(
+      baseUrl: 'http://catalog.test',
+      cacheDir: cacheDir,
+      videoReadyBytes: prefixBytes,
+      httpClient: _FakeAssetHttpClient(),
+      mediaHttpClient: _FakeAssetHttpClient(
+        releaseVideo: releaseVideo,
+        videoTotalLength: totalBytes,
+        videoChunks: [
+          List<int>.filled(prefixBytes, 1),
+          List<int>.filled(prefixBytes, 2),
+        ],
+      ),
+    );
+    addTearDown(() async {
+      cache.dispose();
+      // HttpServer.close() is intentionally fire-and-forget because
+      // ChangeNotifier.dispose is synchronous. Give the loopback handler one
+      // event turn to release its Windows file handle before deleting the
+      // test directory.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    final client = http.Client();
+    addTearDown(client.close);
+    final video = MediaAsset(
+      id: 'flush-video',
+      type: MediaAssetType.video,
+      uri: Uri.parse('/media/video.mp4'),
+    );
+    final song = Song(
+      id: 'flush-song',
+      title: 'Flush',
+      category: 'Test',
+      assets: [video],
+    );
+
+    await cache.ensurePlaybackAssets(song).timeout(const Duration(seconds: 1));
+    final request =
+        http.Request('GET', Uri.parse(cache.playbackPathFor(video)!))
+          ..headers[HttpHeaders.rangeHeader] = 'bytes=0-${totalBytes - 1}';
+    final response = await client.send(request);
+    final firstChunk = Completer<List<int>>();
+    final completed = Completer<void>();
+    final received = <int>[];
+    final subscription = response.stream.listen(
+      (chunk) {
+        received.addAll(chunk);
+        if (!firstChunk.isCompleted && received.length >= prefixBytes) {
+          firstChunk.complete(List.of(received));
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!completed.isCompleted) completed.completeError(error, stackTrace);
+      },
+      onDone: () {
+        if (!completed.isCompleted) completed.complete();
+      },
+    );
+    addTearDown(subscription.cancel);
+
+    final prefix = await firstChunk.future.timeout(
+      const Duration(seconds: 1),
+      onTimeout: () => fail('cached prefix was buffered until EOF'),
+    );
+    expect(prefix, hasLength(prefixBytes));
+    expect(prefix, everyElement(1));
+    releaseVideo.complete();
+    await completed.future.timeout(const Duration(seconds: 1));
+    expect(received, hasLength(totalBytes));
+    expect(received.take(prefixBytes), everyElement(1));
+    expect(received.skip(prefixBytes), everyElement(2));
+    for (var i = 0; i < 40 && !cache.progressForSong(song).isComplete; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+    expect(cache.progressForSong(song).isComplete, isTrue);
+    await subscription.cancel();
+  });
+
   test('playback cache starts video while required audio is still loading',
       () async {
     final videoStarted = Completer<void>();
@@ -647,6 +824,7 @@ void main() {
     final cache = PlaybackAssetCache(
       baseUrl: 'http://catalog.test',
       cacheDir: cacheDir,
+      videoReadyBytes: 2,
       httpClient: _FakeAssetHttpClient(
         audioStarted: audioStarted,
         releaseAudio: releaseAudio,
@@ -714,6 +892,7 @@ void main() {
     final cache = PlaybackAssetCache(
       baseUrl: 'http://catalog.test',
       cacheDir: cacheDir,
+      videoReadyBytes: 2,
       httpClient: _FakeAssetHttpClient(
         accompanimentStarted: accompanimentStarted,
         releaseAccompaniment: releaseAccompaniment,
@@ -943,6 +1122,7 @@ void main() {
     final cache = PlaybackAssetCache(
       baseUrl: 'http://catalog.test',
       cacheDir: cacheDir,
+      videoReadyBytes: 2,
       httpClient: _FakeAssetHttpClient(),
       mediaHttpClient: _FakeAssetHttpClient(
         videoStarted: videoStarted,
@@ -1020,6 +1200,7 @@ void main() {
     final cache = PlaybackAssetCache(
       baseUrl: 'http://catalog.test',
       cacheDir: cacheDir,
+      videoReadyBytes: 2,
       httpClient: client,
       mediaHttpClient: client,
     );

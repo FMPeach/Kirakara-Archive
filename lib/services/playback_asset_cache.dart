@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -20,14 +21,17 @@ class PlaybackAssetCache extends ChangeNotifier {
     http.Client? mediaHttpClient,
     Duration retryDelay = const Duration(milliseconds: 500),
     int maxAutomaticRetries = 5,
+    int videoReadyBytes = 512 * 1024,
   })  : assert(cacheDir == null || cacheRoot == null),
         assert(maxAutomaticRetries >= 0),
+        assert(videoReadyBytes > 0),
         _baseUri = Uri.parse(baseUrl.endsWith('/') ? baseUrl : '$baseUrl/'),
         _cacheDir = cacheDir ?? _createSessionCacheDirectory(cacheRoot),
         _http = httpClient ?? http.Client(),
         _mediaHttp = mediaHttpClient ?? http.Client(),
         _retryDelay = retryDelay,
-        _maxAutomaticRetries = maxAutomaticRetries;
+        _maxAutomaticRetries = maxAutomaticRetries,
+        _videoReadyBytes = videoReadyBytes;
 
   static Directory _createSessionCacheDirectory(Directory? cacheRoot) {
     final root = cacheRoot ??
@@ -84,6 +88,7 @@ class PlaybackAssetCache extends ChangeNotifier {
   final http.Client _mediaHttp;
   final Duration _retryDelay;
   final int _maxAutomaticRetries;
+  final int _videoReadyBytes;
   final Map<String, Future<void>> _downloads = {};
   final Map<String, MediaAsset> _streamAssets = {};
   final Map<String, _DownloadState> _downloadStates = {};
@@ -532,6 +537,7 @@ class PlaybackAssetCache extends ChangeNotifier {
     final state = _downloadStateFor(asset);
     state.totalLength = await localFile.length();
     state.downloadedBytes = state.totalLength ?? 0;
+    state.persistedBytes = state.downloadedBytes;
     state.complete = true;
     state.markAvailable();
     return true;
@@ -590,6 +596,7 @@ class PlaybackAssetCache extends ChangeNotifier {
           state.complete = true;
           state.totalLength = existingBytes;
           state.downloadedBytes = state.totalLength ?? 0;
+          state.persistedBytes = state.downloadedBytes;
           state.markAvailable();
           _notifyProgressListeners();
           await _promoteCompletedPart(asset, partFile);
@@ -613,7 +620,6 @@ class PlaybackAssetCache extends ChangeNotifier {
         return _DownloadAttemptResult.failed;
       }
 
-      state.markAvailable();
       state.lastError = null;
 
       final append =
@@ -624,8 +630,12 @@ class PlaybackAssetCache extends ChangeNotifier {
 
       state.totalLength = _expectedLength(response, existingBytes);
       state.downloadedBytes = existingBytes;
+      state.persistedBytes = existingBytes;
       state.complete = false;
       state.markSample(existingBytes);
+      if (existingBytes >= _readyThresholdFor(asset, state.totalLength)) {
+        state.markAvailable();
+      }
       _notifyProgressListeners();
 
       final writer = await partFile.open(
@@ -633,6 +643,66 @@ class PlaybackAssetCache extends ChangeNotifier {
       );
       final iterator = StreamIterator<List<int>>(response.stream);
       var preempted = false;
+      // 网络分块通常只有几 KB~64 KB，逐块 writeFrom 会在高速下载时产生与
+      // 网速成正比的系统调用和事件循环开销（在 iGPU 机器上挤占整包功耗、
+      // 拉低 GPU 频率）。先攒成大块再一次落盘；同时用定时器保证已收字节
+      // 最迟 100ms 内落到 .part，本地渐进流服务才能即时读到（否则换歌时
+      // 流服务会对着“还没有字节”的 .part 空等）。
+      const writeBatchBytes = 256 * 1024;
+      const flushInterval = Duration(milliseconds: 100);
+      final pending = BytesBuilder(copy: false);
+      var pendingBytes = 0;
+      Timer? flushTimer;
+      Future<void>? flushing;
+      Object? flushError;
+      StackTrace? flushStackTrace;
+      Future<void> flushPendingNow() async {
+        try {
+          while (pendingBytes > 0) {
+            final written = pending.takeBytes();
+            await writer.writeFrom(written);
+            pendingBytes -= written.length;
+            state.persistedBytes += written.length;
+            state.markSample(state.persistedBytes);
+            if (!state.available &&
+                state.persistedBytes >=
+                    _readyThresholdFor(asset, state.totalLength)) {
+              state.markAvailable();
+            }
+            _notifyProgressListeners();
+          }
+        } catch (error, stackTrace) {
+          // Timer-driven flushes are intentionally detached from the network
+          // read, but their failures still belong to this download attempt.
+          // Capture the first one and rethrow it on the owning async path so
+          // there is no unhandled-zone error or writer-close race.
+          flushError ??= error;
+          flushStackTrace ??= stackTrace;
+          pendingBytes = 0;
+        } finally {
+          flushing = null;
+        }
+      }
+
+      Future<void> flushPending() {
+        if (pendingBytes == 0) return Future<void>.value();
+        return flushing ??= flushPendingNow();
+      }
+
+      void scheduleFlush() {
+        if (pendingBytes == 0) return;
+        if (pendingBytes >= writeBatchBytes) {
+          flushTimer?.cancel();
+          flushTimer = null;
+          unawaited(flushPending());
+          return;
+        }
+        flushTimer ??= Timer(flushInterval, () {
+          flushTimer = null;
+          unawaited(flushPending());
+        });
+      }
+
       try {
         while (true) {
           if (connectionLease.preemptRequested) {
@@ -651,14 +721,26 @@ class PlaybackAssetCache extends ChangeNotifier {
             preempted = true;
             break;
           }
+          if (flushError != null) {
+            Error.throwWithStackTrace(flushError!, flushStackTrace!);
+          }
           if (!read.hasNext) break;
           final chunk = iterator.current;
-          await writer.writeFrom(chunk);
+          pending.add(chunk);
+          pendingBytes += chunk.length;
           state.downloadedBytes += chunk.length;
-          state.markSample(state.downloadedBytes);
-          _notifyProgressListeners();
+          scheduleFlush();
+        }
+        flushTimer?.cancel();
+        flushTimer = null;
+        if (flushing != null) await flushing;
+        if (pendingBytes > 0) await flushPending();
+        if (flushError != null) {
+          Error.throwWithStackTrace(flushError!, flushStackTrace!);
         }
       } finally {
+        flushTimer?.cancel();
+        flushTimer = null;
         await iterator.cancel();
         await writer.close();
       }
@@ -673,6 +755,8 @@ class PlaybackAssetCache extends ChangeNotifier {
         state.complete = true;
         state.totalLength = actualLength;
         state.downloadedBytes = actualLength;
+        state.persistedBytes = actualLength;
+        state.markAvailable();
         state.markSample(actualLength);
         _notifyProgressListeners();
         await _promoteCompletedPart(asset, partFile);
@@ -952,20 +1036,24 @@ class PlaybackAssetCache extends ChangeNotifier {
     try {
       await raf.setPosition(start);
       var remaining = end - start + 1;
+      var readPosition = start;
+      var lastGrowthAt = DateTime.now();
       const chunkSize = 256 * 1024;
+      const noGrowthTimeout = Duration(seconds: 5);
       while (remaining > 0) {
         final currentLen = await source.length();
-        final available = (currentLen - (start + (end - start + 1 - remaining)))
-            .clamp(0, remaining);
+        final available = (currentLen - readPosition).clamp(0, remaining);
         if (available <= 0) {
-          // 数据还没下载到，等 100ms 再试（最多等 10 秒）
-          var waited = 0;
-          while (waited < 10000 && await source.length() <= currentLen) {
-            await Future<void>.delayed(const Duration(milliseconds: 100));
-            waited += 100;
+          // Do not pin SourceReader forever when the producer stalls. Bytes
+          // already on disk have been flushed to the client; after five
+          // seconds close this truncated response so MF can reconnect.
+          if (DateTime.now().difference(lastGrowthAt) >= noGrowthTimeout) {
+            break;
           }
+          await Future<void>.delayed(const Duration(milliseconds: 100));
           continue;
         }
+        lastGrowthAt = DateTime.now();
         final toRead = available > chunkSize ? chunkSize : available;
         final chunk = await raf.read(toRead);
         if (chunk.isEmpty) break;
@@ -974,6 +1062,7 @@ class PlaybackAssetCache extends ChangeNotifier {
         // 缓冲区里停留到整段写完，渐进读取会退化成“等整条下载完才出字节”。
         await response.flush();
         remaining -= chunk.length;
+        readPosition += chunk.length;
       }
       await response.flush();
     } finally {
@@ -1000,6 +1089,13 @@ class PlaybackAssetCache extends ChangeNotifier {
     final contentLength = response.contentLength;
     if (contentLength == null || contentLength < 0) return null;
     return existingBytes + contentLength;
+  }
+
+  int _readyThresholdFor(MediaAsset asset, int? totalLength) {
+    if (asset.type != MediaAssetType.video) return 1;
+    final total = totalLength;
+    if (total != null && total > 0 && total < _videoReadyBytes) return total;
+    return _videoReadyBytes;
   }
 
   _DownloadState _downloadStateFor(MediaAsset asset) =>
@@ -1168,6 +1264,7 @@ class PlaybackAssetCache extends ChangeNotifier {
 class _DownloadState {
   int? totalLength;
   int downloadedBytes = 0;
+  int persistedBytes = 0;
   double bytesPerSecond = 0;
   bool complete = false;
   bool available = false;
