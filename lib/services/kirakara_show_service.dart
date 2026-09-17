@@ -253,8 +253,8 @@ class KirakaraShowService extends ChangeNotifier {
     _loadedSongId = null;
     _loadedItemId = null;
 
-    final loadOffUiIsolate = _showNeedsAsyncWake || _activeNativeLoad != null;
-    if (loadOffUiIsolate) {
+    final showLoading = _showNeedsAsyncWake || _activeNativeLoad != null;
+    if (showLoading) {
       _beginShowLoading(generation);
     }
     if (!_isCurrentPreparation(item, generation)) {
@@ -271,7 +271,6 @@ class KirakaraShowService extends ChangeNotifier {
       accompanimentPath: slot.instPath,
       videoMasterClock: item.song.videoMasterClock,
       seamlessTransition: seamlessTransition,
-      loadOffUiIsolate: loadOffUiIsolate,
     );
     if (!_isCurrentPreparation(item, generation)) {
       _finishShowLoading(item.id, generation);
@@ -377,7 +376,6 @@ class KirakaraShowService extends ChangeNotifier {
         accompanimentPath: accompanimentPath,
         videoMasterClock: item.song.videoMasterClock,
         seamlessTransition: seamlessTransition,
-        loadOffUiIsolate: true,
       );
       if (!_isCurrentPreparation(item, generation)) {
         _finishShowLoading(item.id, generation);
@@ -563,10 +561,11 @@ class KirakaraShowService extends ChangeNotifier {
     String? accompanimentPath,
     required bool videoMasterClock,
     required bool seamlessTransition,
-    required bool loadOffUiIsolate,
   }) async {
-    // Cold starts and unprepared songs leave Flutter's UI isolate. A prepared
-    // standby slot keeps the existing synchronous hot transition path.
+    // Show's load ABI is synchronous. Even a native-prepared hot transition
+    // can briefly wait for MediaEngine/physical-Stage handoff, so every load
+    // stays on this helper isolate. This also prevents a cross-thread
+    // SendMessage/callback cycle from blocking Flutter's UI event loop.
     while (true) {
       final active = _activeNativeLoad;
       if (active == null) break;
@@ -577,17 +576,6 @@ class KirakaraShowService extends ChangeNotifier {
       }
     }
     if (generation != _prepareGeneration || !_started) return false;
-
-    if (!loadOffUiIsolate && !_showNeedsAsyncWake) {
-      return ffi.load(
-        videoPath,
-        lyricPath: lyricPath,
-        vocalPath: vocalPath,
-        accompanimentPath: accompanimentPath,
-        videoMasterClock: videoMasterClock,
-        seamlessTransition: seamlessTransition,
-      );
-    }
 
     final load = ffi.loadOffUiIsolate(
       videoPath,
