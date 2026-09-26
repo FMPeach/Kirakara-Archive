@@ -2,7 +2,8 @@ part of '../../screens/controller_screen.dart';
 
 enum _AnnouncementMotion {
   marquee,
-  lowMotion,
+  lowMotionFade,
+  lowMotionHardCut,
 }
 
 class _TopBar extends StatelessWidget {
@@ -98,9 +99,11 @@ class _TopBar extends StatelessWidget {
           const _TickerTag(text: '报幕'),
           const SizedBox(width: 15),
           Expanded(
-            child: announcementMotion == _AnnouncementMotion.lowMotion
+            child: announcementMotion != _AnnouncementMotion.marquee
                 ? _LowMotionAnnouncementRotator(
                     items: tickerItems,
+                    fadeTransitions:
+                        announcementMotion == _AnnouncementMotion.lowMotionFade,
                     style: const TextStyle(
                       color: KiraColors.cream,
                       fontSize: 20,
@@ -410,10 +413,12 @@ class _MarqueeTextRun extends StatelessWidget {
 class _LowMotionAnnouncementRotator extends StatefulWidget {
   const _LowMotionAnnouncementRotator({
     required this.items,
+    required this.fadeTransitions,
     required this.style,
   });
 
   final List<String> items;
+  final bool fadeTransitions;
   final TextStyle style;
 
   @override
@@ -489,38 +494,42 @@ class _LowMotionAnnouncementRotatorState
     if (_index >= widget.items.length) _index = 0;
     _scheduleNext();
     final text = widget.items.isEmpty ? '' : widget.items[_index];
+    final textChild = SizedBox(
+      key: ValueKey<int>(_index),
+      width: double.infinity,
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        softWrap: false,
+        style: widget.style,
+      ),
+    );
     return RepaintBoundary(
       key: const ValueKey('low-motion-announcement'),
       child: Semantics(
         label: text,
         excludeSemantics: true,
-        child: AnimatedSwitcher(
-          duration: _fadeDuration,
-          switchInCurve: Curves.easeOut,
-          switchOutCurve: Curves.easeIn,
-          transitionBuilder: (child, animation) => FadeTransition(
-            opacity: animation,
-            child: child,
-          ),
-          layoutBuilder: (currentChild, previousChildren) => Stack(
-            alignment: Alignment.centerLeft,
-            children: [
-              ...previousChildren,
-              if (currentChild != null) currentChild,
-            ],
-          ),
-          child: SizedBox(
-            key: ValueKey<int>(_index),
-            width: double.infinity,
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              softWrap: false,
-              style: widget.style,
-            ),
-          ),
-        ),
+        child: widget.fadeTransitions
+            ? AnimatedSwitcher(
+                key: const ValueKey('low-motion-fade-switcher'),
+                duration: _fadeDuration,
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: child,
+                ),
+                layoutBuilder: (currentChild, previousChildren) => Stack(
+                  alignment: Alignment.centerLeft,
+                  children: [
+                    ...previousChildren,
+                    if (currentChild != null) currentChild,
+                  ],
+                ),
+                child: textChild,
+              )
+            : textChild,
       ),
     );
   }

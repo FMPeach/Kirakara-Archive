@@ -144,11 +144,12 @@ class _ControllerScreenState extends State<ControllerScreen> {
                   showSearch: _browseMode == null,
                   controllerFullscreen: _controllerFullscreen,
                   isCasting: widget.castService.isCasting,
-                  announcementMotion: widget.castService.state !=
-                              CastState.idle ||
-                          widget.displayManager.mode == DisplayMode.dualScreen
-                      ? _AnnouncementMotion.lowMotion
-                      : _AnnouncementMotion.marquee,
+                  announcementMotion:
+                      widget.displayManager.mode == DisplayMode.dualScreen
+                          ? _AnnouncementMotion.lowMotionHardCut
+                          : widget.castService.state != CastState.idle
+                              ? _AnnouncementMotion.lowMotionFade
+                              : _AnnouncementMotion.marquee,
                   onSearchTap: () => _runSearch(''),
                   onQr: _showQrDialog,
                   onSettings: _showSettingsDialog,

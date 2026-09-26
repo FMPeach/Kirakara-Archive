@@ -274,7 +274,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('physical dual-screen uses the low-motion announcement rotator',
+  testWidgets('physical dual-screen hard-cuts the low-motion announcement',
       (tester) async {
     tester.view.physicalSize = const Size(1920, 1080);
     tester.view.devicePixelRatio = 1;
@@ -323,6 +323,17 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('marquee-viewport')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('low-motion-fade-switcher')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('low-motion-announcement')),
+        matching: find.byType(FadeTransition),
+      ),
+      findsNothing,
+    );
     expect(find.textContaining('当前播放：'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 5));
