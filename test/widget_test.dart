@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kirakara_app/app/kirakara_app.dart';
 import 'package:kirakara_app/ui/widgets/kira_design_canvas.dart';
@@ -270,6 +271,64 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('marquee-static-run')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('physical dual-screen uses the low-motion announcement rotator',
+      (tester) async {
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    const windowChannel = MethodChannel('kirakara/window');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(windowChannel, (call) async {
+      return switch (call.method) {
+        'getDisplays' => <Object?>[
+            <String, Object?>{
+              'id': 'controller',
+              'name': 'Controller',
+              'isPrimary': true,
+              'left': 0,
+              'top': 0,
+              'width': 1920,
+              'height': 1080,
+            },
+            <String, Object?>{
+              'id': 'stage',
+              'name': 'Stage',
+              'isPrimary': false,
+              'left': 1920,
+              'top': 0,
+              'width': 1920,
+              'height': 1080,
+            },
+          ],
+        'isControllerFullscreen' => false,
+        _ => null,
+      };
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(windowChannel, null),
+    );
+
+    await tester.pumpWidget(const KirakaraApp(databasePath: ':memory:'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(
+      find.byKey(const ValueKey('low-motion-announcement')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('marquee-viewport')), findsNothing);
+    expect(find.textContaining('当前播放：'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.textContaining('下一首：'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

@@ -1,5 +1,10 @@
 part of '../../screens/controller_screen.dart';
 
+enum _AnnouncementMotion {
+  marquee,
+  lowMotion,
+}
+
 class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.customAnnouncement,
@@ -9,7 +14,7 @@ class _TopBar extends StatelessWidget {
     required this.showSearch,
     required this.controllerFullscreen,
     required this.isCasting,
-    required this.reduceMotionForCast,
+    required this.announcementMotion,
     required this.onSearchTap,
     required this.onQr,
     required this.onSettings,
@@ -24,7 +29,7 @@ class _TopBar extends StatelessWidget {
   final bool showSearch;
   final bool controllerFullscreen;
   final bool isCasting;
-  final bool reduceMotionForCast;
+  final _AnnouncementMotion announcementMotion;
   final VoidCallback onSearchTap;
   final VoidCallback onQr;
   final VoidCallback onSettings;
@@ -93,8 +98,8 @@ class _TopBar extends StatelessWidget {
           const _TickerTag(text: '报幕'),
           const SizedBox(width: 15),
           Expanded(
-            child: reduceMotionForCast
-                ? _CastAnnouncementRotator(
+            child: announcementMotion == _AnnouncementMotion.lowMotion
+                ? _LowMotionAnnouncementRotator(
                     items: tickerItems,
                     style: const TextStyle(
                       color: KiraColors.cream,
@@ -240,10 +245,10 @@ class _MarqueeText extends StatefulWidget {
 class _MarqueeTextState extends State<_MarqueeText> implements TickerProvider {
   static const int _marqueeTickerFps = 30;
   static const double _overflowSafetyMargin = 12;
+  static const Duration _marqueeStep =
+      Duration(microseconds: 1000000 ~/ _marqueeTickerFps);
 
   late final AnimationController _controller;
-  final Duration _marqueeStep =
-      Duration(microseconds: 1000000 ~/ _marqueeTickerFps);
   Duration _marqueeLastEmit = Duration.zero;
   Duration _marqueeNextEmit = Duration.zero;
   Ticker? _marqueeTicker;
@@ -402,8 +407,8 @@ class _MarqueeTextRun extends StatelessWidget {
   }
 }
 
-class _CastAnnouncementRotator extends StatefulWidget {
-  const _CastAnnouncementRotator({
+class _LowMotionAnnouncementRotator extends StatefulWidget {
+  const _LowMotionAnnouncementRotator({
     required this.items,
     required this.style,
   });
@@ -412,13 +417,14 @@ class _CastAnnouncementRotator extends StatefulWidget {
   final TextStyle style;
 
   @override
-  State<_CastAnnouncementRotator> createState() =>
-      _CastAnnouncementRotatorState();
+  State<_LowMotionAnnouncementRotator> createState() =>
+      _LowMotionAnnouncementRotatorState();
 }
 
-class _CastAnnouncementRotatorState extends State<_CastAnnouncementRotator>
-    with WidgetsBindingObserver {
+class _LowMotionAnnouncementRotatorState
+    extends State<_LowMotionAnnouncementRotator> with WidgetsBindingObserver {
   static const Duration _switchInterval = Duration(seconds: 5);
+  static const Duration _fadeDuration = Duration(milliseconds: 180);
 
   Timer? _switchTimer;
   int _index = 0;
@@ -432,7 +438,7 @@ class _CastAnnouncementRotatorState extends State<_CastAnnouncementRotator>
   }
 
   @override
-  void didUpdateWidget(covariant _CastAnnouncementRotator oldWidget) {
+  void didUpdateWidget(covariant _LowMotionAnnouncementRotator oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!listEquals(oldWidget.items, widget.items)) {
       _switchTimer?.cancel();
@@ -484,16 +490,36 @@ class _CastAnnouncementRotatorState extends State<_CastAnnouncementRotator>
     _scheduleNext();
     final text = widget.items.isEmpty ? '' : widget.items[_index];
     return RepaintBoundary(
+      key: const ValueKey('low-motion-announcement'),
       child: Semantics(
         label: text,
         excludeSemantics: true,
-        child: Text(
-          key: const ValueKey('cast-announcement-item'),
-          text,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          softWrap: false,
-          style: widget.style,
+        child: AnimatedSwitcher(
+          duration: _fadeDuration,
+          switchInCurve: Curves.easeOut,
+          switchOutCurve: Curves.easeIn,
+          transitionBuilder: (child, animation) => FadeTransition(
+            opacity: animation,
+            child: child,
+          ),
+          layoutBuilder: (currentChild, previousChildren) => Stack(
+            alignment: Alignment.centerLeft,
+            children: [
+              ...previousChildren,
+              if (currentChild != null) currentChild,
+            ],
+          ),
+          child: SizedBox(
+            key: ValueKey<int>(_index),
+            width: double.infinity,
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+              style: widget.style,
+            ),
+          ),
         ),
       ),
     );

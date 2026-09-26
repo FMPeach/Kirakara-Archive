@@ -134,6 +134,7 @@ class _ControllerScreenState extends State<ControllerScreen> {
                   widget.castService,
                   widget.kirakaraShowService,
                   widget.settingsService,
+                  widget.displayManager,
                 ]),
                 builder: (context, _) => _TopBar(
                   customAnnouncement: widget.settingsService.customAnnouncement,
@@ -143,8 +144,11 @@ class _ControllerScreenState extends State<ControllerScreen> {
                   showSearch: _browseMode == null,
                   controllerFullscreen: _controllerFullscreen,
                   isCasting: widget.castService.isCasting,
-                  reduceMotionForCast:
-                      widget.castService.state != CastState.idle,
+                  announcementMotion: widget.castService.state !=
+                              CastState.idle ||
+                          widget.displayManager.mode == DisplayMode.dualScreen
+                      ? _AnnouncementMotion.lowMotion
+                      : _AnnouncementMotion.marquee,
                   onSearchTap: () => _runSearch(''),
                   onQr: _showQrDialog,
                   onSettings: _showSettingsDialog,
