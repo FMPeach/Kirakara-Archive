@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<WindowsPerformanceRecorder
+    Author="Kirakara"
+    Comments="Bounded Kirakara Stage to Flutter presentation trace"
+    Company="Kirakara"
+    Copyright="Kirakara"
+    Team="Windows compositor"
+    Version="1.0">
+  <Profiles>
+    <EventCollector
+        Id="EventCollector_KirakaraCompositor"
+        Name="Kirakara compositor event collector">
+      <BufferSize Value="256"/>
+      <Buffers Value="64"/>
+    </EventCollector>
+
+    <EventProvider
+        Id="EventProvider_KirakaraAppStageTexture"
+        Name="6862b681-4cdb-45e5-936c-05d82d83ef9a"
+        Level="5">
+      <Keywords>
+        <Keyword Value="0x1"/>
+      </Keywords>
+    </EventProvider>
+
+    <EventProvider
+        Id="EventProvider_KirakaraShowNativeStage"
+        Name="9b2572f2-7f04-4059-9e9c-fcbafbf5b0de"
+        Level="5">
+      <Keywords>
+        <Keyword Value="0x1"/>
+      </Keywords>
+    </EventProvider>
+
+    <Profile
+        Description="Kirakara Stage and Flutter frame correlation"
+        DetailLevel="Verbose"
+        Id="KirakaraCompositor.Verbose.File"
+        LoggingMode="File"
+        Name="KirakaraCompositor">
+      <Collectors>
+        <EventCollectorId Value="EventCollector_KirakaraCompositor">
+          <EventProviders>
+            <EventProviderId Value="EventProvider_KirakaraAppStageTexture"/>
+            <EventProviderId Value="EventProvider_KirakaraShowNativeStage"/>
+          </EventProviders>
+        </EventCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

@@ -1,5 +1,7 @@
 #include "stage_texture_bridge.h"
 
+#include "stage_texture_trace.h"
+
 #include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
@@ -123,6 +125,7 @@ struct StageTextureBridge::Impl {
                             flutter_engine->GetRegistrarForPlugin(
                                 "kirakara_stage_texture"))
                       : nullptr) {
+    stage_texture_trace::RegisterProvider();
     RegisterChannel();
   }
 
@@ -131,6 +134,7 @@ struct StageTextureBridge::Impl {
     ReleaseCurrentFrame();
     DestroySource();
     channel.reset();
+    stage_texture_trace::UnregisterProvider();
   }
 
   void RegisterChannel() {
@@ -218,9 +222,13 @@ struct StageTextureBridge::Impl {
 
   int64_t Attach(ShowHostHandle host) {
     if (!host || !registrar || shutting_down.load()) {
+      stage_texture_trace::Attach(
+          reinterpret_cast<std::uint64_t>(host), -1, false);
       return -1;
     }
     if (!EnsureApi()) {
+      stage_texture_trace::Attach(
+          reinterpret_cast<std::uint64_t>(host), -1, false);
       return -1;
     }
 
@@ -231,6 +239,8 @@ struct StageTextureBridge::Impl {
       active.store(true);
       FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
           registrar, existing_texture_id);
+      stage_texture_trace::Attach(
+          reinterpret_cast<std::uint64_t>(host), existing_texture_id, true);
       return existing_texture_id;
     }
     if (source) {
@@ -245,11 +255,15 @@ struct StageTextureBridge::Impl {
 
     if (!EnsureStageDevice() || !api.set_stage_device(
             host, reinterpret_cast<uintptr_t>(stage_device.Get()))) {
+      stage_texture_trace::Attach(
+          reinterpret_cast<std::uint64_t>(host), -1, false);
       return -1;
     }
 
     source = api.create_source(host);
     if (!source) {
+      stage_texture_trace::Attach(
+          reinterpret_cast<std::uint64_t>(host), -1, false);
       return -1;
     }
     attached_host = host;
@@ -276,6 +290,8 @@ struct StageTextureBridge::Impl {
         api.destroy_source(source);
         source = nullptr;
         attached_host = nullptr;
+        stage_texture_trace::Attach(
+            reinterpret_cast<std::uint64_t>(host), -1, false);
         return -1;
       }
       texture_id.store(registered_texture_id);
@@ -286,6 +302,8 @@ struct StageTextureBridge::Impl {
     api.set_callback(source, &FrameAvailable, this);
     FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
         registrar, registered_texture_id);
+    stage_texture_trace::Attach(reinterpret_cast<std::uint64_t>(host),
+                                registered_texture_id, true);
     return registered_texture_id;
   }
 
@@ -298,6 +316,7 @@ struct StageTextureBridge::Impl {
     active.store(value);
     api.set_active(source, value);
     const auto registered_texture_id = texture_id.load();
+    stage_texture_trace::SetActive(value, registered_texture_id);
     if (value && registered_texture_id >= 0) {
       FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
           registrar, registered_texture_id);
@@ -316,14 +335,18 @@ struct StageTextureBridge::Impl {
         shared_handle == 0 || width == 0 || height == 0) {
       return;
     }
+    stage_texture_trace::TextureCallback(generation, frame_id);
     {
       std::lock_guard lock(self->descriptor_mutex);
       self->pending_frame = ShowHostStageTextureFrame{
           shared_handle, width, height, generation, frame_id};
       self->pending_frame_ready = true;
     }
+    const auto registered_texture_id = self->texture_id.load();
+    stage_texture_trace::FrameAvailable(
+        generation, frame_id, registered_texture_id);
     FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
-        self->registrar, self->texture_id.load());
+        self->registrar, registered_texture_id);
   }
 
   const FlutterDesktopGpuSurfaceDescriptor* ObtainDescriptor(
@@ -337,7 +360,8 @@ struct StageTextureBridge::Impl {
     if (!pending_frame_ready && !descriptor.handle) {
       return nullptr;
     }
-    if (pending_frame_ready) {
+    const bool advanced = pending_frame_ready;
+    if (advanced) {
       descriptor = {};
       descriptor.struct_size = sizeof(FlutterDesktopGpuSurfaceDescriptor);
       descriptor.handle =
@@ -345,8 +369,12 @@ struct StageTextureBridge::Impl {
       descriptor.width = descriptor.visible_width = pending_frame.width;
       descriptor.height = descriptor.visible_height = pending_frame.height;
       descriptor.format = kFlutterDesktopPixelFormatBGRA8888;
+      descriptor_generation = pending_frame.generation;
+      descriptor_frame_id = pending_frame.frame_id;
       pending_frame_ready = false;
     }
+    stage_texture_trace::TextureAcquire(
+        descriptor_generation, descriptor_frame_id, advanced);
     return &descriptor;
   }
 
@@ -371,6 +399,8 @@ struct StageTextureBridge::Impl {
   void ReleaseCurrentFrame() {
     std::lock_guard lock(descriptor_mutex);
     descriptor = {};
+    descriptor_generation = 0;
+    descriptor_frame_id = 0;
     pending_frame = {};
     pending_frame_ready = false;
   }
@@ -400,6 +430,8 @@ struct StageTextureBridge::Impl {
   std::mutex source_mutex;
   std::mutex descriptor_mutex;
   FlutterDesktopGpuSurfaceDescriptor descriptor{};
+  std::uint64_t descriptor_generation{};
+  std::uint64_t descriptor_frame_id{};
   ShowHostStageTextureFrame pending_frame{};
   bool pending_frame_ready{};
 };

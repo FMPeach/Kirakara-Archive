@@ -2,7 +2,15 @@
 
 ## 当前状态
 
-- 目前仅完成方案设计，尚未开始实现。
+- 已进入 Phase 0；源码/工具链/官方 Engine 校验值、stock 三种模式构建、Show
+  CTest、真实 external texture integration smoke 与 20 秒 Show texture-only soak
+  已冻结，详见 `docs/windows_compositor/phase0_baseline.md`。标准 Clipboard Unicode
+  smoke 作为独立轨道冻结在 `docs/windows_clipboard/phase0_baseline.md`。
+- Show 与 App 的同 QPC、带 generation/frame ID 的 ETW provider 以及有时长上限的
+  WPR 脚本已实现。当前 Codex 进程没有系统性能分析权限，GPU/DXGI/DWM ETL 在启动
+  时被 Windows 以 `0xc5585011` 拒绝，因此 Phase 0 仍为“进行中”，不能宣告完成；
+  需在提升权限的实体机会话中按 `phase0_trace_method.md` 采完端到端样本。
+- Phase 1～Phase 7 尚未开始；在 Phase 0 退出条件满足前不进入 Engine 行为修改。
 - 编写本计划时的 App 基线：Flutter `3.44.4`、Framework revision
   `ad70ec4617`、Engine revision `a10d8ac38d`。
 - 正式开始定制引擎后，实际使用的精确版本必须写入仓库内的锁定文件。
