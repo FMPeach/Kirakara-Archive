@@ -104,7 +104,10 @@ $record = [ordered]@{
   tools = @($tools)
 }
 
-$absoluteOutput = [System.IO.Path]::GetFullPath($OutputPath)
+$absoluteOutput =
+  $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
+    $OutputPath
+  )
 $outputDirectory = Split-Path -Parent $absoluteOutput
 if (-not (Test-Path -LiteralPath $outputDirectory)) {
   New-Item -ItemType Directory -Path $outputDirectory | Out-Null

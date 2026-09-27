@@ -39,24 +39,56 @@ displayed 时间戳。回调只由已发生的 Flutter frame 唤醒；它不请�
 
 ## 捕获
 
-1. 使用 debug 或 profile App 构建，先打开待测页面并准备好固定 fixture。本次已
+1. 在普通 PowerShell 中临时启用诊断计数并启动 profile App。只让新 App 进程继承
+   环境变量，随后立即恢复当前 shell：
+
+   ```powershell
+   Set-Location 'D:\Kirakara-App-ascii'
+   $env:KIRAKARA_COMPOSITOR_DIAGNOSTICS = '1'
+   Start-Process `
+     '.\build\windows\x64\runner\Profile\kirakara_app.exe'
+   Remove-Item Env:KIRAKARA_COMPOSITOR_DIAGNOSTICS
+   ```
+
+   使用 debug 或 profile App 构建，先打开待测页面并准备好固定 fixture。本次已
    生成的 profile 入口为
    `D:\Kirakara-App-ascii\build\windows\x64\runner\Profile\kirakara_app.exe`；
    它是本机构建产物，不进入 Git，也不能当作另一台机器的可复现发布包。
-2. 启动一次有上限的捕获：
+2. 另开一个明确选择“以管理员身份运行”的 PowerShell。切换目录不会提升已有
+   shell。先执行下式，结果必须为 `True`：
 
    ```powershell
+   $principal = [Security.Principal.WindowsPrincipal] `
+     [Security.Principal.WindowsIdentity]::GetCurrent()
+   $principal.IsInRole(
+     [Security.Principal.WindowsBuiltInRole]::Administrator
+   )
+   ```
+
+3. 在这个已提升窗口中启动一次有上限的捕获：
+
+   ```powershell
+   Set-Location 'D:\Kirakara-App-ascii'
    .\tool\windows_compositor\capture_compositor_trace.ps1 `
      -DurationSeconds 20 `
      -OutputPath '.\build\diagnostics\static-ui-1080p60.etl'
    ```
 
+   脚本会在启动 WPR 前确认至少有一个 `kirakara_app.exe` 正在运行，并打印目标
+   PID；缺少 App 时直接失败，避免生成只有系统事件、无法关联 Stage frame 的无效
+   基线。相对 `OutputPath` 按当前 PowerShell 目录解析，不按 PowerShell 宿主进程最初
+   的工作目录解析。
+
    WPR 要求从“以管理员身份运行”的 PowerShell 启动。非提升权限会返回
    `0xc5585011` 或 `0x80070005`；不要把它解释为应用或 provider 失败。
 
-3. 只执行一个场景，记录开始/结束动作；脚本到时自动停止，不留下后台 session。
-4. 分别采集：静止 UI、1080p60、打开/关闭面板、全屏预览、物理双屏、Cast。
-5. 发生捕获错误时脚本只取消自己已成功启动的 WPR session。
+4. 只执行一个场景，记录开始/结束动作；脚本到时自动停止，不留下后台 session。
+5. 分别采集：静止 UI、1080p60、打开/关闭面板、全屏预览、物理双屏、Cast。
+6. 发生捕获错误时脚本只取消自己已成功启动的 WPR session。
+
+若管理员检查为 `True` 但仍得到 `0xc5585011`，不要修改本地安全策略；先运行
+`whoami /priv | Select-String SeSystemProfilePrivilege` 并保留输出，以区分令牌权限和
+机器策略问题。
 
 WPR profile 同时启用 `GPU.Light`、`DesktopComposition.Light` 和两个 Kirakara
 provider。若机器已有其他 WPR session，先保留现场并另行安排采集，不要直接

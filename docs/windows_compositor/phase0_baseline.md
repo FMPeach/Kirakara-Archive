@@ -105,6 +105,14 @@ texture callback 与 Flutter present 增量均为 0。这证明当前 external t
 尾部 callback 和 2 个尾部 present。该门禁只在基线脚本临时设置诊断环境变量时启用，
 普通 App 路径不会持续注册 next-frame callback。
 
+2026-09-27 的管理员 WPR 冒烟捕获已成功生成 21.1197568 秒 ETL，记录 0 lost
+buffer、0 lost event；文件大小为 356,515,840 字节，SHA-256 为
+`3DDECD9DC6C99DA191AF806D5FC3495A4016017F4DE5C667FB0A2A0B3B84BE5D`。但进程
+rundown 证明捕获窗口内没有 `kirakara_app.exe`，两个 Kirakara provider 因而都没有
+事件；该文件只验证 WPR 权限和 profile，不计入 compositor 基线，也不提交 Git。
+采集脚本现会在 WPR 启动前检查目标 App，并按 PowerShell 当前目录解析相对输出路径，
+避免再次生成同类无效样本。
+
 ## 可重复命令
 
 采集机器、源码、Flutter 与官方 Engine 校验值：
@@ -126,10 +134,10 @@ ETW/WPR 采集与分析见 [phase0_trace_method.md](phase0_trace_method.md)。
 
 ## 尚需实体机验证
 
-- 以管理员权限执行 GPU + DesktopComposition WPR。当前非提升权限进程已验证 profile
-  能解析到 `GPU.Light.File, DesktopComposition.Light.File,
-  KirakaraCompositor.Verbose.File`，随后被系统性能策略以 `0xc5585011` 拒绝；未产生
-  可分析 ETL，因此尚无 `TextureAcquire -> Present -> displayed` 实测结论。
+- 在已启用诊断计数并加载固定 1080p60 preview 的 App 上重新执行管理员
+  GPU + DesktopComposition WPR。管理员采集链路已通过，但尚无同时包含
+  `kirakara_app.exe` 和两个 Kirakara provider 的有效 ETL，因此仍没有
+  `TextureAcquire -> Present -> displayed` 实测结论。
 - 1130G7 Iris Xe、真实 60 Hz 输出与热稳定状态。
 - 物理双屏及 Cast 同时启用时的完整 WPR/PresentMon 样本。
 - 100%～200% 混合 DPI、跨显示器、最小化/恢复和显示器热插拔。
