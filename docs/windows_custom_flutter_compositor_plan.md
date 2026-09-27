@@ -7,15 +7,22 @@
   已冻结，详见 `docs/windows_compositor/phase0_baseline.md`。标准 Clipboard Unicode
   smoke 作为独立轨道冻结在 `docs/windows_clipboard/phase0_baseline.md`。
 - Show 与 App 的同 QPC、带 generation/frame ID 的 ETW provider、有时长上限的
-  WPR 脚本和源码离线分析器已实现。管理员有效 ETL 已闭合 1214 条
-  `StagePublish -> texture callback -> acquire -> 主窗口 DXGKRNL Present` 链；
-  PresentMon 在 warm-up 后解析 1210 帧，其中稳定区间 1097 displayed、0 dropped。
-  这证明 stock external texture 的每个 Stage frame 都驱动当前 Flutter 主窗口
-  Present，不再以 callback 计数代替 kernel/DWM 证据。
-- 本次机器为 i5-12600K + RTX 4060 Ti、1920×1080 @ 180 Hz。稳定区间的 displayed
-  interval 分布在约 5.56/11.11/16.67/22.22/27.78 ms，不能外推为目标 60 Hz / Iris
-  Xe 的观感或热稳定结论。打开/关闭面板、全屏预览、物理双屏、Cast 与 60 Hz 核显
-  样本仍属 Phase 0 实机矩阵，步骤见 `phase0_trace_method.md`。
+  WPR 脚本和源码离线分析器已实现。180 Hz 管理员有效 ETL 的稳定区间闭合了 1097
+  条 `StagePublish -> texture callback -> acquire -> 主窗口 DXGKRNL Present ->
+  displayed` 链，0 dropped；全窗口唯一未直接归属的 source/present 位于 WPR 启动
+  扰动。PresentMon 在 warm-up 后解析 1210 次窗口 Present。该结论使用 raster acquire、
+  kernel Present 和 DWM displayed 证据，不以异步 callback 计数代替真实边界。
+- 同一 i5-12600K + RTX 4060 Ti、1920×1080 输出随后切换到 60 Hz 采集对照。
+  1149 个稳定源帧中，180 个在 notification 之后、advanced acquire 之前被后续
+  latest frame 取代，另有 51 个已进入 Present 的唯一源帧被 DWM drop；Show publish
+  周期均值 16.6668 ms、最大 20.1034 ms。该样本支持“两个 60 Hz 调度相位使帧被
+  合并”的判断，不支持 Show producer 本身长停顿。具体 frame 1315/1316 事件链及
+  源帧/窗口 Present 的独立统计见 `phase0_baseline.md`。
+- 180 Hz 稳定区间仍为 1097 个源帧全部 acquire、全部 displayed；其 displayed
+  interval 分布在约 5.56/11.11/16.67/22.22/27.78 ms。两份样本证明刷新模式会改变
+  当前路径的 cadence，但不能外推为 Iris Xe 的观感或热稳定结论。打开/关闭面板、
+  全屏预览、物理双屏、Cast 与 60 Hz 核显样本仍属 Phase 0 实机矩阵，步骤见
+  `phase0_trace_method.md`。
 - Phase 0 的核心端到端基线已闭合，但场景/硬件矩阵仍在进行；Phase 1～Phase 7
   尚未开始，尚未引入任何 Engine 行为改动。
 - 编写本计划时的 App 基线：Flutter `3.44.4`、Framework revision

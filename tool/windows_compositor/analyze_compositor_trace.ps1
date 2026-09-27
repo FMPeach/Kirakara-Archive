@@ -327,8 +327,11 @@ try {
     @($appEvents.TextureAcquire | Where-Object Advanced) `
     'advanced TextureAcquire'
   $presentedCallbackMap = New-FrameMap `
-    @($appEvents.FlutterFramePresented) `
-    'FlutterFramePresented'
+    @(
+      $appEvents.FlutterFramePresented |
+        Where-Object AcquiredSincePreviousPresent
+    ) `
+    'FlutterFramePresented with new acquire'
 
   $nonzeroWindowPresents = @(
     $decoder.DxgPresentEvents | Where-Object Hwnd -ne 0
@@ -345,39 +348,125 @@ try {
   $mainHwnd = [uint64]$mainWindowGroup.Group[0].Hwnd
   $mainPresents = @($mainWindowGroup.Group | Sort-Object TimeMs)
 
-  $usedStageFrames = [Collections.Generic.HashSet[long]]::new()
-  $stageCursor = -1
+  $textureAcquires = @($appEvents.TextureAcquire | Sort-Object Qpc)
+  $textureAcquireCursor = 0
+  $acquireMatchLimitMs = 5.0
+  # Keep source attribution local to the raster -> kernel Present boundary.
+  # WPR-start stalls are deliberately left unmatched instead of letting a
+  # delayed callback relabel a much later Present with stale frame state.
+  $maximumAcquireMatchTicks = [long][math]::Ceiling(
+    $qpcFrequency * ($acquireMatchLimitMs / 1000.0)
+  )
   $mainPresentLinks = [Collections.Generic.List[object]]::new()
   foreach ($present in $mainPresents) {
-    while ($stageCursor + 1 -lt $stagePublishes.Count -and
-           $stagePublishes[$stageCursor + 1].TimeMs -le $present.TimeMs) {
-      $stageCursor++
-    }
-
-    $frameId = $null
-    $reusedLatestFrame = $false
-    if ($stageCursor -ge 0) {
-      $candidateFrame = [long]$stagePublishes[$stageCursor].FrameId
-      if ($usedStageFrames.Add($candidateFrame)) {
-        $frameId = $candidateFrame
-      } else {
-        $reusedLatestFrame = $true
-      }
-    }
-
     $estimatedQpc = [long][math]::Round(
       $qpcAtTraceOrigin + (($present.TimeMs / 1000.0) * $qpcFrequency)
     )
+    $textureAcquire = $null
+    if ($textureAcquireCursor -lt $textureAcquires.Count) {
+      $candidateIndex = $textureAcquireCursor
+      while ($candidateIndex + 1 -lt $textureAcquires.Count -and
+             [long]$textureAcquires[$candidateIndex + 1].Qpc -le $estimatedQpc) {
+        $currentDelta = [math]::Abs(
+          [long]$textureAcquires[$candidateIndex].Qpc - $estimatedQpc
+        )
+        $nextDelta = [math]::Abs(
+          [long]$textureAcquires[$candidateIndex + 1].Qpc - $estimatedQpc
+        )
+        if ($nextDelta -gt $currentDelta) {
+          break
+        }
+        $candidateIndex++
+      }
+      $candidateAcquire = $textureAcquires[$candidateIndex]
+      $matchDelta = $estimatedQpc - [long]$candidateAcquire.Qpc
+      if ($matchDelta -ge 0 -and
+          $matchDelta -le $maximumAcquireMatchTicks) {
+        $textureAcquire = $candidateAcquire
+        $textureAcquireCursor = $candidateIndex + 1
+      }
+    }
+
     $mainPresentLinks.Add([pscustomobject]@{
       Present = $present
       EstimatedQpc = $estimatedQpc
-      FrameId = $frameId
-      ReusedLatestFrame = $reusedLatestFrame
+      TextureAcquire = $textureAcquire
+      HasTextureAcquire = $null -ne $textureAcquire
+      AcquiredNewFrame = if ($null -ne $textureAcquire) {
+        [bool]$textureAcquire.Advanced
+      } else { $null }
+      FrameId = if ($null -ne $textureAcquire) {
+        [long]$textureAcquire.FrameId
+      } else { $null }
+      ReusedLatestFrame = if ($null -ne $textureAcquire) {
+        -not [bool]$textureAcquire.Advanced
+      } else { $false }
+      AcquireMatchDeltaMs = if ($null -ne $textureAcquire) {
+        Get-QpcDeltaMilliseconds `
+          ([long]$textureAcquire.Qpc) `
+          $estimatedQpc `
+          $qpcFrequency
+      } else { $null }
+      Callback = $null
+      CallbackMatchDeltaMs = $null
     })
   }
-  $mainPresentByFrame = @{}
+
+  $latestFrameId = $null
   foreach ($link in $mainPresentLinks) {
     if ($null -ne $link.FrameId) {
+      $latestFrameId = [long]$link.FrameId
+    } elseif ($null -ne $latestFrameId) {
+      $link.FrameId = $latestFrameId
+      $link.ReusedLatestFrame = $true
+    }
+  }
+
+  $presentedCallbacks = @(
+    $appEvents.FlutterFramePresented | Sort-Object Qpc
+  )
+  $presentedCallbackCursor = 0
+  $callbackMatchLimitMs = 5.0
+  $maximumCallbackMatchTicks = [long][math]::Ceiling(
+    $qpcFrequency * ($callbackMatchLimitMs / 1000.0)
+  )
+  foreach ($link in $mainPresentLinks) {
+    if ($presentedCallbackCursor -ge $presentedCallbacks.Count) {
+      break
+    }
+    $candidateIndex = $presentedCallbackCursor
+    while ($candidateIndex + 1 -lt $presentedCallbacks.Count) {
+      $currentDelta = [math]::Abs(
+        [long]$presentedCallbacks[$candidateIndex].Qpc - $link.EstimatedQpc
+      )
+      $nextDelta = [math]::Abs(
+        [long]$presentedCallbacks[$candidateIndex + 1].Qpc - $link.EstimatedQpc
+      )
+      if ($nextDelta -gt $currentDelta) {
+        break
+      }
+      $candidateIndex++
+    }
+    $matchDelta = [math]::Abs(
+      [long]$presentedCallbacks[$candidateIndex].Qpc - $link.EstimatedQpc
+    )
+    if ($matchDelta -le $maximumCallbackMatchTicks) {
+      $link.Callback = $presentedCallbacks[$candidateIndex]
+      $link.CallbackMatchDeltaMs = Get-QpcDeltaMilliseconds `
+        $link.EstimatedQpc `
+        ([long]$link.Callback.Qpc) `
+        $qpcFrequency
+      $presentedCallbackCursor = $candidateIndex + 1
+    }
+  }
+
+  $mainPresentByFrame = @{}
+  foreach ($link in $mainPresentLinks) {
+    if ($null -ne $link.FrameId -and
+        $link.AcquiredNewFrame -eq $true) {
+      if ($mainPresentByFrame.ContainsKey([long]$link.FrameId)) {
+        throw "Multiple new-acquire main presents use frame_id=$($link.FrameId)."
+      }
       $mainPresentByFrame[[long]$link.FrameId] = $link
     }
   }
@@ -419,6 +508,7 @@ try {
       StageQpc = [long]$stage.Qpc
       CompleteCustomChain = $completeCustomChain
       CustomChainOrdered = $ordered
+      WasAcquired = $null -ne $acquire
       HasMainWindowPresent = $null -ne $dxgLink
       PublishToPublicationMs = if ($null -ne $publication) {
         Get-QpcDeltaMilliseconds $stage.Qpc $publication.Qpc $qpcFrequency
@@ -492,6 +582,8 @@ try {
           $qpcFrequency
       } else { $null }
       Dropped = $null
+      WindowPresentCount = 0
+      WindowPresentDroppedCount = 0
       DxgPresentToDisplayedMs = $null
       PublishToDisplayedMs = $null
       DisplayQpc = $null
@@ -580,9 +672,15 @@ try {
       }
       $displayLinks.Add([pscustomobject]@{
         FrameId = $mainLink.FrameId
-        StageTimeMs = if ($null -ne $mainLink.FrameId) {
+        AcquiredNewFrame = $mainLink.AcquiredNewFrame
+        HasTextureAcquire = $mainLink.HasTextureAcquire
+        StageTimeMs = if (
+          $null -ne $mainLink.FrameId -and
+          $stageMap.ContainsKey([long]$mainLink.FrameId)
+        ) {
           [double]$stageMap[[long]$mainLink.FrameId].TimeMs
         } else { $null }
+        PresentTimeMs = [double]$mainLink.Present.TimeMs
         PresentMonQpc = $rowQpc
         DxgPresentQpc = [long]$mainLink.EstimatedQpc
         MatchDeltaMs = ($matchDeltaTicks * 1000.0) / $qpcFrequency
@@ -592,29 +690,44 @@ try {
         } else { [double]$row.msUntilDisplayed }
         DisplayQpc = $displayQpc
       })
-
-      if ($null -ne $mainLink.FrameId) {
-        $chain = $chainMap[[long]$mainLink.FrameId]
-        $chain.Dropped = $dropped
-        $chain.DxgPresentToDisplayedMs = if ($dropped) {
-          $null
-        } else {
-          Get-QpcDeltaMilliseconds `
-            $mainLink.EstimatedQpc `
-            $displayQpc `
-            $qpcFrequency
-        }
-        $chain.PublishToDisplayedMs = if ($dropped) {
-          $null
-        } else {
-          Get-QpcDeltaMilliseconds `
-            $chain.StageQpc `
-            $displayQpc `
-            $qpcFrequency
-        }
-        $chain.DisplayQpc = $displayQpc
-      }
     }
+  }
+
+  foreach ($frameGroup in @(
+    $displayLinks |
+      Where-Object { $null -ne $_.FrameId } |
+      Group-Object FrameId
+  )) {
+    $frameId = [long]$frameGroup.Name
+    if (-not $chainMap.ContainsKey($frameId)) {
+      continue
+    }
+    $chain = $chainMap[$frameId]
+    $chain.WindowPresentCount = $frameGroup.Count
+    $chain.WindowPresentDroppedCount = @(
+      $frameGroup.Group | Where-Object Dropped
+    ).Count
+    $displayedForFrame = @(
+      $frameGroup.Group |
+        Where-Object { -not $_.Dropped } |
+        Sort-Object DisplayQpc
+    )
+    if ($displayedForFrame.Count -eq 0) {
+      $chain.Dropped = $true
+      continue
+    }
+
+    $firstDisplay = $displayedForFrame[0]
+    $chain.Dropped = $false
+    $chain.DxgPresentToDisplayedMs = Get-QpcDeltaMilliseconds `
+      $firstDisplay.DxgPresentQpc `
+      $firstDisplay.DisplayQpc `
+      $qpcFrequency
+    $chain.PublishToDisplayedMs = Get-QpcDeltaMilliseconds `
+      $chain.StageQpc `
+      $firstDisplay.DisplayQpc `
+      $qpcFrequency
+    $chain.DisplayQpc = $firstDisplay.DisplayQpc
   }
 
   $trimMilliseconds = $TrimEdgeSeconds * 1000.0
@@ -634,23 +747,49 @@ try {
   )
   $steadyStageIntervals = Get-Intervals $steadyStagePublishes 'TimeMs'
 
-  $displayedSteady = @(
-    $displayLinks |
-      Where-Object {
-        -not $_.Dropped -and
-        $null -ne $_.StageTimeMs -and
-        $_.StageTimeMs -ge $steadyStartMs -and
-        $_.StageTimeMs -le $steadyEndMs
-      } |
+  $displayedSourceFramesSteady = @(
+    $steadyChains |
+      Where-Object { $null -ne $_.DisplayQpc } |
       Sort-Object DisplayQpc
   )
-  $displayIntervals = @()
-  if ($displayedSteady.Count -gt 1) {
-    $displayIntervals = @(
-      for ($index = 1; $index -lt $displayedSteady.Count; $index++) {
+  $windowPresentsSteady = @(
+    $displayLinks |
+      Where-Object {
+        $_.PresentTimeMs -ge $steadyStartMs -and
+        $_.PresentTimeMs -le $steadyEndMs
+      }
+  )
+  $displayedWindowPresentsSteady = @(
+    $windowPresentsSteady |
+      Where-Object { -not $_.Dropped } |
+      Sort-Object DisplayQpc
+  )
+  $sourceDisplayIntervals = @()
+  if ($displayedSourceFramesSteady.Count -gt 1) {
+    $sourceDisplayIntervals = @(
+      for (
+        $index = 1
+        $index -lt $displayedSourceFramesSteady.Count
+        $index++
+      ) {
         Get-QpcDeltaMilliseconds `
-          $displayedSteady[$index - 1].DisplayQpc `
-          $displayedSteady[$index].DisplayQpc `
+          $displayedSourceFramesSteady[$index - 1].DisplayQpc `
+          $displayedSourceFramesSteady[$index].DisplayQpc `
+          $qpcFrequency
+      }
+    )
+  }
+  $windowDisplayIntervals = @()
+  if ($displayedWindowPresentsSteady.Count -gt 1) {
+    $windowDisplayIntervals = @(
+      for (
+        $index = 1
+        $index -lt $displayedWindowPresentsSteady.Count
+        $index++
+      ) {
+        Get-QpcDeltaMilliseconds `
+          $displayedWindowPresentsSteady[$index - 1].DisplayQpc `
+          $displayedWindowPresentsSteady[$index].DisplayQpc `
           $qpcFrequency
       }
     )
@@ -682,26 +821,49 @@ try {
       @($steadyChains) `
       $metricName
   }
-  $steadyMetrics.DisplayedIntervalMs = Get-Statistics $displayIntervals
+  $steadyMetrics.DisplayedSourceFrameIntervalMs =
+    Get-Statistics $sourceDisplayIntervals
+  $steadyMetrics.DisplayedWindowPresentIntervalMs =
+    Get-Statistics $windowDisplayIntervals
 
-  $refreshHistogram = @()
-  if ($RefreshRateHz -gt 0 -and $displayIntervals.Count -gt 0) {
+  $sourceRefreshHistogram = @()
+  $windowRefreshHistogram = @()
+  if ($RefreshRateHz -gt 0) {
     $refreshPeriodMs = 1000.0 / $RefreshRateHz
-    $refreshHistogram = @(
-      $displayIntervals |
-        Group-Object { [math]::Round($_ / $refreshPeriodMs) } |
-        Sort-Object { [int]$_.Name } |
-        ForEach-Object {
-          [ordered]@{
-            refreshPeriods = [int]$_.Name
-            approximateMilliseconds = [math]::Round(
-              [int]$_.Name * $refreshPeriodMs,
-              4
-            )
-            count = $_.Count
+    if ($sourceDisplayIntervals.Count -gt 0) {
+      $sourceRefreshHistogram = @(
+        $sourceDisplayIntervals |
+          Group-Object { [math]::Round($_ / $refreshPeriodMs) } |
+          Sort-Object { [int]$_.Name } |
+          ForEach-Object {
+            [ordered]@{
+              refreshPeriods = [int]$_.Name
+              approximateMilliseconds = [math]::Round(
+                [int]$_.Name * $refreshPeriodMs,
+                4
+              )
+              count = $_.Count
+            }
           }
-        }
-    )
+      )
+    }
+    if ($windowDisplayIntervals.Count -gt 0) {
+      $windowRefreshHistogram = @(
+        $windowDisplayIntervals |
+          Group-Object { [math]::Round($_ / $refreshPeriodMs) } |
+          Sort-Object { [int]$_.Name } |
+          ForEach-Object {
+            [ordered]@{
+              refreshPeriods = [int]$_.Name
+              approximateMilliseconds = [math]::Round(
+                [int]$_.Name * $refreshPeriodMs,
+                4
+              )
+              count = $_.Count
+            }
+          }
+      )
+    }
   }
 
   $traceFile = Get-Item -LiteralPath $absoluteInput
@@ -728,20 +890,55 @@ try {
       }
     )
   }
-  $displayFrameIds = @(
-    $displayLinks |
-      Where-Object { $null -ne $_.FrameId } |
-      ForEach-Object { [long]$_.FrameId }
-  )
-  $displayFrameSet = [Collections.Generic.HashSet[long]]::new()
-  foreach ($frameId in $displayFrameIds) {
-    [void]$displayFrameSet.Add($frameId)
+  $matchedDxgPresentSet = [Collections.Generic.HashSet[long]]::new()
+  foreach ($displayLink in $displayLinks) {
+    [void]$matchedDxgPresentSet.Add([long]$displayLink.DxgPresentQpc)
   }
+  $matchedTextureAcquireSet = [Collections.Generic.HashSet[long]]::new()
+  foreach ($mainLink in $mainPresentLinks) {
+    if ($null -ne $mainLink.TextureAcquire) {
+      [void]$matchedTextureAcquireSet.Add(
+        [long]$mainLink.TextureAcquire.Qpc
+      )
+    }
+  }
+  $unmatchedTextureAcquires = @(
+    $textureAcquires |
+      Where-Object {
+        -not $matchedTextureAcquireSet.Contains([long]$_.Qpc)
+      } |
+      ForEach-Object {
+        [ordered]@{
+          qpc = [long]$_.Qpc
+          generation = [long]$_.Generation
+          frameId = [long]$_.FrameId
+          advanced = [bool]$_.Advanced
+        }
+      }
+  )
+  $mainPresentsWithoutTextureAcquire = @(
+    $mainPresentLinks |
+      Where-Object { -not $_.HasTextureAcquire } |
+      ForEach-Object {
+        [ordered]@{
+          estimatedQpc = [long]$_.EstimatedQpc
+          reusedFrameId = if ($null -ne $_.FrameId) {
+            [long]$_.FrameId
+          } else { $null }
+          callbackFrameId = if ($null -ne $_.Callback) {
+            [long]$_.Callback.FrameId
+          } else { $null }
+          callbackReportedNewAcquire = if ($null -ne $_.Callback) {
+            [bool]$_.Callback.AcquiredSincePreviousPresent
+          } else { $null }
+        }
+      }
+  )
   $mainFramesWithoutPresentMon = @(
     $mainPresentLinks |
       Where-Object {
         $null -ne $_.FrameId -and
-        -not $displayFrameSet.Contains([long]$_.FrameId)
+        -not $matchedDxgPresentSet.Contains([long]$_.EstimatedQpc)
       } |
       ForEach-Object { [long]$_.FrameId }
   )
@@ -750,9 +947,34 @@ try {
       Where-Object { $_.Dropped -and $null -ne $_.FrameId } |
       ForEach-Object { [long]$_.FrameId }
   )
+  $sourceFramesNotAcquired = @(
+    $chains |
+      Where-Object { -not $_.WasAcquired } |
+      ForEach-Object { [long]$_.FrameId }
+  )
+  $steadySourceFramesNotAcquired = @(
+    $steadyChains |
+      Where-Object { -not $_.WasAcquired } |
+      ForEach-Object { [long]$_.FrameId }
+  )
+  $sourceFramesWithoutMainPresent = @(
+    $chains |
+      Where-Object { -not $_.HasMainWindowPresent } |
+      ForEach-Object { [long]$_.FrameId }
+  )
+  $steadySourceFramesWithoutMainPresent = @(
+    $steadyChains |
+      Where-Object { -not $_.HasMainWindowPresent } |
+      ForEach-Object { [long]$_.FrameId }
+  )
+  $sourceFrameDroppedIds = @(
+    $chains |
+      Where-Object { $_.Dropped -eq $true } |
+      ForEach-Object { [long]$_.FrameId }
+  )
 
   $report = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     scenario = $Scenario
     generatedAt = [DateTimeOffset]::Now.ToString('o')
     sourceTrace = [ordered]@{
@@ -774,6 +996,8 @@ try {
       trimEdgeSeconds = $TrimEdgeSeconds
       steadyStartMs = [math]::Round($steadyStartMs, 4)
       steadyEndMs = [math]::Round($steadyEndMs, 4)
+      textureAcquirePresentMatchLimitMs = $acquireMatchLimitMs
+      flutterCallbackPresentMatchLimitMs = $callbackMatchLimitMs
     }
     window = [ordered]@{
       hwnd = ('0x{0:x}' -f $mainHwnd)
@@ -805,9 +1029,43 @@ try {
         $appEvents.TextureAcquire | Where-Object { -not $_.Advanced }
       ).Count
       flutterFramePresentedCallback = $appEvents.FlutterFramePresented.Count
+      flutterFramePresentedWithNewAcquire = @(
+        $appEvents.FlutterFramePresented |
+          Where-Object AcquiredSincePreviousPresent
+      ).Count
+      flutterFramePresentedWithoutNewAcquire = @(
+        $appEvents.FlutterFramePresented |
+          Where-Object { -not $_.AcquiredSincePreviousPresent }
+      ).Count
       completeCustomChains = @($chains | Where-Object CompleteCustomChain).Count
       customChainOrderViolations = $orderViolationCount
       mainWindowDxgPresent = $mainPresents.Count
+      mainWindowDxgPresentMatchedToFlutterCallback = @(
+        $mainPresentLinks | Where-Object { $null -ne $_.Callback }
+      ).Count
+      mainWindowDxgPresentWithoutFlutterCallback = @(
+        $mainPresentLinks | Where-Object { $null -eq $_.Callback }
+      ).Count
+      mainWindowDxgPresentMatchedToTextureAcquire = @(
+        $mainPresentLinks | Where-Object HasTextureAcquire
+      ).Count
+      mainWindowDxgPresentWithoutTextureAcquire = @(
+        $mainPresentLinks | Where-Object { -not $_.HasTextureAcquire }
+      ).Count
+      mainWindowDxgPresentWithRepeatedTextureAcquire = @(
+        $mainPresentLinks |
+          Where-Object {
+            $_.HasTextureAcquire -and $_.AcquiredNewFrame -eq $false
+          }
+      ).Count
+      mainWindowDxgPresentWithNewAcquire = @(
+        $mainPresentLinks |
+          Where-Object { $_.AcquiredNewFrame -eq $true }
+      ).Count
+      mainWindowDxgPresentWithoutNewAcquire = @(
+        $mainPresentLinks |
+          Where-Object { $_.AcquiredNewFrame -ne $true }
+      ).Count
       stageFramesWithMainWindowDxgPresent = @(
         $chains | Where-Object HasMainWindowPresent
       ).Count
@@ -821,11 +1079,35 @@ try {
       presentMonPresented = @($displayLinks | Where-Object { -not $_.Dropped }).Count
       presentMonDropped = @($displayLinks | Where-Object Dropped).Count
       steadyFrames = $steadyChains.Count
+      steadyAdvancedTextureAcquire = @(
+        $steadyChains | Where-Object WasAcquired
+      ).Count
+      steadySourceFramesNotAcquired = $steadySourceFramesNotAcquired.Count
+      steadySourceFramesWithMainWindowPresent = @(
+        $steadyChains | Where-Object HasMainWindowPresent
+      ).Count
+      steadySourceFramesWithoutMainWindowPresent =
+        $steadySourceFramesWithoutMainPresent.Count
       steadyPresented = @(
         $steadyChains | Where-Object { $_.Dropped -eq $false }
       ).Count
       steadyDropped = @(
         $steadyChains | Where-Object { $_.Dropped -eq $true }
+      ).Count
+      steadyWithoutDwmResult = @(
+        $steadyChains | Where-Object { $null -eq $_.Dropped }
+      ).Count
+      steadyWindowPresentDisplayed = $displayedWindowPresentsSteady.Count
+      steadyWindowPresentDropped = @(
+        $windowPresentsSteady | Where-Object Dropped
+      ).Count
+      steadyWindowPresentWithNewAcquire = @(
+        $windowPresentsSteady |
+          Where-Object { $_.AcquiredNewFrame -eq $true }
+      ).Count
+      steadyWindowPresentWithoutNewAcquire = @(
+        $windowPresentsSteady |
+          Where-Object { $_.AcquiredNewFrame -ne $true }
       ).Count
     }
     frameRange = [ordered]@{
@@ -839,18 +1121,41 @@ try {
         @($displayLinks) `
         'MatchDeltaMs'
       mainWindowFramesWithoutPresentMon = $mainFramesWithoutPresentMon
-      droppedFrameIds = $droppedFrameIds
+      droppedWindowPresentFrameIds = $droppedFrameIds
+      droppedSourceFrameIds = $sourceFrameDroppedIds
+    }
+    sourceFrameDisposition = [ordered]@{
+      notAcquiredFrameIds = $sourceFramesNotAcquired
+      steadyNotAcquiredFrameIds = $steadySourceFramesNotAcquired
+      withoutMainWindowPresentFrameIds = $sourceFramesWithoutMainPresent
+      steadyWithoutMainWindowPresentFrameIds =
+        $steadySourceFramesWithoutMainPresent
+    }
+    flutterCallbackPairing = [ordered]@{
+      matchDeltaMilliseconds = Get-PropertyStatistics `
+        @($mainPresentLinks) `
+        'CallbackMatchDeltaMs'
+    }
+    textureAcquirePairing = [ordered]@{
+      matchDeltaMilliseconds = Get-PropertyStatistics `
+        @($mainPresentLinks) `
+        'AcquireMatchDeltaMs'
+      unmatchedTextureAcquires = $unmatchedTextureAcquires
+      mainWindowPresentsWithoutTextureAcquire =
+        $mainPresentsWithoutTextureAcquire
     }
     allMetricsMilliseconds = $allMetrics
     steadyMetricsMilliseconds = $steadyMetrics
     displayCadence = [ordered]@{
       refreshRateHz = if ($RefreshRateHz -gt 0) { $RefreshRateHz } else { $null }
-      refreshPeriodHistogram = $refreshHistogram
+      sourceFrameRefreshPeriodHistogram = $sourceRefreshHistogram
+      windowPresentRefreshPeriodHistogram = $windowRefreshHistogram
     }
     notes = @(
-      'FlutterFramePresented is a stock embedder callback dispatched after SwapBuffers; it is not the kernel Present timestamp.',
+      'FlutterFramePresented is a stock embedder callback dispatched after SwapBuffers; it is not the kernel Present timestamp or the authority for source-frame ownership.',
+      'Source frames are attributed to kernel Presents through the preceding TextureAcquire within the recorded match limit; longer startup stalls remain explicit unmatched events.',
       'PresentMon can omit initial events while its offline tracking reaches a reliable state; counts preserve that warm-up gap.',
-      'A high-refresh sample is causal and timing evidence, not proof of target 60 Hz visual smoothness.'
+      'A refresh-rate-specific sample is causal timing evidence for that display mode, not proof of behavior at other refresh rates.'
     )
   }
 
@@ -870,8 +1175,15 @@ try {
       "$($report.counts.presentMonPresented)/$($report.counts.presentMonDropped)"
     )
     Write-Host (
-      'Steady displayed/dropped: ' +
-      "$($report.counts.steadyPresented)/$($report.counts.steadyDropped)"
+      'Steady source frames displayed/DWM-dropped/not-acquired: ' +
+      "$($report.counts.steadyPresented)/" +
+      "$($report.counts.steadyDropped)/" +
+      "$($report.counts.steadySourceFramesNotAcquired)"
+    )
+    Write-Host (
+      'Steady window presents displayed/dropped: ' +
+      "$($report.counts.steadyWindowPresentDisplayed)/" +
+      "$($report.counts.steadyWindowPresentDropped)"
     )
   }
   Write-Host "Report saved to $absoluteReport"

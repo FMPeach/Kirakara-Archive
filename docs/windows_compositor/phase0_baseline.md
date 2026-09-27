@@ -32,10 +32,11 @@
 ## 本机图形基线
 
 - Intel Core i5-12600K。
-- NVIDIA GeForce RTX 4060 Ti，驱动 `32.0.15.9186`，当前 1920×1080 @ 180 Hz。
+- NVIDIA GeForce RTX 4060 Ti，驱动 `32.0.15.9186`。首份样本为 1920×1080 @
+  180 Hz，随后在同一 App 会话中把同一输出切到 60 Hz 采集对照样本。
 - Intel UHD Graphics 770，驱动 `32.0.101.7088`。
-- 另有 GameViewer、Oray 和 Virtual Display 虚拟显示适配器；当前采集环境不是
-  Iris Xe 1130G7，也不是 60 Hz 实体显示器。
+- 另有 GameViewer、Oray 和 Virtual Display 虚拟显示适配器；60 Hz 对照仍走
+  RTX 4060 Ti 的实体输出，不是目标 Iris Xe 1130G7 环境。
 - 本记录只用于这次基线对照。应用运行时不得把 GPU、驱动或能力探测结果写入配置。
 
 ## 改动前验证结果
@@ -106,7 +107,7 @@ texture callback 与 Flutter present 增量均为 0。这证明当前 external t
 尾部 callback 和 2 个尾部 present。该门禁只在基线脚本临时设置诊断环境变量时启用，
 普通 App 路径不会持续注册 next-frame callback。
 
-### 有效 ETW / PresentMon 样本
+### 180 Hz 有效 ETW / PresentMon 样本
 
 管理员会话已在静止 Flutter UI、1080p60 Stage 持续更新的场景中完成 20 秒采集：
 
@@ -134,11 +135,15 @@ Authenticode 状态为 Valid，签名者为 Intel Corporation。分析报告位�
 | FlutterFramePresented callback | 1215 |
 | 主窗口 DXGKRNL Present | 1214 |
 
-多出的 acquire 与 callback 属于 Trace 开始前已在途的 frame 6787。其余 1214 个
-StagePublish 均一对一关联到主窗口 `HWND 0x15112e` 的 DXGKRNL Present；这些
-Present 全部来自 context `0x40000140`、`FlipInterval=1`、`ReturnStatus=0`，没有重复
-使用 latest Stage frame。由此可以确认：stock external texture 每发布一帧，当前路径
-都会驱动一次真实的 Flutter 主窗口 Present，并非只有诊断 callback 在计数。
+多出的 acquire 与 callback 属于 Trace 开始前已在途的 frame 6787。以发生在 raster
+路径上的 `TextureAcquire` 向后配对 5 ms 内最近的 kernel Present 后，1213 个
+StagePublish 一对一关联到主窗口 `HWND 0x15112e`；frame 6789 的 acquire 位于 WPR
+启动扰动中，约 100 ms 后才出现带相同 frame ID 的异步 presented callback，因此
+分析器刻意不借助延迟 callback 把它强行归属给较晚的 kernel Present。所有主窗
+Present 均来自 context `0x40000140`、`FlipInterval=1`、`ReturnStatus=0`。裁掉首尾后
+1097 个稳定 Stage frame 则全部与新的 acquire、主窗 Present 和 displayed 结果闭合。
+由此可以确认稳定状态下 stock external texture 每发布一帧，当前路径都会驱动一次
+真实的 Flutter 主窗口 Present，并非只有诊断 callback 在计数。
 
 PresentMon 在离线状态机建立前省略了最初四个主窗 Present；其后 1210 个
 `Composed: Copy with GPU GDI` 均与 DXGKRNL 主窗 Present 匹配，匹配误差 P50
@@ -158,15 +163,95 @@ PresentMon 在离线状态机建立前省略了最初四个主窗 Present；其�
 
 全窗口最大 109.1271 ms 的 Stage gap 与 100.4070 ms 的 acquire→callback 延迟都发生
 在 WPR 启动区；裁掉首尾后不再出现。`FlutterFramePresented` 是 SwapBuffers 成功后
-投递到 platform thread 的 callback，和 kernel Present 可前后相差约 1 ms，分析器
-因此用它做计数/顺序证据，而用 DXGKRNL 与 PresentMon 做准确 present/displayed
-边界。
+投递到 platform thread 的 callback；稳定状态通常只与 kernel Present 相差亚毫秒，
+但 platform thread 受阻时可以晚很多，且执行时读取的 current frame 已可能改变。
+分析器因此只用它做计数/延迟诊断，以同步的 texture acquire、DXGKRNL 与 PresentMon
+确定 source/present/displayed 边界。
 
 这台机器的 180 Hz displayed 间隔在稳定区间并非全部为 16.67 ms：1096 个间隔按
 180 Hz refresh period 分桶为 1/2/3/4/5 个周期各 `4/214/657/220/1` 次，即约
 5.56/11.11/16.67/22.22/27.78 ms，均值 16.6662 ms。高刷新率把误差量化到更短的
 刷新周期，不能据此判断目标 60 Hz 输出上的视觉掉帧或顿挫；这份样本只作为因果、
 计数与时延基线。
+
+### 60 Hz 对照：源时钟稳定，Flutter acquire 前发生合帧
+
+在不重启 App、保持同一 profile + compositor diagnostics 进程的条件下，将 NVIDIA
+输出切换为 1920×1080 @ 60 Hz，并再次采集静止 Flutter UI + 1080p60 Stage：
+
+| 项目 | 实测值 |
+| --- | --- |
+| ETL | `static-ui-stage-1080p60-display-60hz.etl`，675,282,944 字节 |
+| SHA-256 | `849B9431648D939790CADA9E82A669469EA20D9B807ECDC103D4113878A39CF6` |
+| App | `kirakara_app.exe`，PID 58692，profile + 显式 compositor diagnostics |
+| Stage generation / frame | generation 9，frame 1253～2516 |
+| 显示模式 | NVIDIA GeForce RTX 4060 Ti，1920×1080 @ 60 Hz |
+
+从 Show 发布到 Flutter frame notification 的五个边界仍然严格一对一，均为 1264 次：
+
+| 事件 | 数量 |
+| --- | ---: |
+| StagePublish / PreviewPublication / PreviewCallback | 1264 / 1264 / 1264 |
+| TextureCallback / FrameAvailable | 1264 / 1264 |
+| TextureAcquire / advanced / repeated | 1105 / 1074 / 31 |
+| FlutterFramePresented / 带新 acquire / 不带新 acquire | 1108 / 1073 / 35 |
+| 主窗口 DXGKRNL Present | 1109 |
+
+因此第一处显著少帧不在 Show、preview copy、callback 或 frame notification，而在
+`FrameAvailable -> TextureAcquire(Advanced=true)`。分析器以同步发生在 raster
+路径上的 `TextureAcquire` 配对 kernel Present，不使用异步 callback 的当前 frame ID
+决定归属：全窗口 1109 次主窗 Present 中，1071 次带新 acquire、31 次带重复
+acquire、7 次没有调用 external texture acquire。首尾各裁掉 1 秒后的稳定区间结果为：
+
+| 源帧/窗口结果 | 数量 | 占 1149 个稳定源帧 |
+| --- | ---: | ---: |
+| Show 稳定源帧 | 1149 | 100% |
+| advanced acquire 并进入主窗 Present | 969 | 84.33% |
+| acquire 前被后续 latest frame 取代 | 180 | 15.67% |
+| 源帧最终 displayed | 918 | 79.90% |
+| 已进入 Present、但所有对应窗口 Present 均被 DWM drop | 51 | 4.44% |
+
+180 个未 acquire 的 frame ID 全部是单帧、没有连续两帧以上的缺口。这不像 producer
+停住后成串缺帧，而更像两个同频但不同相位的调度循环在边界附近反复越线。
+PresentMon 对稳定区间记录到 1004 次窗口 Present，其中 945 displayed、59 dropped；
+36 次窗口 Present 没有取得新 Stage frame（包括重复 acquire 和未调用纹理 acquire
+的 UI frame），不能把这些 Present 误算成新的 Show frame。
+
+稳定区间的关键时序为：
+
+| 区间 | P50 | P95 | P99 | Max | Mean |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| StagePublish 间隔 | 16.6680 | 18.1817 | 19.1307 | 20.1034 | 16.6668 |
+| TextureCallback → advanced acquire | 8.0212 | 16.5359 | 17.1637 | 17.9929 | 8.4314 |
+| acquire → DXGKRNL Present | 1.0022 | 1.5108 | 2.0557 | 3.3402 | 1.0688 |
+| StagePublish → displayed | 39.5927 | 40.4936 | 40.7811 | 41.0157 | 35.2316 |
+
+Show 的平均周期仍为 16.6668 ms，稳定区间最大 publish gap 仅 20.1034 ms，没有
+大于 25 ms 的 producer stall。相反，callback 到 acquire 的 P95 已接近一个完整
+60 Hz 周期；只要 acquire 落到下一次 producer publication 之后，latest-frame 语义
+就会直接跳过旧帧。
+
+frame 1315/1316 给出了不依赖统计推断的具体例子，以下均为 Trace 相对时间：
+
+1. frame 1314 在 1287.876 ms 进入 `TextureCallback`，1296.078 ms 被 acquire，
+   1296.931 ms 收到 presented callback；
+2. frame 1315 在 1304.297 ms 完成 callback/notification，但没有任何对应 acquire
+   或 present；
+3. frame 1316 在 1321.249 ms 到达，1321.549 ms 被 acquire，1322.489 ms present；
+4. 随后 1324.947 ms 又 acquire 同一个 frame 1316，`Advanced=false`，并在
+   1325.781 ms 产生一次不带新 Stage frame 的 present。
+
+可见 frame 1315 已成功交付通知，并非 Show 没生成；Flutter 真正取纹理时 latest
+descriptor 已变为 1316，所以 1315 是在 consumer 调度边界被“合掉”的。稳定区间
+918 个 displayed 源帧的相邻显示间隔按 60 Hz 分桶为 1/2/3 个刷新周期各
+`688/227/2` 次，即 16.67/33.33/50.00 ms；多出的 231 个刷新周期恰好等于
+180 个未 acquire 源帧加 51 个 DWM-dropped 源帧。
+
+这份对照实质支持“帧被调度相位吃掉”的怀疑，但不支持“Show producer 时钟本身
+不稳”。目前可以把问题定位到 notification 之后、Flutter acquire/DWM displayed
+之前；还不能仅凭一份样本断言根因只在 Flutter Animator、DWM vsync 或某一条 GPU
+队列。180 Hz 对照的 1097 个稳定源帧则全部 acquire、全部 displayed，说明显示刷新
+模式会显著改变该现象，但仍需重复 60 Hz 样本和 Iris Xe 实机来排除偶然条件。
 
 此前另有一份 21.1197568 秒管理员 WPR 冒烟 ETL（356,515,840 字节，SHA-256
 `3DDECD9DC6C99DA191AF806D5FC3495A4016017F4DE5C667FB0A2A0B3B84BE5D`）。其捕获
@@ -195,11 +280,13 @@ ETW/WPR 采集与分析见 [phase0_trace_method.md](phase0_trace_method.md)。
 
 ## 尚需实体机验证
 
-- 1130G7 Iris Xe、真实 60 Hz 输出与热稳定状态；当前 180 Hz / RTX 4060 Ti 样本
-  不能代替这项视觉与 cadence 验证。
+- 1130G7 Iris Xe 与热稳定状态；RTX 4060 Ti 已有同一输出 180/60 Hz 对照，但不能
+  代替目标核显上的视觉、cadence、功耗与热限制验证。
+- 重复至少一次固定 60 Hz 静止 UI 样本，并增加 59.94 Hz（若输出支持），确认
+  15.67% acquire 前合帧和 5.26% acquire 后 DWM drop 是否可复现，而非单次扰动。
 - 打开/关闭面板、全屏预览的独立 ETL；不能从静止 UI 样本外推遮盖与动画行为。
 - 物理双屏及 Cast 同时启用时的完整 WPR/PresentMon 样本。
 - 100%～200% 混合 DPI、跨显示器、最小化/恢复和显示器热插拔。
 - 剪贴板人工交互覆盖在独立轨道中维护，不与合成器改动混合。
 
-在这些样本完成前，不把本机的 180 Hz/虚拟显示结果外推为目标实体机结论。
+在这些样本完成前，不把本机 RTX 4060 Ti 的 180/60 Hz 结果外推为目标实体机结论。

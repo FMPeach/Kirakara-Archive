@@ -106,10 +106,14 @@ provider。若机器已有其他 WPR session，先保留现场并另行安排采
 2. Generic Events 按 Process=`kirakara_app.exe` 和上述两个 provider GUID 过滤。
 3. 按 `(generation, frame_id)` 关联七个 Kirakara 事件。
 4. 先按 PID 找 DXGKRNL `Present/win:Info`，再以非零 HWND、context 和事件顺序
-   锁定 Flutter 主窗口 Present。不要机械地取 `TextureAcquire` 后第一个事件：stock
-   `FlutterFramePresented` callback 会异步投递到 platform thread，kernel Present 与
-   callback 的记录顺序可在亚毫秒范围内前后交错；同一进程还存在 `hWindow=0` 的
-   Show/ANGLE 图形事件。
+   锁定 Flutter 主窗口 Present。以 QPC 和单调事件顺序，把每次
+   `TextureAcquire` 配给 5 ms 内最近的后续主窗 Present；`Advanced=true` 表示该
+   Present 取得新源帧，`false` 表示重复取 latest descriptor。没有纹理 acquire 的
+   主窗 Present 单独保留，不能猜成新源帧。不要把每次 Present 直接分配给“当时
+   最新的 StagePublish”：stock `FlutterFramePresented` callback 会异步投递到
+   platform thread，执行时读取的 current frame ID 可能已被后续 acquire 更新，因而
+   callback 只用于计数和延迟诊断，不作为 source/present 归属权威。同一进程还存在
+   `hWindow=0` 的 Show/ANGLE 图形事件。
 5. 分别计算：
 
    - `StagePublish -> PreviewPublication`；
@@ -118,12 +122,15 @@ provider。若机器已有其他 WPR session，先保留现场并另行安排采
    - `TextureAcquire -> FlutterFramePresented`（带 platform-thread 投递延迟）；
    - `TextureAcquire -> DXGI Present`；
    - `Present -> DWM displayed`；
-   - callback 数、advanced acquire 数、Flutter present 数与重复 acquire 数。
+   - callback 数、advanced acquire 数、Flutter present 数与重复 acquire 数；
+   - 源帧 disposition：未 acquire、已 present 后 DWM drop、最终 displayed；
+   - 窗口 present disposition：无新 Stage acquire、DWM drop、displayed。
 
-两条独立 60 Hz 时钟可能让一个 Flutter present 合并多个 frame notification。
-因此不能只比总帧数；必须看 frame ID、相邻间隔以及 P50/P95/P99/max。stock
-next-frame callback 可以证明成功 SwapBuffers 后的 present 次数；精确 swapchain 时间和
-DWM displayed 仍必须由 Present/DWM 事件证明，不能用“画面看起来流畅”替代。
+两条独立 60 Hz 时钟可能让一次 Flutter acquire 合并多个 frame notification，也可能
+在没有新 Stage frame 时重复 present 上一帧。因此不能只比总帧数；必须分别看源
+frame ID、窗口 Present ID、相邻间隔以及 P50/P95/P99/max。stock next-frame callback
+可以证明成功 SwapBuffers 后的 present 次数；精确 swapchain 时间和 DWM displayed
+仍必须由 Present/DWM 事件证明，不能用“画面看起来流畅”替代。
 
 ## 自动离线分析
 
@@ -150,10 +157,21 @@ PID 使用采集脚本开始时打印的值；`RefreshRateHz` 只为本次报告
 
 1. 用 Show 的 QPC/frame ID 解析三段 producer/callback 边界；
 2. 用 App TraceLogging 解析 texture callback、acquire 与 stock presented callback；
-3. 从 DXGKRNL 找主窗口非零 HWND Present，并与 Stage frame 逐帧关联；
+3. 从 DXGKRNL 找主窗口非零 HWND Present，以 raster `TextureAcquire` 向后做有界
+   单调配对，再区分取得新 Stage frame、重复 acquire 和未调用纹理 acquire 的
+   Present；异步 stock presented callback 另行配对，只做诊断；
 4. 让 PresentMon 以 raw QPC 离线重放 ETL，再关联 displayed/dropped；
-5. 分别输出全窗口和裁掉首尾各 1 秒后的 P50/P95/P99/max，以及可选的刷新周期
-   分布。
+5. 分别输出全窗口和裁掉首尾各 1 秒后的 P50/P95/P99/max；源帧和窗口 Present
+   各自拥有 displayed cadence 与刷新周期分布，避免重复 Present 掩盖被合并的源帧。
+
+报告 schema version 2 将源帧和窗口 Present 的结果分开：
+`sourceFrameDisposition.steadyNotAcquiredFrameIds` 给出稳定区间在 acquire 前被 latest
+frame 取代的源帧；`counts.steadyPresented/steadyDropped` 按唯一源帧统计；
+`counts.steadyWindowPresentDisplayed/steadyWindowPresentDropped` 按实际窗口 Present
+统计。`displayCadence.sourceFrameRefreshPeriodHistogram` 与
+`windowPresentRefreshPeriodHistogram` 也必须分别解读，不能相加或互相替代。
+`textureAcquirePairing` 会保留配对时延、未匹配 acquire 及没有纹理 acquire 的主窗
+Present，WPR 启动造成的长延迟不会被异步 callback 悄悄重标成精确 source 归属。
 
 脚本拒绝覆盖已有报告。报告默认应放在被忽略的 `build/diagnostics`；ETL、报告、
 PresentMon CSV 和工具二进制都不得提交普通 Git。PresentMon 会在 ETL 开头建立内部
