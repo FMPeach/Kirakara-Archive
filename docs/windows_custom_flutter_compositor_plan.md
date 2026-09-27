@@ -18,13 +18,17 @@
   周期均值 16.6668 ms、最大 20.1034 ms。该样本支持“两个 60 Hz 调度相位使帧被
   合并”的判断，不支持 Show producer 本身长停顿。具体 frame 1315/1316 事件链及
   源帧/窗口 Present 的独立统计见 `phase0_baseline.md`。
+- 第二份同场景 60 Hz 样本中，Show 周期均值仍为 16.6666 ms、最大 20.5714 ms；
+  1100 个稳定源帧改为 46 个 acquire 前合帧、243 个 DWM drop、811 displayed。
+  两次各自缺失的显示周期都精确等于这两类具体 frame ID 之和，但损失发生位置明显
+  转移，说明不能把单次掉帧百分比当成稳定性能指标；后续门槛是 Stage 更新不再驱动
+  Flutter raster/present。
 - 180 Hz 稳定区间仍为 1097 个源帧全部 acquire、全部 displayed；其 displayed
-  interval 分布在约 5.56/11.11/16.67/22.22/27.78 ms。两份样本证明刷新模式会改变
-  当前路径的 cadence，但不能外推为 Iris Xe 的观感或热稳定结论。打开/关闭面板、
-  全屏预览、物理双屏、Cast 与 60 Hz 核显样本仍属 Phase 0 实机矩阵，步骤见
-  `phase0_trace_method.md`。
-- Phase 0 的核心端到端基线已闭合，但场景/硬件矩阵仍在进行；Phase 1～Phase 7
-  尚未开始，尚未引入任何 Engine 行为改动。
+  interval 分布在约 5.56/11.11/16.67/22.22/27.78 ms。三份样本证明刷新模式会改变
+  当前路径的 cadence，但不能外推为 Iris Xe 的观感或热稳定结论。
+- Phase 0 的静止端到端基线已经冻结，打开/关闭面板、全屏预览、物理双屏、Cast、
+  59.94 Hz 与 Iris Xe 留在兼容矩阵，不再阻塞 Phase 1。尚未引入任何 Engine 行为
+  改动；下一步是构建完全未修改的本地 stock Engine。
 - 编写本计划时的 App 基线：Flutter `3.44.4`、Framework revision
   `ad70ec4617`、Engine revision `a10d8ac38d`。
 - 正式开始定制引擎后，实际使用的精确版本必须写入仓库内的锁定文件。

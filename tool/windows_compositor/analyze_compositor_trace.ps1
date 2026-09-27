@@ -972,6 +972,11 @@ try {
       Where-Object { $_.Dropped -eq $true } |
       ForEach-Object { [long]$_.FrameId }
   )
+  $steadySourceFrameDroppedIds = @(
+    $steadyChains |
+      Where-Object { $_.Dropped -eq $true } |
+      ForEach-Object { [long]$_.FrameId }
+  )
 
   $report = [ordered]@{
     schemaVersion = 2
@@ -1130,6 +1135,8 @@ try {
       withoutMainWindowPresentFrameIds = $sourceFramesWithoutMainPresent
       steadyWithoutMainWindowPresentFrameIds =
         $steadySourceFramesWithoutMainPresent
+      dwmDroppedFrameIds = $sourceFrameDroppedIds
+      steadyDwmDroppedFrameIds = $steadySourceFrameDroppedIds
     }
     flutterCallbackPairing = [ordered]@{
       matchDeltaMilliseconds = Get-PropertyStatistics `

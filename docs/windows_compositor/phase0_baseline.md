@@ -251,7 +251,50 @@ descriptor 已变为 1316，所以 1315 是在 consumer 调度边界被“合掉
 不稳”。目前可以把问题定位到 notification 之后、Flutter acquire/DWM displayed
 之前；还不能仅凭一份样本断言根因只在 Flutter Animator、DWM vsync 或某一条 GPU
 队列。180 Hz 对照的 1097 个稳定源帧则全部 acquire、全部 displayed，说明显示刷新
-模式会显著改变该现象，但仍需重复 60 Hz 样本和 Iris Xe 实机来排除偶然条件。
+模式会显著改变该现象；下述 60 Hz 复测用于判断稳定不变量，Iris Xe 则留待兼容矩阵。
+
+### 60 Hz 复测：损失边界随相位转移
+
+同一 App PID、同一 NVIDIA 1920×1080 @ 60 Hz 模式下完成第二份静止场景采集：
+
+| 项目 | 实测值 |
+| --- | --- |
+| ETL | `static-ui-stage-1080p60-display-60hz-repeat.etl`，732,954,624 字节 |
+| SHA-256 | `E690ED3E9A639D90EE13B9CA10DF5C640D4021DCB7ACA8BCFA4022B38F571037` |
+| Stage generation / frame | generation 13，frame 3620～4833 |
+| 完整上游边界 | StagePublish / publication / preview callback / texture callback / notification 均为 1214 |
+| 主窗口 DXGKRNL Present | 1177 |
+
+裁掉首尾各 1 秒后，两份 60 Hz 样本的唯一源帧 disposition 为：
+
+| 指标 | 首份 60 Hz | 60 Hz 复测 |
+| --- | ---: | ---: |
+| 稳定源帧 | 1149 | 1100 |
+| acquire 前被 latest frame 取代 | 180（15.67%） | 46（4.18%） |
+| acquire 后最终被 DWM drop | 51（4.44%） | 243（22.09%） |
+| displayed 源帧 | 918（79.90%） | 811（73.73%） |
+| displayed 源帧间隔均值 | 20.8644 ms | 22.6125 ms |
+
+复测的 Show publish 间隔均值仍为 16.6666 ms，P50 16.6633 ms，P95
+18.1845 ms，最大 20.5714 ms；1214 个源帧仍逐个到达 texture callback 与
+notification。producer 没有出现能解释显示缺口的长停顿。
+
+复测稳定区间的 810 个 displayed 源帧间隔只落在 1/2 个 60 Hz 周期：
+`521/289` 次。289 个额外缺失周期再次精确等于 46 个 acquire 前合帧加 243 个
+DWM-dropped 源帧。窗口维度为 815 displayed、251 dropped；同一源帧可能被重复
+Present，因此不能与唯一源帧计数混用。
+
+两份样本没有复现相同的百分比：首份主要在 Flutter acquire 前合帧，复测主要在
+DWM displayed 前丢弃。这正是需要记录完整链而不能只看 FPS 的原因。能够复现的是：
+
+1. Show producer 以稳定 60 Hz 完整交付每个 notification；
+2. 缺失全部发生在 `FrameAvailable -> acquire -> Present -> displayed` 下游；
+3. 每个可见缺失刷新周期都能由未 acquire 或 DWM drop 的具体 frame ID 解释；
+4. 180 Hz 对照没有这两类稳定区间损失。
+
+因此 Phase 0 不把某一个掉帧百分比写成性能门槛，而把“下层 60 Hz producer 不应再
+驱动 Flutter raster/present”作为后续架构门槛。静止 60 Hz 基线至此冻结，不再用
+第三次相同采集拖延 Phase 1；59.94 Hz、Iris Xe、交互场景和多输出留在后续兼容矩阵。
 
 此前另有一份 21.1197568 秒管理员 WPR 冒烟 ETL（356,515,840 字节，SHA-256
 `3DDECD9DC6C99DA191AF806D5FC3495A4016017F4DE5C667FB0A2A0B3B84BE5D`）。其捕获
@@ -282,8 +325,8 @@ ETW/WPR 采集与分析见 [phase0_trace_method.md](phase0_trace_method.md)。
 
 - 1130G7 Iris Xe 与热稳定状态；RTX 4060 Ti 已有同一输出 180/60 Hz 对照，但不能
   代替目标核显上的视觉、cadence、功耗与热限制验证。
-- 重复至少一次固定 60 Hz 静止 UI 样本，并增加 59.94 Hz（若输出支持），确认
-  15.67% acquire 前合帧和 5.26% acquire 后 DWM drop 是否可复现，而非单次扰动。
+- 59.94 Hz（若输出支持）可作为后续 cadence 矩阵项；两份固定 60 Hz 静止样本已经
+  证明损失边界会随相位转移，因此不再要求复现某一个固定百分比。
 - 打开/关闭面板、全屏预览的独立 ETL；不能从静止 UI 样本外推遮盖与动画行为。
 - 物理双屏及 Cast 同时启用时的完整 WPR/PresentMon 样本。
 - 100%～200% 混合 DPI、跨显示器、最小化/恢复和显示器热插拔。
