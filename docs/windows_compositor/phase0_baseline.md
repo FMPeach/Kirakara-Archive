@@ -31,6 +31,7 @@
 
 ## 本机图形基线
 
+- Intel Core i5-12600K。
 - NVIDIA GeForce RTX 4060 Ti，驱动 `32.0.15.9186`，当前 1920×1080 @ 180 Hz。
 - Intel UHD Graphics 770，驱动 `32.0.101.7088`。
 - 另有 GameViewer、Oray 和 Virtual Display 虚拟显示适配器；当前采集环境不是
@@ -105,13 +106,73 @@ texture callback 与 Flutter present 增量均为 0。这证明当前 external t
 尾部 callback 和 2 个尾部 present。该门禁只在基线脚本临时设置诊断环境变量时启用，
 普通 App 路径不会持续注册 next-frame callback。
 
-2026-09-27 的管理员 WPR 冒烟捕获已成功生成 21.1197568 秒 ETL，记录 0 lost
-buffer、0 lost event；文件大小为 356,515,840 字节，SHA-256 为
-`3DDECD9DC6C99DA191AF806D5FC3495A4016017F4DE5C667FB0A2A0B3B84BE5D`。但进程
-rundown 证明捕获窗口内没有 `kirakara_app.exe`，两个 Kirakara provider 因而都没有
-事件；该文件只验证 WPR 权限和 profile，不计入 compositor 基线，也不提交 Git。
-采集脚本现会在 WPR 启动前检查目标 App，并按 PowerShell 当前目录解析相对输出路径，
-避免再次生成同类无效样本。
+### 有效 ETW / PresentMon 样本
+
+管理员会话已在静止 Flutter UI、1080p60 Stage 持续更新的场景中完成 20 秒采集：
+
+| 项目 | 实测值 |
+| --- | --- |
+| ETL | `static-ui-1080p60.etl`，784,334,848 字节 |
+| SHA-256 | `A4618395ACF548E79C998C0F120DD5E4798E269AF77408B08B226FE796F2F6BB` |
+| Trace 时间 | 20.7793385 秒，0 lost buffer，0 lost event |
+| App | `kirakara_app.exe`，PID 58692，profile + 显式 compositor diagnostics |
+| Stage generation / frame | generation 4，frame 6788～8001 |
+| 分析工具 | WPT TraceProcessing + PresentMon 2.6.0 x64 |
+
+离线使用的官方 PresentMon 单文件程序不进入仓库；本次文件为 980,320 字节，
+SHA-256 `B2A706BC6AD475749E3B7E3409263AA1E6906D45BDCF993F6DBC0F660188F1AF`，
+Authenticode 状态为 Valid，签名者为 Intel Corporation。分析报告位于被忽略的
+`build/diagnostics/static-ui-1080p60-a4618395-analysis.json`，可由源码分析脚本重建。
+
+1214 个 Stage frame 的自定义事件链全部完整、顺序正确：
+
+| 事件 | 数量 |
+| --- | ---: |
+| StagePublish / PreviewPublication / PreviewCallback | 1214 / 1214 / 1214 |
+| TextureCallback / FrameAvailable | 1214 / 1214 |
+| TextureAcquire / advanced / repeated | 1215 / 1215 / 0 |
+| FlutterFramePresented callback | 1215 |
+| 主窗口 DXGKRNL Present | 1214 |
+
+多出的 acquire 与 callback 属于 Trace 开始前已在途的 frame 6787。其余 1214 个
+StagePublish 均一对一关联到主窗口 `HWND 0x15112e` 的 DXGKRNL Present；这些
+Present 全部来自 context `0x40000140`、`FlipInterval=1`、`ReturnStatus=0`，没有重复
+使用 latest Stage frame。由此可以确认：stock external texture 每发布一帧，当前路径
+都会驱动一次真实的 Flutter 主窗口 Present，并非只有诊断 callback 在计数。
+
+PresentMon 在离线状态机建立前省略了最初四个主窗 Present；其后 1210 个
+`Composed: Copy with GPU GDI` 均与 DXGKRNL 主窗 Present 匹配，匹配误差 P50
+0.0874 ms、P99 0.4349 ms、最大 0.9127 ms。其中 1209 个 displayed，唯一 dropped
+为 WPR 启动扰动中的 frame 6793。按首尾 StagePublish 各裁掉 1 秒后，稳定区间为
+1097 帧 displayed、0 dropped。
+
+稳定区间的关键时延如下；单位均为 ms：
+
+| 区间 | P50 | P95 | P99 | Max |
+| --- | ---: | ---: | ---: | ---: |
+| StagePublish 间隔 | 16.6609 | 18.3962 | 19.4494 | 20.8400 |
+| StagePublish → DXGKRNL Present | 5.5679 | 7.6781 | 8.5349 | 9.9925 |
+| TextureAcquire → DXGKRNL Present | 1.0772 | 1.7124 | 2.3355 | 2.8377 |
+| DXGKRNL Present → displayed | 8.0432 | 10.9148 | 11.0862 | 16.5458 |
+| StagePublish → displayed | 11.8355 | 17.2400 | 17.5197 | 22.6860 |
+
+全窗口最大 109.1271 ms 的 Stage gap 与 100.4070 ms 的 acquire→callback 延迟都发生
+在 WPR 启动区；裁掉首尾后不再出现。`FlutterFramePresented` 是 SwapBuffers 成功后
+投递到 platform thread 的 callback，和 kernel Present 可前后相差约 1 ms，分析器
+因此用它做计数/顺序证据，而用 DXGKRNL 与 PresentMon 做准确 present/displayed
+边界。
+
+这台机器的 180 Hz displayed 间隔在稳定区间并非全部为 16.67 ms：1096 个间隔按
+180 Hz refresh period 分桶为 1/2/3/4/5 个周期各 `4/214/657/220/1` 次，即约
+5.56/11.11/16.67/22.22/27.78 ms，均值 16.6662 ms。高刷新率把误差量化到更短的
+刷新周期，不能据此判断目标 60 Hz 输出上的视觉掉帧或顿挫；这份样本只作为因果、
+计数与时延基线。
+
+此前另有一份 21.1197568 秒管理员 WPR 冒烟 ETL（356,515,840 字节，SHA-256
+`3DDECD9DC6C99DA191AF806D5FC3495A4016017F4DE5C667FB0A2A0B3B84BE5D`）。其捕获
+窗口没有 `kirakara_app.exe`，只验证权限和 profile，不计入 compositor 基线，也不
+提交 Git。采集脚本现会预检 App 进程，并绕开 WPR 10.0.22621 对 Junction 结果路径
+返回 `0xc5600600` 的问题。
 
 ## 可重复命令
 
@@ -134,11 +195,9 @@ ETW/WPR 采集与分析见 [phase0_trace_method.md](phase0_trace_method.md)。
 
 ## 尚需实体机验证
 
-- 在已启用诊断计数并加载固定 1080p60 preview 的 App 上重新执行管理员
-  GPU + DesktopComposition WPR。管理员采集链路已通过，但尚无同时包含
-  `kirakara_app.exe` 和两个 Kirakara provider 的有效 ETL，因此仍没有
-  `TextureAcquire -> Present -> displayed` 实测结论。
-- 1130G7 Iris Xe、真实 60 Hz 输出与热稳定状态。
+- 1130G7 Iris Xe、真实 60 Hz 输出与热稳定状态；当前 180 Hz / RTX 4060 Ti 样本
+  不能代替这项视觉与 cadence 验证。
+- 打开/关闭面板、全屏预览的独立 ETL；不能从静止 UI 样本外推遮盖与动画行为。
 - 物理双屏及 Cast 同时启用时的完整 WPR/PresentMon 样本。
 - 100%～200% 混合 DPI、跨显示器、最小化/恢复和显示器热插拔。
 - 剪贴板人工交互覆盖在独立轨道中维护，不与合成器改动混合。

@@ -6,15 +6,18 @@
   CTest、真实 external texture integration smoke 与 20 秒 Show texture-only soak
   已冻结，详见 `docs/windows_compositor/phase0_baseline.md`。标准 Clipboard Unicode
   smoke 作为独立轨道冻结在 `docs/windows_clipboard/phase0_baseline.md`。
-- Show 与 App 的同 QPC、带 generation/frame ID 的 ETW provider 以及有时长上限的
-  WPR 脚本已实现。当前 Codex 进程没有系统性能分析权限，GPU/DXGI/DWM ETL 在启动
-  时被 Windows 以 `0xc5585011` 拒绝，因此 Phase 0 仍为“进行中”，不能宣告完成；
-  需在提升权限的实体机会话中按 `phase0_trace_method.md` 采完端到端样本。
-- stock embedder 的 present callback 计数已补齐：真实 Stage 活跃 1 秒内 callback、
-  advanced acquire、带新 acquire 的 Flutter present 均为 60（总 present 为
-  60/61），停用 source 后的 750 ms 静止窗口均为 0；该结果证明现有 external
-  texture 会驱动整窗 present，但不替代 DWM displayed 时间戳。
-- Phase 1～Phase 7 尚未开始；在 Phase 0 退出条件满足前不进入 Engine 行为修改。
+- Show 与 App 的同 QPC、带 generation/frame ID 的 ETW provider、有时长上限的
+  WPR 脚本和源码离线分析器已实现。管理员有效 ETL 已闭合 1214 条
+  `StagePublish -> texture callback -> acquire -> 主窗口 DXGKRNL Present` 链；
+  PresentMon 在 warm-up 后解析 1210 帧，其中稳定区间 1097 displayed、0 dropped。
+  这证明 stock external texture 的每个 Stage frame 都驱动当前 Flutter 主窗口
+  Present，不再以 callback 计数代替 kernel/DWM 证据。
+- 本次机器为 i5-12600K + RTX 4060 Ti、1920×1080 @ 180 Hz。稳定区间的 displayed
+  interval 分布在约 5.56/11.11/16.67/22.22/27.78 ms，不能外推为目标 60 Hz / Iris
+  Xe 的观感或热稳定结论。打开/关闭面板、全屏预览、物理双屏、Cast 与 60 Hz 核显
+  样本仍属 Phase 0 实机矩阵，步骤见 `phase0_trace_method.md`。
+- Phase 0 的核心端到端基线已闭合，但场景/硬件矩阵仍在进行；Phase 1～Phase 7
+  尚未开始，尚未引入任何 Engine 行为改动。
 - 编写本计划时的 App 基线：Flutter `3.44.4`、Framework revision
   `ad70ec4617`、Engine revision `a10d8ac38d`。
 - 正式开始定制引擎后，实际使用的精确版本必须写入仓库内的锁定文件。

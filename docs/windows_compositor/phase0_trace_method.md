@@ -105,8 +105,11 @@ provider。若机器已有其他 WPR session，先保留现场并另行安排采
    与 CPU Usage 表加入同一时间轴。
 2. Generic Events 按 Process=`kirakara_app.exe` 和上述两个 provider GUID 过滤。
 3. 按 `(generation, frame_id)` 关联七个 Kirakara 事件。
-4. 将同一进程在 `TextureAcquire` 后的第一个 DXGI Present 作为候选 Flutter
-   Present，再用 swapchain/HWND 与 DWM displayed 事件排除其他 present。
+4. 先按 PID 找 DXGKRNL `Present/win:Info`，再以非零 HWND、context 和事件顺序
+   锁定 Flutter 主窗口 Present。不要机械地取 `TextureAcquire` 后第一个事件：stock
+   `FlutterFramePresented` callback 会异步投递到 platform thread，kernel Present 与
+   callback 的记录顺序可在亚毫秒范围内前后交错；同一进程还存在 `hWindow=0` 的
+   Show/ANGLE 图形事件。
 5. 分别计算：
 
    - `StagePublish -> PreviewPublication`；
@@ -122,9 +125,50 @@ provider。若机器已有其他 WPR session，先保留现场并另行安排采
 next-frame callback 可以证明成功 SwapBuffers 后的 present 次数；精确 swapchain 时间和
 DWM displayed 仍必须由 Present/DWM 事件证明，不能用“画面看起来流畅”替代。
 
+## 自动离线分析
+
+仓库内的分析器只保存 PowerShell/C# 源码，不保存 PresentMon、ETL、CSV 或其他
+二进制。采集仍可使用 Windows PowerShell；离线分析因为调用 WPT TraceProcessing
+程序集，要求 PowerShell 7 或更高版本。完整 displayed 关联还要求调用者显式提供
+PresentMon 单文件程序路径：
+
+```powershell
+Set-Location 'D:\Kirakara-App-ascii'
+pwsh .\tool\windows_compositor\analyze_compositor_trace.ps1 `
+  -InputPath '.\build\diagnostics\static-ui-1080p60.etl' `
+  -ProcessId 58692 `
+  -PresentMonPath `
+    "$env:LOCALAPPDATA\Temp\kirakara-presentmon-v2.6.0\PresentMon-2.6.0-x64.exe" `
+  -ReportPath `
+    '.\build\diagnostics\static-ui-1080p60-a4618395-analysis.json' `
+  -Scenario 'static-ui-with-1080p60-stage' `
+  -RefreshRateHz 180
+```
+
+PID 使用采集脚本开始时打印的值；`RefreshRateHz` 只为本次报告生成 refresh-period
+分桶，不会被 App 读取或持久化。分析器会：
+
+1. 用 Show 的 QPC/frame ID 解析三段 producer/callback 边界；
+2. 用 App TraceLogging 解析 texture callback、acquire 与 stock presented callback；
+3. 从 DXGKRNL 找主窗口非零 HWND Present，并与 Stage frame 逐帧关联；
+4. 让 PresentMon 以 raw QPC 离线重放 ETL，再关联 displayed/dropped；
+5. 分别输出全窗口和裁掉首尾各 1 秒后的 P50/P95/P99/max，以及可选的刷新周期
+   分布。
+
+脚本拒绝覆盖已有报告。报告默认应放在被忽略的 `build/diagnostics`；ETL、报告、
+PresentMon CSV 和工具二进制都不得提交普通 Git。PresentMon 会在 ETL 开头建立内部
+状态，可能不报告最初几帧；报告会保留 DXGKRNL 与 PresentMon 的未匹配数量和 frame
+ID，不能悄悄把 warm-up 缺口算成 displayed。
+
+本机基线使用 PresentMon 2.6.0 x64，SHA-256 为
+`B2A706BC6AD475749E3B7E3409263AA1E6906D45BDCF993F6DBC0F660188F1AF`，Authenticode
+签名为 Intel Corporation / Valid。换版本重分析时必须在报告中保留新版本、校验值
+和签名状态，不能把不同分析器版本的数值无说明地混为同一基线。
+
 ## PresentMon
 
-本机 Phase 0 没有安装 PresentMon，因此已验证路径是 WPR/WPA。若测试机已有
-PresentMon，先用该版本的 `--help` 确认参数，再按进程名 `kirakara_app.exe` 做同一
-时长的 CSV 捕获；不要在脚本中假定某一版 CLI。PresentMon CSV 与 ETL 应共享场景
-起止时间，且 ETL 仍作为 Kirakara frame ID 关联的权威来源。
+PresentMon 不需要安装为服务；本机使用官方签名的单文件程序离线读取现有 ETL。
+分析器固定传入 `--etl_file`、`--process_id`、`--qpc_time` 与 `--v1_metrics`，raw QPC
+用于和 Kirakara/DXGKRNL 事件共钟关联。ETL 始终是 frame ID、provider 和原始事件的
+权威来源，PresentMon 负责采用其完整 DXGKRNL/Win32k/DWM 状态机判断 displayed 与
+dropped；不能只拿 CSV 的进程总行数冒充主窗口帧数。
