@@ -33,7 +33,25 @@ foreach ($entry in $fixtures.GetEnumerator()) {
   $arguments += "--dart-define=$($entry.Key)=$($entry.Value)"
 }
 
-& $flutter @arguments
-if ($LASTEXITCODE -ne 0) {
-  throw "Windows Stage texture baseline failed with exit code $LASTEXITCODE."
+$diagnosticsVariable = 'KIRAKARA_COMPOSITOR_DIAGNOSTICS'
+$previousDiagnostics = [Environment]::GetEnvironmentVariable(
+  $diagnosticsVariable,
+  [EnvironmentVariableTarget]::Process
+)
+try {
+  [Environment]::SetEnvironmentVariable(
+    $diagnosticsVariable,
+    '1',
+    [EnvironmentVariableTarget]::Process
+  )
+  & $flutter @arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "Windows Stage texture baseline failed with exit code $LASTEXITCODE."
+  }
+} finally {
+  [Environment]::SetEnvironmentVariable(
+    $diagnosticsVariable,
+    $previousDiagnostics,
+    [EnvironmentVariableTarget]::Process
+  )
 }

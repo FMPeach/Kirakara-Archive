@@ -10,6 +10,10 @@
   WPR 脚本已实现。当前 Codex 进程没有系统性能分析权限，GPU/DXGI/DWM ETL 在启动
   时被 Windows 以 `0xc5585011` 拒绝，因此 Phase 0 仍为“进行中”，不能宣告完成；
   需在提升权限的实体机会话中按 `phase0_trace_method.md` 采完端到端样本。
+- stock embedder 的 present callback 计数已补齐：真实 Stage 活跃 1 秒内 callback、
+  advanced acquire、带新 acquire 的 Flutter present 均为 60（总 present 为
+  60/61），停用 source 后的 750 ms 静止窗口均为 0；该结果证明现有 external
+  texture 会驱动整窗 present，但不替代 DWM displayed 时间戳。
 - Phase 1～Phase 7 尚未开始；在 Phase 0 退出条件满足前不进入 Engine 行为修改。
 - 编写本计划时的 App 基线：Flutter `3.44.4`、Framework revision
   `ad70ec4617`、Engine revision `a10d8ac38d`。

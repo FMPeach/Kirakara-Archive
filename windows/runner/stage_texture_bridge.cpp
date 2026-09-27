@@ -173,6 +173,41 @@ struct StageTextureBridge::Impl {
             result->Success(flutter::EncodableValue(EnsureApi()));
             return;
           }
+          if (call.method_name() == "getDiagnosticsCounters") {
+            const auto counters = stage_texture_trace::GetFrameCounters();
+            result->Success(flutter::EncodableValue(flutter::EncodableMap{
+                {flutter::EncodableValue("enabled"),
+                 flutter::EncodableValue(counters.enabled)},
+                {flutter::EncodableValue("textureCallbacks"),
+                 flutter::EncodableValue(
+                     static_cast<std::int64_t>(counters.texture_callbacks))},
+                {flutter::EncodableValue("frameAvailableCalls"),
+                 flutter::EncodableValue(static_cast<std::int64_t>(
+                     counters.frame_available_calls))},
+                {flutter::EncodableValue("textureAcquires"),
+                 flutter::EncodableValue(
+                     static_cast<std::int64_t>(counters.texture_acquires))},
+                {flutter::EncodableValue("advancedTextureAcquires"),
+                 flutter::EncodableValue(static_cast<std::int64_t>(
+                     counters.advanced_texture_acquires))},
+                {flutter::EncodableValue("flutterPresents"),
+                 flutter::EncodableValue(
+                     static_cast<std::int64_t>(counters.flutter_presents))},
+                {flutter::EncodableValue("flutterPresentsWithNewAcquire"),
+                 flutter::EncodableValue(static_cast<std::int64_t>(
+                     counters.flutter_presents_with_new_acquire))},
+                {flutter::EncodableValue("lastGeneration"),
+                 flutter::EncodableValue(
+                     static_cast<std::int64_t>(counters.last_generation))},
+                {flutter::EncodableValue("lastFrameId"),
+                 flutter::EncodableValue(
+                     static_cast<std::int64_t>(counters.last_frame_id))},
+                {flutter::EncodableValue("acquireSequence"),
+                 flutter::EncodableValue(
+                     static_cast<std::int64_t>(counters.acquire_sequence))},
+            }));
+            return;
+          }
           result->NotImplemented();
         });
   }

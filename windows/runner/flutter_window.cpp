@@ -1,12 +1,26 @@
 #include "flutter_window.h"
 
+#include <atomic>
 #include <optional>
 
 #include "flutter/generated_plugin_registrant.h"
 #include "ime_bridge.h"
 #include "media_io_bridge.h"
 #include "stage_texture_bridge.h"
+#include "stage_texture_trace.h"
 #include "window_bridge.h"
+
+namespace {
+
+constexpr UINT kArmFlutterPresentTraceMessage = WM_APP + 0x4B;
+
+}  // namespace
+
+struct FlutterPresentTraceState {
+  std::atomic_bool enabled{true};
+  std::atomic_bool callback_pending{};
+  std::atomic<HWND> window{};
+};
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -37,8 +51,24 @@ bool FlutterWindow::OnCreate() {
       flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
-  flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
+  if (stage_texture_trace::FrameCountersEnabled()) {
+    flutter_present_trace_state_ =
+        std::make_shared<FlutterPresentTraceState>();
+    flutter_present_trace_state_->window.store(
+        GetHandle(), std::memory_order_release);
+  }
+  const auto window = GetHandle();
+  const auto trace_state = flutter_present_trace_state_;
+  flutter_controller_->engine()->SetNextFrameCallback([window, trace_state]() {
+    ::ShowWindow(window, SW_SHOWNORMAL);
+    if (trace_state && trace_state->enabled.load(std::memory_order_acquire)) {
+      stage_texture_trace::FlutterFramePresented();
+      const auto trace_window =
+          trace_state->window.load(std::memory_order_acquire);
+      if (trace_window) {
+        ::PostMessageW(trace_window, kArmFlutterPresentTraceMessage, 0, 0);
+      }
+    }
   });
 
   // Flutter can complete the first frame before the "show window" callback is
@@ -50,6 +80,12 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (flutter_present_trace_state_) {
+    flutter_present_trace_state_->enabled.store(
+        false, std::memory_order_release);
+    flutter_present_trace_state_->window.store(
+        nullptr, std::memory_order_release);
+  }
   ShutdownMediaIoBridge();
   if (stage_texture_bridge_) {
     stage_texture_bridge_->BeginShutdown();
@@ -58,6 +94,7 @@ void FlutterWindow::OnDestroy() {
     flutter_controller_ = nullptr;
   }
   stage_texture_bridge_ = nullptr;
+  flutter_present_trace_state_.reset();
 
   Win32Window::OnDestroy();
 }
@@ -66,6 +103,11 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (message == kArmFlutterPresentTraceMessage) {
+    ArmFlutterPresentTrace();
+    return 0;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
@@ -87,4 +129,31 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
+}
+
+void FlutterWindow::ArmFlutterPresentTrace() {
+  const auto trace_state = flutter_present_trace_state_;
+  if (!trace_state ||
+      !trace_state->enabled.load(std::memory_order_acquire) ||
+      !flutter_controller_ ||
+      trace_state->callback_pending.exchange(
+          true, std::memory_order_acq_rel)) {
+    return;
+  }
+  flutter_controller_->engine()->SetNextFrameCallback([trace_state]() {
+    trace_state->callback_pending.store(false, std::memory_order_release);
+    if (!trace_state->enabled.load(std::memory_order_acquire)) {
+      return;
+    }
+    // The stock Windows embedder invokes this callback only after a successful
+    // SwapBuffers, then posts it back to the platform thread. Re-arm through a
+    // window message so the client wrapper can clear its one-shot callback
+    // before the next one is installed. This waits for frames; it never
+    // schedules a frame, polls, or starts a timer.
+    stage_texture_trace::FlutterFramePresented();
+    const auto window = trace_state->window.load(std::memory_order_acquire);
+    if (window) {
+      ::PostMessageW(window, kArmFlutterPresentTraceMessage, 0, 0);
+    }
+  });
 }

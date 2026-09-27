@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:kirakara_app/services/kirakara_show_ffi.dart';
@@ -11,6 +12,22 @@ const _lyricPath = String.fromEnvironment('KIRAKARA_TEST_LYRIC');
 const _vocalPath = String.fromEnvironment('KIRAKARA_TEST_VOCAL');
 const _accompanimentPath =
     String.fromEnvironment('KIRAKARA_TEST_ACCOMPANIMENT');
+const _stageTextureChannel = MethodChannel('kirakara/stage_texture');
+
+Future<Map<String, Object?>> _readDiagnosticsCounters() async {
+  final result = await _stageTextureChannel.invokeMapMethod<String, Object?>(
+    'getDiagnosticsCounters',
+  );
+  return result ?? <String, Object?>{};
+}
+
+int _counterDelta(
+  Map<String, Object?> before,
+  Map<String, Object?> after,
+  String key,
+) {
+  return (after[key]! as int) - (before[key]! as int);
+}
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -73,6 +90,80 @@ void main() {
 
       expect(show.position, greaterThanOrEqualTo(0.25));
       expect(tester.takeException(), isNull);
+
+      if (Platform.environment['KIRAKARA_COMPOSITOR_DIAGNOSTICS'] == '1') {
+        final activeBefore = await _readDiagnosticsCounters();
+        expect(activeBefore['enabled'], isTrue);
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(seconds: 1)),
+        );
+        final activeAfter = await _readDiagnosticsCounters();
+        final activeCallbacks = _counterDelta(
+          activeBefore,
+          activeAfter,
+          'textureCallbacks',
+        );
+        final activeAcquires = _counterDelta(
+          activeBefore,
+          activeAfter,
+          'advancedTextureAcquires',
+        );
+        final activePresents = _counterDelta(
+          activeBefore,
+          activeAfter,
+          'flutterPresents',
+        );
+        final activePresentsWithAcquire = _counterDelta(
+          activeBefore,
+          activeAfter,
+          'flutterPresentsWithNewAcquire',
+        );
+        expect(activeCallbacks, greaterThanOrEqualTo(45));
+        expect(
+          activeAcquires,
+          inInclusiveRange(activeCallbacks - 2, activeCallbacks),
+        );
+        expect(
+          activePresentsWithAcquire,
+          inInclusiveRange(activeAcquires - 2, activeAcquires),
+        );
+        expect(
+          activePresents,
+          inInclusiveRange(
+            activePresentsWithAcquire,
+            activePresentsWithAcquire + 3,
+          ),
+        );
+
+        await texture.setActive(false);
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 250)),
+        );
+        final inactiveBefore = await _readDiagnosticsCounters();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 750)),
+        );
+        final inactiveAfter = await _readDiagnosticsCounters();
+        final inactiveCallbacks = _counterDelta(
+          inactiveBefore,
+          inactiveAfter,
+          'textureCallbacks',
+        );
+        final inactivePresents = _counterDelta(
+          inactiveBefore,
+          inactiveAfter,
+          'flutterPresents',
+        );
+        debugPrint(
+          '[stage-baseline] active 1s: callbacks=$activeCallbacks, '
+          'advanced_acquires=$activeAcquires, presents=$activePresents, '
+          'presents_with_new_acquire=$activePresentsWithAcquire; '
+          'inactive 750ms: callbacks=$inactiveCallbacks, '
+          'presents=$inactivePresents',
+        );
+        expect(inactiveCallbacks, lessThanOrEqualTo(1));
+        expect(inactivePresents, lessThanOrEqualTo(2));
+      }
     },
     skip: !Platform.isWindows,
   );

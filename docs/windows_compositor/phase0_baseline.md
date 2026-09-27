@@ -83,6 +83,28 @@
 - `flutter analyze` 仍只有相同的 68 条既存 info；全量 `flutter test` 仍只有上述
   两个既存失败。
 
+显式诊断模式还通过 stock embedder 的一次性 next-frame callback 计数成功
+`SwapBuffers` 后的 Flutter frame。真实 Stage 活跃的 1 秒窗口内，本机记录到：
+
+| 事件 | 增量 |
+| --- | ---: |
+| Show texture callback | 60 |
+| advanced Flutter texture acquire | 60 |
+| Flutter frame presented callback | 60 / 61 |
+| present 前出现新 acquire | 60 |
+
+表中的 present 为两次连续诊断运行；第二次多出的 1 帧没有新 Stage acquire。
+两次运行随后都关闭 Stage texture source，跳过 250 ms 排空窗口后再观察 750 ms，
+texture callback 与 Flutter present 增量均为 0。这证明当前 external texture 后端
+确实把 Stage 的 60 Hz 帧泵传递成 Flutter 整窗 present，而不是仅凭画面观感推断。
+由于 stock callback 在 `SwapBuffers` 后还要投递到 platform thread，这组计数不能
+代替 GPU/DXGI/DWM ETL 的精确 present/displayed 时间戳。
+
+自动门禁要求 1 秒内至少 45 个 callback，callback、advanced acquire 和带新 acquire
+的 present 三者差值不超过 2，总 present 最多额外 3 帧；停用后的窗口允许最多 1 个
+尾部 callback 和 2 个尾部 present。该门禁只在基线脚本临时设置诊断环境变量时启用，
+普通 App 路径不会持续注册 next-frame callback。
+
 ## 可重复命令
 
 采集机器、源码、Flutter 与官方 Engine 校验值：

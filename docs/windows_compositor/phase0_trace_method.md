@@ -13,6 +13,7 @@ Kirakara.App.StageTexture
   -> TextureCallback
   -> FrameAvailable
   -> TextureAcquire
+  -> FlutterFramePresented
 Windows GPU / DXGI / DWM
   -> Present start/stop
   -> displayed
@@ -28,6 +29,13 @@ GUID 为 `6862b681-4cdb-45e5-936c-05d82d83ef9a`。Show 事件正文和 App 事�
 `PreviewCallback` 与 `TextureCallback` 分别位于 Show 调用前和 Runner 回调入口；
 `TextureAcquire` 的 `Advanced=true` 表示 Flutter 本次取得了新的 latest frame，
 `false` 表示重复取得上一个 descriptor。
+
+显式设置 `KIRAKARA_COMPOSITOR_DIAGNOSTICS=1` 时，Runner 还会用 stock embedder 的
+一次性 next-frame callback 记录 `FlutterFramePresented`。Flutter 3.44.4 源码中的
+该回调位于成功 `SwapBuffers` 之后，但随后会投递回 platform thread，所以它适合做
+“发生了多少次 Flutter present”的计数和顺序证据，不是精确的 SwapBuffers 或 DWM
+displayed 时间戳。回调只由已发生的 Flutter frame 唤醒；它不请求新帧、不轮询，也
+不启动定时器。基线脚本只在自己的子进程范围内临时设置该环境变量并在结束后恢复。
 
 ## 捕获
 
@@ -59,7 +67,7 @@ provider。若机器已有其他 WPR session，先保留现场并另行安排采
 1. 在 WPA 打开 ETL，将 Generic Events、Present、DWM Frame Details、GPU Usage
    与 CPU Usage 表加入同一时间轴。
 2. Generic Events 按 Process=`kirakara_app.exe` 和上述两个 provider GUID 过滤。
-3. 按 `(generation, frame_id)` 关联六个 Kirakara 事件。
+3. 按 `(generation, frame_id)` 关联七个 Kirakara 事件。
 4. 将同一进程在 `TextureAcquire` 后的第一个 DXGI Present 作为候选 Flutter
    Present，再用 swapchain/HWND 与 DWM displayed 事件排除其他 present。
 5. 分别计算：
@@ -67,14 +75,15 @@ provider。若机器已有其他 WPR session，先保留现场并另行安排采
    - `StagePublish -> PreviewPublication`；
    - `PreviewPublication -> TextureCallback`；
    - `TextureCallback -> TextureAcquire`；
+   - `TextureAcquire -> FlutterFramePresented`（带 platform-thread 投递延迟）；
    - `TextureAcquire -> DXGI Present`；
    - `Present -> DWM displayed`；
    - callback 数、advanced acquire 数、Flutter present 数与重复 acquire 数。
 
 两条独立 60 Hz 时钟可能让一个 Flutter present 合并多个 frame notification。
-因此不能只比总帧数；必须看 frame ID、相邻间隔以及 P50/P95/P99/max。纯 Stage 更新
-导致 Flutter present 的事实也必须从 Present/DWM 事件证明，不能用“画面看起来流畅”
-替代。
+因此不能只比总帧数；必须看 frame ID、相邻间隔以及 P50/P95/P99/max。stock
+next-frame callback 可以证明成功 SwapBuffers 后的 present 次数；精确 swapchain 时间和
+DWM displayed 仍必须由 Present/DWM 事件证明，不能用“画面看起来流畅”替代。
 
 ## PresentMon
 
