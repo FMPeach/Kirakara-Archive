@@ -77,7 +77,12 @@ displayed 时间戳。回调只由已发生的 Flutter frame 唤醒；它不请�
    脚本会在启动 WPR 前确认至少有一个 `kirakara_app.exe` 正在运行，并打印目标
    PID；缺少 App 时直接失败，避免生成只有系统事件、无法关联 Stage frame 的无效
    基线。相对 `OutputPath` 按当前 PowerShell 目录解析，不按 PowerShell 宿主进程最初
-   的工作目录解析。
+   的工作目录解析。若目标文件已经存在，脚本会拒绝覆盖。
+
+   本机 WPR 10.0.22621 在结果路径经过 `D:\Kirakara-App-ascii` Junction 时会在
+   `wpr -stop` 返回 `0xc5600600`。脚本因此让 WPR 先完成到系统临时目录，再把完整的
+   ETL 移到 `OutputPath`；不会改变采集内容。若最终搬运失败，脚本会明确报告并保留
+   临时 ETL，而不是删除唯一的有效样本。
 
    WPR 要求从“以管理员身份运行”的 PowerShell 启动。非提升权限会返回
    `0xc5585011` 或 `0x80070005`；不要把它解释为应用或 provider 失败。
