@@ -26,6 +26,18 @@ tool/test_e2e.dart
 .codex/
 kira-ktv-demo - *.html
 
+# Flutter Engine sources and products must stay outside the App repository.
+engine/.work/
+engine/artifacts/
+engine/reports/
+engine/out/
+engine/**/*.dll
+engine/**/*.exe
+engine/**/*.lib
+engine/**/*.pdb
+engine/**/*.obj
+engine/**/*.zip
+
 # Android
 android/.gradle/
 android/local.properties

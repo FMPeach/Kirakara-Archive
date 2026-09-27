@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 已进入 Phase 0；源码/工具链/官方 Engine 校验值、stock 三种模式构建、Show
+- Phase 0 已完成；源码/工具链/官方 Engine 校验值、stock 三种模式构建、Show
   CTest、真实 external texture integration smoke 与 20 秒 Show texture-only soak
   已冻结，详见 `docs/windows_compositor/phase0_baseline.md`。标准 Clipboard Unicode
   smoke 作为独立轨道冻结在 `docs/windows_clipboard/phase0_baseline.md`。
@@ -27,12 +27,23 @@
   interval 分布在约 5.56/11.11/16.67/22.22/27.78 ms。三份样本证明刷新模式会改变
   当前路径的 cadence，但不能外推为 Iris Xe 的观感或热稳定结论。
 - Phase 0 的静止端到端基线已经冻结，打开/关闭面板、全屏预览、物理双屏、Cast、
-  59.94 Hz 与 Iris Xe 留在兼容矩阵，不再阻塞 Phase 1。尚未引入任何 Engine 行为
-  改动；下一步是构建完全未修改的本地 stock Engine。
-- 编写本计划时的 App 基线：Flutter `3.44.4`、Framework revision
-  `ad70ec4617`、Engine revision `a10d8ac38d`。
-- 正式开始定制引擎后，实际使用的精确版本必须写入仓库内的锁定文件。
-  本文档中的版本号只用于记录计划产生时的环境，不作为构建时的唯一依据。
+  59.94 Hz 与 Iris Xe 留在兼容矩阵，不再阻塞后续阶段。
+- Phase 1 已完成：外部工作区中的未修改 Engine 与 Flutter `3.44.4`、Framework
+  `ad70ec4617166f1c38e5d2bfd388af71fda14f06`、Engine
+  `a10d8ac38de835021c8d2f920dbf50a920ccc030` 精确匹配；空补丁栈、depot_tools、
+  GN 参数、MSVC 14.34/ATL 和 debug/profile/release 产物已写入
+  `engine/engine.lock.json`。官方/本地三模式 DLL 均为 102 个导出且零差异，严格
+  产物校验通过。stock Windows Engine 不是 bit-for-bit 可重建，锁中 SHA-256
+  绑定本次已验证分发候选；重建必须走候选报告、人工重锁和完整门槛。
+- 官方/本地 debug 与 profile 都通过真实 Show external texture A/B 和 bundle 文件
+  校验；60 Hz 的短窗口会在 60/60 与 60/53～55 callback/acquire 之间相位波动，
+  与 Phase 0 结论一致。官方/本地 release 都能启动并保持窗口响应，也都未能在标准
+  close 后 20 秒内优雅退出；受限烟测仅在显式精确 PID 清理时通过，生命周期问题
+  留到后续阶段，不能表述为正常退出已通过。详见
+  `docs/windows_compositor/phase1_stock_engine.md`。
+- 尚未引入任何 Kirakara Engine 行为补丁。下一步是 Phase 2，只用合成 D3D 动画
+  纹理验证单顶层 HWND 的双 Visual DirectComposition、透明 Flutter 上层以及
+  “下层更新不触发静止 Flutter 新帧”，不会先改真实 Show 管线。
 
 ## 为什么要做这件事
 
@@ -345,6 +356,10 @@ App 侧增加一个小型 `ClipboardService`，让显式粘贴行为可测试、
 
 - 本地构建的未修改 Engine 与官方产物行为一致。
 - 官方产物与定制产物之间可以通过有文档记录的一次操作切换。
+
+完成结论（2026-09-28）：两项退出条件均已满足。debug/profile 的真实 Show A/B、
+release 启动/响应对照、三模式 ABI/哈希校验和 stock Engine 单测结果见 Phase 1
+文档；release 优雅退出仍是明确记录的共同缺口，不是 Engine 差异。
 
 ### Phase 2：双 Visual DirectComposition 技术验证
 

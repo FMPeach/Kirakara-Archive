@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "flutter": {
+    "channel": "stable",
+    "version": "3.44.4",
+    "frameworkRevision": "ad70ec4617166f1c38e5d2bfd388af71fda14f06",
+    "engineRevision": "a10d8ac38de835021c8d2f920dbf50a920ccc030",
+    "engineSourceTree": "61678b80d02f518a8a4d15868d398b8480d6613e",
+    "engineContentHash": "700aebeca4c0e610f109a3979ee3e71b69d666bc",
+    "dartVersion": "3.12.2",
+    "devToolsVersion": "2.57.0",
+    "repository": "https://github.com/flutter/flutter.git"
+  },
+  "depotTools": {
+    "repository": "https://chromium.googlesource.com/chromium/tools/depot_tools.git",
+    "revision": "41c9bd890277c2f551499d171d215dfdf5dab97d",
+    "archiveUrl": "https://storage.googleapis.com/chrome-infra/depot_tools.zip",
+    "archiveSha256": "BB75C674B71280CA9A6C1F5AF5D0B89B2F8A0D5406C06B501792F1FF27DD0AC3"
+  },
+  "gclient": {
+    "configuration": "engine/scripts/standard.gclient",
+    "configurationSha256": "263C3B128948546578884E2D347A226F9C1C1DD946A1C751D534EDFE7285F39B",
+    "syncArguments": [
+      "sync",
+      "-D",
+      "--no-history"
+    ]
+  },
+  "patchset": {
+    "revision": "stock",
+    "version": 0,
+    "patches": []
+  },
+  "target": {
+    "os": "windows",
+    "architecture": "x64"
+  },
+  "hostBaseline": {
+    "os": "Microsoft Windows 11 Pro 23H2",
+    "osBuild": "10.0.22631.6199",
+    "architecture": "x64",
+    "visualStudioProduct": "Visual Studio Community 2026",
+    "visualStudioVersion": "18.6.11806.211",
+    "msvcComponentIds": [
+      "Microsoft.VisualStudio.Component.VC.14.34.17.4.x86.x64",
+      "Microsoft.VisualStudio.Component.VC.14.34.17.4.ATL"
+    ],
+    "msvcToolsetVersion": "14.34.31933",
+    "msvcCompilerVersion": "19.34.31948.0",
+    "peLinkerVersion": "14.34",
+    "engineBuildWindowsSdkVersion": "10.0.22621.0",
+    "otherInstalledWindowsSdkVersions": [
+      "10.0.19041.0",
+      "10.0.26100.0"
+    ]
+  },
+  "builds": [
+    {
+      "mode": "debug",
+      "localEngine": "host_debug",
+      "localEngineHost": "host_debug",
+      "etArguments": [
+        "build",
+        "--config",
+        "host_debug",
+        "--no-rbe"
+      ],
+      "gnArguments": [
+        "--runtime-mode",
+        "debug",
+        "--no-stripped",
+        "--no-lto",
+        "--no-rbe",
+        "--no-goma"
+      ],
+      "argsGnSha256": "3A3B2DBF61EB76D4BAC522EE9EB67E4A6B4745ED24E2C40B433C1DFE4FF34986",
+      "artifacts": [
+        { "path": "flutter_windows.dll", "size": 45547520, "sha256": "971CCDC1C737825FB86D73858A168594A880F6C8BEB2D44CDEB3D9A13B5639A9" },
+        { "path": "flutter_windows.dll.lib", "size": 37212, "sha256": "CF0444835A2351BC466A0C267FF329D632FDFF661945F903D59433A514F0566A" },
+        { "path": "flutter_windows.dll.pdb", "size": 314634240, "sha256": "6098EC8ED017F3D6B2A66155FAD639A5E67B06BC4CA84264307B3320ABBBD47B" },
+        { "path": "icudtl.dat", "size": 10822192, "sha256": "1CF67874B5A87A8363A86FB3F81E3CBBED54D389062DAB8FB52308D5CF8C8612" }
+      ]
+    },
+    {
+      "mode": "profile",
+      "localEngine": "host_profile",
+      "localEngineHost": "host_profile",
+      "etArguments": [
+        "build",
+        "--config",
+        "host_profile",
+        "--no-rbe"
+      ],
+      "gnArguments": [
+        "--runtime-mode",
+        "profile",
+        "--no-stripped",
+        "--no-lto",
+        "--no-rbe",
+        "--no-goma"
+      ],
+      "argsGnSha256": "FCB1ACF81EDD3702B084D5FF38D56971183F2585623E8A3E7B187E143649B8DC",
+      "artifacts": [
+        { "path": "flutter_windows.dll", "size": 21864448, "sha256": "821B9B60419B8537E21346AE180CE4A22041FBE4A32EFE842BC833DF9783FEA2" },
+        { "path": "flutter_windows.dll.lib", "size": 37212, "sha256": "CF0444835A2351BC466A0C267FF329D632FDFF661945F903D59433A514F0566A" },
+        { "path": "flutter_windows.dll.pdb", "size": 293965824, "sha256": "2DAC7FB6B9E703F67CF8132653A19C568A42D8C57903E91E4F18235ADDE71C43" },
+        { "path": "icudtl.dat", "size": 10822192, "sha256": "1CF67874B5A87A8363A86FB3F81E3CBBED54D389062DAB8FB52308D5CF8C8612" },
+        { "path": "gen_snapshot.exe", "size": 5146112, "sha256": "E73A2E1713A1AC13B0426F51F8BE40679B3C5FDFD7976DFD287FBFE0A4DEEAF6" }
+      ]
+    },
+    {
+      "mode": "release",
+      "localEngine": "host_release",
+      "localEngineHost": "host_release",
+      "etArguments": [
+        "build",
+        "--config",
+        "host_release",
+        "--no-rbe"
+      ],
+      "gnArguments": [
+        "--runtime-mode",
+        "release",
+        "--no-stripped",
+        "--no-lto",
+        "--no-rbe",
+        "--no-goma",
+        "--xcode-symlinks"
+      ],
+      "argsGnSha256": "4F9FD654F95A80BFC5837A3CCCADE965D0CDF49F112502AF24A270678741CD95",
+      "artifacts": [
+        { "path": "flutter_windows.dll", "size": 21281280, "sha256": "F12FD0BBECC2C0ED99C16EE5A69819C4E9A95DC08304D28E67428D73A95B3D9E" },
+        { "path": "flutter_windows.dll.lib", "size": 37212, "sha256": "CF0444835A2351BC466A0C267FF329D632FDFF661945F903D59433A514F0566A" },
+        { "path": "flutter_windows.dll.pdb", "size": 288133120, "sha256": "DEEACD698E2816C9E45361D95E14C157DEEC71A0D29F23B815A150B53AE83820" },
+        { "path": "icudtl.dat", "size": 10822192, "sha256": "1CF67874B5A87A8363A86FB3F81E3CBBED54D389062DAB8FB52308D5CF8C8612" },
+        { "path": "gen_snapshot.exe", "size": 4446720, "sha256": "4E750F0E23E55B357200805B8DCDADA9F0C12B3F5ACE14DAD6F64B70C18240B4" }
+      ]
+    }
+  ]
+}
