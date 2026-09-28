@@ -28,8 +28,8 @@
   },
   "patchset": {
     "revision": "windows-dcomp-stage-visual",
-    "version": 3,
-    "sourceTree": "ec7815c9af62ddd1b3073446fa2903d86d95d875",
+    "version": 4,
+    "sourceTree": "a2a14855283c7ff5cc58cda583b7b3f87d0ccb75",
     "additionalExports": [
       "FlutterDesktopKirakaraCompositorGetApi"
     ],
@@ -37,13 +37,17 @@
       {
         "path": "engine/patches/0001-windows-dcomp-stage-visual-compositor.patch",
         "sha256": "7D94672126B236F0C6EBB9E0871F8E21CC3A5561167DD33E129991C5F5D141CB"
+      },
+      {
+        "path": "engine/patches/0002-windows-clipboard-contention.patch",
+        "sha256": "08BC97122592B7DD12C8E221316E7CE76FB8BD866C549663E515DBB337C5EED2"
       }
     ],
     "builds": [
       {
         "mode": "debug",
-        "localEngine": "host_debug_kirakara_v3",
-        "localEngineHost": "host_debug_kirakara_v3",
+        "localEngine": "host_debug_kirakara_v4",
+        "localEngineHost": "host_debug_kirakara_v4",
         "gnArguments": [
           "--runtime-mode",
           "debug",
@@ -58,9 +62,9 @@
         ],
         "argsGnSha256": "3A3B2DBF61EB76D4BAC522EE9EB67E4A6B4745ED24E2C40B433C1DFE4FF34986",
         "artifacts": [
-          { "path": "flutter_windows.dll", "size": 45568000, "sha256": "7417A58740832DE425A68E2A7A596666263536D0F205AF9D0AD8F7BCF74836CD" },
+          { "path": "flutter_windows.dll", "size": 45570560, "sha256": "40EF7DF5832A7EBD56FEBEE4BBF293B5397F23F8EFFD409B384E0C2D2F18FEA6" },
           { "path": "flutter_windows.dll.lib", "size": 37536, "sha256": "146E1B45019BB4C974EE1107F615B108895EEBDBCBE13401D1FD289CBEF26AF2" },
-          { "path": "flutter_windows.dll.pdb", "size": 286150656, "sha256": "3C405434AD9EEE014536994F3ED919AC6C6DCA052F32D1C38005EBBE4658A28B" },
+          { "path": "flutter_windows.dll.pdb", "size": 279277568, "sha256": "866529E86D09398F89FC944559BA90970F1109BBFE38E579EA83D53FACEA20C8" },
           { "path": "icudtl.dat", "size": 10822192, "sha256": "1CF67874B5A87A8363A86FB3F81E3CBBED54D389062DAB8FB52308D5CF8C8612" }
         ]
       }

@@ -148,7 +148,7 @@ void main() {
     await tester.tap(find.text('外链点歌').first);
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('登录哔哩哔哩'), findsOneWidget);
+    expect(find.text('登录 Bilibili 账号'), findsOneWidget);
     expect(find.text('刷新二维码'), findsOneWidget);
     expect(
         find.textContaining('https://www.bilibili.com/video'), findsOneWidget);

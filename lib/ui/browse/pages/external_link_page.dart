@@ -15,6 +15,7 @@ extension _ExternalLinkPage on _BrowseScreenState {
         Expanded(
           child: _ExternalLinkPanel(
             accountService: widget.bilibiliAccountService,
+            clipboardService: widget.clipboardService,
             onAddSong: widget.onAddSong,
             onBumpSong: widget.onBumpSong,
           ),

@@ -5,6 +5,7 @@ param(
 
   [ValidateSet(
     'kirakara',
+    'clipboard',
     'critical',
     'compositor',
     'adapter-isolated',
@@ -12,6 +13,7 @@ param(
   )]
   [string[]]$Suite = @(
     'kirakara',
+    'clipboard',
     'critical',
     'compositor',
     'adapter-isolated'
@@ -68,6 +70,13 @@ $definitions = [ordered]@{
       expectedTestCount = 6
     }
   )
+  clipboard = @(
+    [ordered]@{
+      name = 'windows-clipboard'
+      filter = 'PlatformHandlerTest.*Clipboard*'
+      expectedTestCount = 19
+    }
+  )
   critical = @(
     [ordered]@{
       name = 'critical-scheduling'
@@ -98,7 +107,7 @@ $definitions = [ordered]@{
     [ordered]@{
       name = 'full'
       filter = '*'
-      expectedTestCount = 360
+      expectedTestCount = 365
     }
   )
 }

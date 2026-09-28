@@ -100,6 +100,15 @@
   伪称局部 damage 已实现；本阶段的可证收益是 Stage-only 更新不产生 Flutter frame。
   Iris Xe 长时间热测试、真实遮挡、物理双屏/Cast 和不同 GPU 保留 Phase 7。详见
   `docs/windows_compositor/phase5_vfr_damage_thermal.md`。
+- Phase 6 的当前环境实现与自动门禁已完成：独立 Engine patch 仅在
+  `OpenClipboard` 返回 `ERROR_ACCESS_DENIED` 时用临时 16 ms 消息窗口 timer 异步
+  重试，最多 16 次或 250 ms；无 platform-thread Sleep、常驻 timer、监听、启动读取、
+  历史、持久化、上传或内容日志。Unicode/CRLF、Ctrl+C/X/V、Shift+Insert、右键
+  Paste、120 ms 外部占用和析构取消均通过；官方 Engine 的标准行为也通过同一回归。
+  Bilibili 外链页增加显式粘贴并只清理该字段，Widget 测试确认光标与焦点可继续输入。
+  Engine 19 项剪贴板聚焦测试和 365 项全量门禁通过既定判定；v4 synthetic、真实
+  Stage 及官方/定制 external texture A/B 均未退化。真实触屏、RDP、第三方富文本和
+  Windows 10 留在 Phase 7。详见 `docs/windows_clipboard/phase6_reliability.md`。
 
 ## 为什么要做这件事
 
@@ -550,6 +559,12 @@ Phase 7 实机门禁保留，不阻塞 Phase 5 原子提交。
 - 短暂剪贴板锁定不会把一次正常粘贴变成永久 UI 故障。
 - 不存在剪贴板轮询、持久化、内容日志和启动时读取。
 - 官方 stock engine 构建仍保留可用的标准剪贴板行为。
+
+完成结论（2026-09-28）：当前 Windows 11 实机的三项退出条件均已满足。定制
+Engine 对 120 ms 外部占用的标准 Clipboard 调用成功恢复，官方 Engine 的标准
+Unicode/快捷键/菜单行为保持可用；实现和测试未引入监听、持久化或内容日志。
+触摸屏、RDP、第三方富文本来源和 Windows 10 作为明确的 Phase 7 实机门禁保留，
+不从当前自动测试推断为已通过。
 
 ### Phase 7：兼容性门禁与发布打包
 

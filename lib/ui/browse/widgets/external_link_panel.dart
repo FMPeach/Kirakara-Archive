@@ -3,11 +3,13 @@ part of '../../screens/browse_screen.dart';
 class _ExternalLinkPanel extends StatefulWidget {
   const _ExternalLinkPanel({
     required this.accountService,
+    required this.clipboardService,
     required this.onAddSong,
     required this.onBumpSong,
   });
 
   final BilibiliAccountService accountService;
+  final ClipboardService clipboardService;
   final ValueChanged<Song> onAddSong;
   final ValueChanged<Song> onBumpSong;
 
@@ -19,6 +21,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
   final _urlController = TextEditingController();
   final _focusNode = FocusNode();
   bool _loading = false;
+  bool _pasting = false;
   BilibiliResolveResult? _result;
   String? _error;
   bool _pageLoading = false;
@@ -84,6 +87,44 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
       _error = null;
       _pageLoading = false;
     });
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    if (_loading || _pasting) return;
+    setState(() => _pasting = true);
+    try {
+      final clipboardText = await widget.clipboardService.readText();
+      if (!mounted) return;
+      if (clipboardText == null || clipboardText.trim().isEmpty) {
+        setState(() => _error = '剪贴板中没有可粘贴的文本');
+        return;
+      }
+      if (clipboardText.length > maxBilibiliClipboardInputCodeUnits) {
+        setState(() => _error = '剪贴板文本过长，请只复制 Bilibili 链接或编号');
+        return;
+      }
+      final input = extractBilibiliClipboardInput(clipboardText);
+      if (input == null) {
+        setState(() => _error = '剪贴板中没有可识别的 Bilibili 链接或 BV/AV 号');
+        return;
+      }
+      _urlController.value = TextEditingValue(
+        text: input,
+        selection: TextSelection.collapsed(offset: input.length),
+      );
+      _focusNode.requestFocus();
+      setState(() {
+        _result = null;
+        _error = null;
+        _pageLoading = false;
+      });
+    } on ClipboardReadException catch (error) {
+      if (mounted) setState(() => _error = error.userMessage);
+    } catch (_) {
+      if (mounted) setState(() => _error = '暂时无法读取剪贴板，请稍后重试');
+    } finally {
+      if (mounted) setState(() => _pasting = false);
+    }
   }
 
   Future<void> _switchPage(int index) async {
@@ -175,6 +216,7 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: TextField(
+                    key: const ValueKey('bilibili-external-link-field'),
                     controller: _urlController,
                     focusNode: _focusNode,
                     enabled: !_loading,
@@ -196,6 +238,33 @@ class _ExternalLinkPanelState extends State<_ExternalLinkPanel> {
                   ),
                 ),
               ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 14),
+        SizedBox(
+          width: 116,
+          height: 70,
+          child: OutlinedButton.icon(
+            key: const ValueKey('bilibili-paste-button'),
+            onPressed: _loading || _pasting ? null : _pasteFromClipboard,
+            icon: _pasting
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  )
+                : const Icon(Icons.content_paste, size: 22),
+            label: const Text(
+              '粘贴',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+            ),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: KiraColors.red,
+              side: const BorderSide(color: KiraColors.red, width: 2),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
             ),
           ),
         ),

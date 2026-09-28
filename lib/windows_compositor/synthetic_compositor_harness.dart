@@ -263,9 +263,9 @@ class _SyntheticCompositorHarnessState
 
       final gates = <String, bool>{
         'backendMetadataMatches': backend['backend'] == 'synthetic' &&
-            backend['abiVersion'] == 1 &&
-            backend['patchsetVersion'] == 2 &&
-            backend['patchsetRevision'] == 'windows-dcomp-synthetic',
+            backend['abiVersion'] == 2 &&
+            backend['patchsetVersion'] == 4 &&
+            backend['patchsetRevision'] == 'windows-dcomp-stage-visual',
         'singleVisibleTopLevelWindow':
             backend['visibleTopLevelWindowCount'] == 1 &&
                 _counter(after, 'topLevelWindow') != 0 &&

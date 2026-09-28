@@ -6,7 +6,7 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$WorkspaceRoot,
 
-  [string]$LocalEngine = 'host_debug_kirakara_v3',
+  [string]$LocalEngine = 'host_debug_kirakara_v4',
 
   [string]$FixtureRoot = (Join-Path $env:TEMP 'kira_fixtures'),
 

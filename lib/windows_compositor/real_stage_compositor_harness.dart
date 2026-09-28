@@ -662,7 +662,7 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
       final gates = <String, bool>{
         'backendMetadataMatches': backend['backend'] == 'composed' &&
             backend['abiVersion'] == 2 &&
-            backend['patchsetVersion'] == 3 &&
+            backend['patchsetVersion'] == 4 &&
             backend['patchsetRevision'] == 'windows-dcomp-stage-visual',
         'singleVisibleTopLevelWindow':
             backend['visibleInteractiveTopLevelWindowCount'] == 1 &&

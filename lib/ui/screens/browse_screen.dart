@@ -8,8 +8,10 @@ import '../../domain/song.dart';
 import '../../ime/ime_controller.dart';
 import '../../ime/search_query_controller.dart';
 import '../../services/bilibili_account_service.dart';
+import '../../services/bilibili_clipboard_input.dart';
 import '../../services/bilibili_quality.dart';
 import '../../services/bilibili_resolver.dart';
+import '../../services/clipboard_service.dart';
 import '../../services/search_service.dart';
 import '../browse/browse_mode.dart';
 import '../input/karaoke_input_panel.dart';
@@ -40,12 +42,14 @@ class BrowseScreen extends StatefulWidget {
     required this.onAddSong,
     required this.onBumpSong,
     this.initialQuery = '',
+    this.clipboardService = const ClipboardService(),
   });
 
   final SearchService searchService;
   final BilibiliAccountService bilibiliAccountService;
   final BrowseMode initialMode;
   final String initialQuery;
+  final ClipboardService clipboardService;
   final VoidCallback onExit;
   final ValueChanged<Song> onAddSong;
   final ValueChanged<Song> onBumpSong;

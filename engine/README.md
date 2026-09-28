@@ -6,8 +6,9 @@ and downloaded toolchains must remain in an external workspace or a versioned
 release artifact. They must not be committed to the App repository.
 
 The root `builds` entries preserve the completely stock Phase 1 artifacts for
-Flutter 3.44.4. `patchset` separately locks the Phase 2/3 Kirakara source patch,
-its resulting Git tree, additional public export and custom debug artifacts.
+Flutter 3.44.4. `patchset` separately locks the ordered Phase 2/3 compositor and
+Phase 6 clipboard patches, their resulting Git tree, additional public export
+and custom debug artifacts.
 Switching variants never edits the installed Flutter SDK and never removes the
 other variant's `out/` directory.
 
@@ -24,7 +25,7 @@ E:\Kirakara-Flutter-Engine\
       ├─ host_debug\
       ├─ host_profile\
       ├─ host_release\
-      └─ host_debug_kirakara_v3\
+      └─ host_debug_kirakara_v4\
 ```
 
 No absolute host path is stored in `engine.lock.json`. The example uses E: only
@@ -96,8 +97,8 @@ stock output, reverse only the known patch stack and select the stock variant:
 
 Reapply `-Variant patched` before continuing custom Engine work. Stock builds
 use the upstream `windows/host_debug`, `windows/host_profile` and
-`windows/host_release` configurations; the Phase 3 patch currently locks only
-`host_debug_kirakara_v3`. Both paths disable RBE and never copy Engine products
+`windows/host_release` configurations; the current patch stack locks only
+`host_debug_kirakara_v4`. Both paths disable RBE and never copy Engine products
 into this repository. Verification rejects a generated `toolchain.ninja` or PE
 linker version that does not use the locked 14.34 toolset.
 
@@ -195,8 +196,9 @@ The debug Engine also has a bounded, log-preserving unit-test gate:
   -AllowKnownFullSuiteOrderFailures
 ```
 
-`critical` covers the delayed task runner and next-frame callback paths that
-must remain live. `compositor` covers the upstream Windows OpenGL/software
+`clipboard` covers upstream behavior plus bounded contention, size and teardown
+cases. `critical` covers the delayed task runner and next-frame callback paths
+that must remain live. `compositor` covers the upstream Windows OpenGL/software
 compositor, display/DPI and texture registrar fixtures. `adapter-isolated`
 runs the two low-power-adapter cases in separate processes. `full` runs the
 entire upstream binary and fails on every non-zero exit by default. On a
@@ -239,7 +241,7 @@ Dart entry point and records counter gates:
 .\tool\windows_compositor\run_synthetic_compositor_probe.ps1 `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
-  -LocalEngine host_debug_kirakara_v3 `
+  -LocalEngine host_debug_kirakara_v4 `
   -TimeoutSeconds 45
 ```
 
@@ -291,7 +293,7 @@ physical Stage, or Cast.
 .\tool\windows_compositor\run_real_stage_compositor_probe.ps1 `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
-  -LocalEngine host_debug_kirakara_v3 `
+  -LocalEngine host_debug_kirakara_v4 `
   -TimeoutSeconds 90
 ```
 
@@ -327,6 +329,35 @@ selected composed backend fails visibly on an ABI, synchronization or runtime
 error; it does not silently use external texture to hide an implementation
 defect. Full protocol, ownership and current evidence are recorded in
 `docs/windows_compositor/phase3_real_show_stage.md`.
+
+## Phase 6 clipboard reliability probe
+
+The clipboard patch is the second, separately removable Engine patch. It keeps
+`SystemChannels.platform` and Flutter's standard `Clipboard` API intact. Only
+`OpenClipboard` returning `ERROR_ACCESS_DENIED` is retried, using a temporary
+message-window timer with a 250 ms overall deadline; there is no platform-thread
+sleep, clipboard listener, startup read, history, persistence, upload, or text
+logging.
+
+Run the stock behavior gate first, then the contention gate against the exact
+locked v4 Engine:
+
+```powershell
+.\tool\windows_clipboard\run_windows_clipboard_baseline.ps1 `
+  -FlutterExecutable 'D:\Program Files\Flutter\bin\flutter.bat'
+
+.\tool\windows_clipboard\run_windows_clipboard_contention_probe.ps1 `
+  -FlutterSdkRoot 'D:\Program Files\Flutter' `
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -LocalEngine host_debug_kirakara_v4
+```
+
+Both probes temporarily replace the system clipboard and can restore only its
+prior plain-text representation. The custom probe uses a separate bounded test
+process to hold `OpenClipboard`; its sleep is test scaffolding and never runs on
+Flutter's platform thread. Engine unit tests cover transient get/set retries,
+deadline exhaustion, no-text and oversized-text responses, and teardown while
+a retry is pending.
 
 ## Safety rules
 
