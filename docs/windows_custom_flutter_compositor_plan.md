@@ -118,6 +118,11 @@
   removal、1130G7 热态、第二位协作者复现、生产签名身份和项目级发布许可证仍未完成，
   因此 Phase 7 及总计划不能宣称全部完成。详见
   `docs/windows_compositor/phase7_compatibility_release.md`。
+- Phase 8 已加入计划但尚未实施：把现有可复现的 Engine 补丁/构建链收敛为 App
+  仓库自己的自举入口。首次执行仓库入口下的 `pub get`、`run` 或 Windows `build`
+  时，自动在仓库内准备并按需构建对应模式的定制 `flutter_windows.dll`；后续命中完整
+  指纹时直接复用。该阶段不修改已安装 Flutter SDK、用户或系统 PATH、注册表、全局
+  Git 配置及其他仓库，也不把 Engine 源码、缓存或产物写入仓库外的持久目录。
 
 ## 为什么要做这件事
 
@@ -613,6 +618,142 @@ Intel 活动路径、WARP、175%/200% 真正高分屏、混合 DPI、物理双�
 
 当前退出条件判定（2026-09-28）：第一项已通过，第三项已有自动运行门禁；第二项必须
 由独立协作者实际执行，不能用同一主机自证代替。因此 Phase 7 保持未完全完成状态。
+
+### Phase 8：仓库内自举与项目隔离的定制 Engine
+
+目标是让开发者克隆 App 仓库后，不再手工创建外部 Engine 工作区，也不需要安装一份
+“Kirakara 专用 Flutter SDK”。开发者只需具备普通的 Windows C++ 构建前置条件；
+Engine 补丁、下载内容、源码树、构建目录、状态、日志和最终供本项目使用的 DLL 都由
+本仓库管理，并且删除仓库即可移除全部 Kirakara 专属 Engine 数据。
+
+#### 8.1 唯一入口与命令语义
+
+提供根目录下的仓库入口（暂定 `flutterw.cmd` 与 `flutterw.ps1`，PowerShell 推荐使用
+`./flutterw`），透传 Flutter 的其余参数：
+
+```powershell
+.\flutterw pub get
+.\flutterw run -d windows
+.\flutterw run -d windows --profile
+.\flutterw build windows
+```
+
+- 上述三个命令中的任意一个都可以成为全新克隆后的第一次命令，并自动触发自举。
+- 首次 `pub get` 默认准备 debug Engine，方便紧接着执行日常 `run`；它仍须完成正常的
+  Dart/Flutter 依赖解析，Engine 失败时整条命令明确失败，不能留下“依赖成功但 Engine
+  未就绪”的假完成状态。
+- `run` 根据 `--debug`、`--profile`、`--release` 推导所需模式，未指定时为 debug。
+- `build windows` 根据 Flutter 原有模式规则推导所需模式，未指定时为 release。
+- 没有使用过的模式不提前构建；后续首次请求另一模式时只补建该模式。
+- Engine 就绪后，入口自动传入锁定的 `--local-engine`、`--local-engine-host` 与
+  `--local-engine-src-path`，调用者不再手工拼接参数。
+- 非 Windows 命令可以原样交给官方 Flutter，但不能因此触发或携带 Windows 定制
+  Engine 参数。
+
+这里刻意不劫持裸的全局 `flutter` 命令。Flutter 本身没有“按项目执行的 pre-command
+hook”可以同时覆盖 `pub get`、`run` 和 `build`，而修改 PATH、全局 alias 或已安装 SDK
+会污染同一台电脑上的其他仓库。仓库入口是隔离边界，也是“不影响其他项目”的保证。
+IDE 的 Run/Build 配置也必须调用同一个入口或等价的仓库任务，不能另造第二套状态机。
+
+#### 8.2 仓库内工作区
+
+所有 Kirakara 专属的未跟踪数据固定放在仓库根目录下短路径 `.kfe/`，并由
+`.gitignore` 整体排除：
+
+```text
+.kfe/
+├─ sdk/                 # 必要时下载的、未修改的锁定官方 Flutter SDK
+├─ depot_tools/         # 锁定 revision
+├─ engine/              # 锁定 Engine 源码及 gclient/CIPD 内容
+├─ out/                 # debug/profile/release 的定制构建输出
+├─ pub-cache/           # 仅本仓库命令使用的 PUB_CACHE
+├─ cache/               # CIPD、vpython 等项目级缓存
+├─ tmp/                 # 进程级 TEMP/TMP
+├─ logs/                # 有界、无隐私内容的构建日志
+├─ locks/               # 并发自举互斥锁
+└─ state/               # 构建指纹与 ready stamp
+```
+
+- 不再要求 `E:\Kirakara-Flutter-Engine` 一类外部工作区；现有脚本的
+  `-WorkspaceRoot` 只保留为底层调试入口，仓库命令默认且只认 `.kfe/`。
+- 若 PATH 中的官方 Flutter 与 `engine.lock.json` 完全匹配，则只读使用它；若不存在或
+  revision 不匹配，入口把锁定的**官方原版** Flutter SDK 放进 `.kfe/sdk/`，不会覆盖、
+  patch 或注册为系统 Flutter。
+- 入口以进程级环境变量把 `PUB_CACHE`、CIPD/vpython cache、`TEMP`、`TMP` 和
+  depot_tools 相关缓存定向到 `.kfe/`；进程退出后不保留用户/系统环境变量。
+- 禁止写入 `%USERPROFILE%`、`%LOCALAPPDATA%`、`ProgramData` 等位置作为本阶段的
+  持久状态，禁止创建服务、计划任务、后台守护进程、注册表项、junction 或全局 alias。
+- 不修改官方 Flutter cache，不把定制 DLL 复制到官方 SDK，也不自动安装/卸载全局
+  Visual Studio 或 Windows SDK 组件。缺失的系统编译前置条件只做一次明确的预检并给出
+  精确错误；项目专属内容仍全部留在仓库内。
+- `.kfe/` 不得进入发布包、源码包或 Git；发布给最终用户的 Portable/Installer 继续只
+  携带已经验证的运行时产物，不携带源码树与构建缓存。
+
+#### 8.3 自举状态机与复用规则
+
+仓库入口依序执行，并复用 Phase 1～7 已有脚本，不复制出第二套 Engine 构建逻辑：
+
+1. 读取并校验 `engine/engine.lock.json`、补丁哈希和仓库根目录。
+2. 检查磁盘空间、长路径、网络、Git、Visual Studio/MSVC/ATL 与 Windows SDK；在开始
+   大下载前失败。
+3. 在 `.kfe/locks/` 获取跨进程锁；等待过程只响应文件锁/子进程退出，不加入轮询帧泵。
+4. 获取锁定的官方 Flutter、depot_tools 和 Engine revision；下载、解包与 sync 都写入
+   `.kfe/`，支持安全续传，但不接受来源或哈希不明的缓存。
+5. 将 Engine 源码恢复到锁定 stock tree，按顺序应用仓库补丁，核对结果 source tree。
+6. 仅构建当前命令所需模式，并执行产物完整性、官方导出保留、custom export、ABI、
+   patchset revision、Engine revision、GN 参数和工具链校验。
+7. 全部校验通过后才原子写入该模式的 ready stamp，然后执行原始 Flutter 子命令。
+
+复用指纹至少包含：Framework/Engine revision、Engine source tree、补丁文件及顺序、
+ABI/patchset version、GN 参数、目标架构、构建模式、MSVC/Windows SDK 身份和关键脚本
+版本。任一项变化都只能令相应模式失效并重建，不能静默沿用旧 DLL。普通 Dart、资源或
+业务代码改动不得触发 Engine 重建。
+
+本地开发构建不能因为 PE 时间戳或 PDB identity 的非确定性而自动改写
+`engine.lock.json`。开发态门禁校验锁定源码、参数、工具链、导出和 ABI；Phase 7 的
+发布候选仍使用人工审核并锁定的精确产物哈希。两类门禁不能混为一谈。
+
+#### 8.4 失败、并发与清理
+
+- 中断、断网或编译失败只能留下未就绪的 `.kfe/` 中间数据；没有 ready stamp 的 DLL
+  永远不能传给 Flutter。再次执行同一命令应安全续跑或重建，不要求用户手工清目录。
+- 两个终端、IDE 与命令行同时启动时只允许一个进程 fetch/patch/build；其他调用等待
+  同一模式就绪后复验，不重复下载或并行写同一 `out`。
+- 默认的 `flutter clean` 只清 App 产物，不删除耗时的 Engine 工作区。另提供明确的
+  `./flutterw engine clean` 与 `./flutterw engine purge`：前者清选定构建模式，后者只
+  删除仓库内 `.kfe/`，二者都不得触及官方 SDK 或其他项目。
+- 输出应区分“首次下载”“应用补丁”“构建 Engine”“校验”“复用缓存”和“执行 Flutter”
+  阶段，并给出真实子进程进度；不伪造百分比，不启动常驻状态轮询。
+- 网络代理或镜像只能通过本次命令参数/进程环境显式提供，不写入 Git、全局配置或本地
+  持久设置。
+
+#### 8.5 文档、IDE 与兼容入口
+
+- `engine/README.md` 改为以 `./flutterw ...` 为首选流程；现有逐步脚本保留为诊断和
+  Engine 开发者入口，不再要求普通 App 开发者理解外部工作区。
+- 提供使用同一入口的 VS Code tasks/launch 配置示例；IDE 不得绕过 ABI gate，也不能
+  直接拾取官方 cache 中的 `flutter_windows.dll`。
+- 原有直接调用 `engine/scripts/build_windows_app.ps1` 的 CI/诊断脚本可继续使用，但必须
+  能显式选择仓库 `.kfe/`，并与 wrapper 共享同一布局、锁和指纹实现。
+- 文档明确首次构建所需空间和时间、离线复用条件、可安全删除的目录，以及为什么裸
+  `flutter` 不会也不应该被仓库静默劫持。
+
+退出条件：
+
+- 在一份全新 clone 上，分别以首次 `pub get`、首次 debug `run`、首次 release
+  `build windows` 作为入口，均可在无人手工拼接 Engine 参数的情况下得到并实际加载
+  与锁文件 ABI 匹配的定制 `flutter_windows.dll`。
+- 同一命令第二次执行不再 fetch、gclient sync、GN 或 Ninja 构建；只做廉价指纹/产物
+  门禁并进入 Flutter。切换到未构建模式时仅补建目标模式。
+- 构建中断、补丁哈希错误、错误 Flutter revision、ABI 错配、并发调用和磁盘空间不足
+  都会明确失败，且不能运行半成品或官方 DLL 来掩盖问题。
+- 在同机相邻的普通 Flutter 仓库执行裸 `flutter pub get/run/build`，其 SDK、cache、
+  参数、输出和运行时 DLL 均不受影响；执行前后用户/系统 PATH、注册表、全局 Git 配置
+  与 Flutter SDK 文件无变化。
+- 删除 App 仓库后，不在仓库外遗留 Kirakara Engine 源码、构建产物、项目级缓存、
+  ready stamp、后台进程或持久配置。
+- 第二位协作者能够仅凭普通官方 Flutter/Windows 编译前置条件和本仓库，从 clean clone
+  完成以上流程；该复现证据同时补齐 Phase 7 尚未完成的独立构建门槛。
 
 ## 必要的可观测能力
 
