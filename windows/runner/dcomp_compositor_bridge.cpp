@@ -1,21 +1,28 @@
 #include "dcomp_compositor_bridge.h"
 
+#include <d3d11.h>
+#include <dxgi.h>
 #include <flutter/encodable_value.h>
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
 #include <flutter_windows.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <utility>
 #include <vector>
 
 #include "kirakara_flutter_compositor_api.h"
+#include "show_host_stage_visual_api.h"
 
 namespace {
 
@@ -58,7 +65,7 @@ std::string ReadBackendEnvironment() {
   return value;
 }
 
-std::wstring Utf8ToWide(const std::string& value) {
+std::wstring Utf8ToWide(const std::string &value) {
   if (value.empty()) {
     return {};
   }
@@ -74,7 +81,7 @@ std::wstring Utf8ToWide(const std::string& value) {
   return result;
 }
 
-bool SyntheticTestModeEnabled() {
+bool CompositorTestModeEnabled() {
   wchar_t value[2]{};
   return ::GetEnvironmentVariableW(kTestModeEnvironment, value,
                                    static_cast<DWORD>(std::size(value))) == 1 &&
@@ -84,6 +91,7 @@ bool SyntheticTestModeEnabled() {
 struct TopLevelWindowCounts {
   uint32_t total = 0;
   uint32_t visible = 0;
+  uint32_t visible_interactive = 0;
 };
 
 struct TestResizeDelta {
@@ -98,13 +106,19 @@ TopLevelWindowCounts CountCurrentProcessTopLevelWindows() {
   } context{::GetCurrentProcessId(), {}};
   ::EnumWindows(
       [](HWND window, LPARAM parameter) -> BOOL {
-        auto* context = reinterpret_cast<CountContext*>(parameter);
+        auto *context = reinterpret_cast<CountContext *>(parameter);
         DWORD process_id = 0;
         ::GetWindowThreadProcessId(window, &process_id);
         if (process_id == context->process_id) {
           ++context->counts.total;
           if (::IsWindowVisible(window)) {
             ++context->counts.visible;
+            const LONG_PTR extended_style =
+                ::GetWindowLongPtrW(window, GWL_EXSTYLE);
+            if ((extended_style & WS_EX_TOOLWINDOW) == 0 &&
+                ::GetWindow(window, GW_OWNER) == nullptr) {
+              ++context->counts.visible_interactive;
+            }
           }
         }
         return TRUE;
@@ -126,7 +140,8 @@ std::vector<MonitorRecord> EnumerateMonitors() {
   ::EnumDisplayMonitors(
       nullptr, nullptr,
       [](HMONITOR monitor, HDC, LPRECT, LPARAM parameter) -> BOOL {
-        auto* values = reinterpret_cast<std::vector<MonitorRecord>*>(parameter);
+        auto *values =
+            reinterpret_cast<std::vector<MonitorRecord> *>(parameter);
         MONITORINFO info{};
         info.cbSize = sizeof(info);
         if (!::GetMonitorInfoW(monitor, &info)) {
@@ -145,14 +160,13 @@ std::vector<MonitorRecord> EnumerateMonitors() {
   return monitors;
 }
 
-flutter::EncodableList MonitorValues(
-    const std::vector<MonitorRecord>& monitors) {
+flutter::EncodableList
+MonitorValues(const std::vector<MonitorRecord> &monitors) {
   flutter::EncodableList values;
   for (size_t index = 0; index < monitors.size(); ++index) {
-    const auto& monitor = monitors[index];
+    const auto &monitor = monitors[index];
     values.emplace_back(flutter::EncodableMap{
-        {EncodableValue("index"),
-         EncodableValue(static_cast<int32_t>(index))},
+        {EncodableValue("index"), EncodableValue(static_cast<int32_t>(index))},
         {EncodableValue("primary"), EncodableValue(monitor.primary)},
         {EncodableValue("left"), EncodableValue(monitor.bounds.left)},
         {EncodableValue("top"), EncodableValue(monitor.bounds.top)},
@@ -168,15 +182,14 @@ flutter::EncodableList MonitorValues(
   return values;
 }
 
-std::optional<int32_t> ReadTestMonitorIndex(
-    const EncodableValue* arguments) {
+std::optional<int32_t> ReadTestMonitorIndex(const EncodableValue *arguments) {
   if (!arguments) {
     return std::nullopt;
   }
   int64_t index = -1;
-  if (const auto* int32_value = std::get_if<int32_t>(arguments)) {
+  if (const auto *int32_value = std::get_if<int32_t>(arguments)) {
     index = *int32_value;
-  } else if (const auto* int64_value = std::get_if<int64_t>(arguments)) {
+  } else if (const auto *int64_value = std::get_if<int64_t>(arguments)) {
     index = *int64_value;
   } else {
     return std::nullopt;
@@ -187,14 +200,14 @@ std::optional<int32_t> ReadTestMonitorIndex(
   return static_cast<int32_t>(index);
 }
 
-std::optional<uint32_t> ReadTestStallDuration(const EncodableValue* arguments) {
+std::optional<uint32_t> ReadTestStallDuration(const EncodableValue *arguments) {
   if (!arguments) {
     return std::nullopt;
   }
   int64_t duration = 0;
-  if (const auto* int32_value = std::get_if<int32_t>(arguments)) {
+  if (const auto *int32_value = std::get_if<int32_t>(arguments)) {
     duration = *int32_value;
-  } else if (const auto* int64_value = std::get_if<int64_t>(arguments)) {
+  } else if (const auto *int64_value = std::get_if<int64_t>(arguments)) {
     duration = *int64_value;
   } else {
     return std::nullopt;
@@ -205,23 +218,22 @@ std::optional<uint32_t> ReadTestStallDuration(const EncodableValue* arguments) {
   return static_cast<uint32_t>(duration);
 }
 
-std::optional<TestResizeDelta> ReadTestResizeDelta(
-    const EncodableValue* arguments) {
-  const auto* map = arguments ? std::get_if<flutter::EncodableMap>(arguments)
-                              : nullptr;
+std::optional<TestResizeDelta>
+ReadTestResizeDelta(const EncodableValue *arguments) {
+  const auto *map =
+      arguments ? std::get_if<flutter::EncodableMap>(arguments) : nullptr;
   if (!map) {
     return std::nullopt;
   }
-  auto read_delta = [map](const char* key) -> std::optional<int32_t> {
+  auto read_delta = [map](const char *key) -> std::optional<int32_t> {
     const auto found = map->find(EncodableValue(std::string(key)));
     if (found == map->end()) {
       return std::nullopt;
     }
     int64_t value = 0;
-    if (const auto* int32_value = std::get_if<int32_t>(&found->second)) {
+    if (const auto *int32_value = std::get_if<int32_t>(&found->second)) {
       value = *int32_value;
-    } else if (const auto* int64_value =
-                   std::get_if<int64_t>(&found->second)) {
+    } else if (const auto *int64_value = std::get_if<int64_t>(&found->second)) {
       value = *int64_value;
     } else {
       return std::nullopt;
@@ -240,22 +252,118 @@ std::optional<TestResizeDelta> ReadTestResizeDelta(
   return TestResizeDelta{*width, *height};
 }
 
+const flutter::EncodableMap *ReadArgumentMap(const EncodableValue *arguments) {
+  return arguments ? std::get_if<flutter::EncodableMap>(arguments) : nullptr;
+}
+
+std::optional<int64_t> ReadMapInteger(const EncodableValue *arguments,
+                                      const char *key) {
+  const auto *map = ReadArgumentMap(arguments);
+  if (!map) {
+    return std::nullopt;
+  }
+  const auto found = map->find(EncodableValue(std::string(key)));
+  if (found == map->end()) {
+    return std::nullopt;
+  }
+  if (const auto *value = std::get_if<int64_t>(&found->second)) {
+    return *value;
+  }
+  if (const auto *value = std::get_if<int32_t>(&found->second)) {
+    return static_cast<int64_t>(*value);
+  }
+  return std::nullopt;
+}
+
+std::optional<double> ReadMapNumber(const EncodableValue *arguments,
+                                    const char *key) {
+  const auto *map = ReadArgumentMap(arguments);
+  if (!map) {
+    return std::nullopt;
+  }
+  const auto found = map->find(EncodableValue(std::string(key)));
+  if (found == map->end()) {
+    return std::nullopt;
+  }
+  if (const auto *value = std::get_if<double>(&found->second)) {
+    return *value;
+  }
+  if (const auto *value = std::get_if<int64_t>(&found->second)) {
+    return static_cast<double>(*value);
+  }
+  if (const auto *value = std::get_if<int32_t>(&found->second)) {
+    return static_cast<double>(*value);
+  }
+  return std::nullopt;
+}
+
+std::optional<bool> ReadMapBoolean(const EncodableValue *arguments,
+                                   const char *key) {
+  const auto *map = ReadArgumentMap(arguments);
+  if (!map) {
+    return std::nullopt;
+  }
+  const auto found = map->find(EncodableValue(std::string(key)));
+  if (found == map->end()) {
+    return std::nullopt;
+  }
+  if (const auto *value = std::get_if<bool>(&found->second)) {
+    return *value;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> ReadMapString(const EncodableValue *arguments,
+                                         const char *key) {
+  const auto *map = ReadArgumentMap(arguments);
+  if (!map) {
+    return std::nullopt;
+  }
+  const auto found = map->find(EncodableValue(std::string(key)));
+  if (found == map->end()) {
+    return std::nullopt;
+  }
+  if (const auto *value = std::get_if<std::string>(&found->second)) {
+    return *value;
+  }
+  return std::nullopt;
+}
+
 std::string ResultName(int32_t result) {
   switch (result) {
-    case kKirakaraFlutterCompositorSuccess:
-      return "success";
-    case kKirakaraFlutterCompositorInvalidArgument:
-      return "invalid_argument";
-    case kKirakaraFlutterCompositorVersionMismatch:
-      return "version_mismatch";
-    case kKirakaraFlutterCompositorBusy:
-      return "busy";
-    case kKirakaraFlutterCompositorUnavailable:
-      return "unavailable";
-    case kKirakaraFlutterCompositorViewNotConfigured:
-      return "view_not_configured";
-    default:
-      return "unknown(" + std::to_string(result) + ")";
+  case kKirakaraFlutterCompositorSuccess:
+    return "success";
+  case kKirakaraFlutterCompositorInvalidArgument:
+    return "invalid_argument";
+  case kKirakaraFlutterCompositorVersionMismatch:
+    return "version_mismatch";
+  case kKirakaraFlutterCompositorBusy:
+    return "busy";
+  case kKirakaraFlutterCompositorUnavailable:
+    return "unavailable";
+  case kKirakaraFlutterCompositorViewNotConfigured:
+    return "view_not_configured";
+  case kKirakaraFlutterCompositorFrameDropped:
+    return "frame_dropped";
+  case kKirakaraFlutterCompositorOperationFailed:
+    return "operation_failed";
+  default:
+    return "unknown(" + std::to_string(result) + ")";
+  }
+}
+
+std::string StageVisualResultName(int32_t result) {
+  switch (result) {
+  case SHOW_HOST_STAGE_VISUAL_SUCCESS:
+    return "success";
+  case SHOW_HOST_STAGE_VISUAL_INVALID_ARGUMENT:
+    return "invalid_argument";
+  case SHOW_HOST_STAGE_VISUAL_VERSION_MISMATCH:
+    return "version_mismatch";
+  case SHOW_HOST_STAGE_VISUAL_UNAVAILABLE:
+    return "unavailable";
+  default:
+    return "unknown(" + std::to_string(result) + ")";
   }
 }
 
@@ -265,8 +373,8 @@ std::string HexHresult(int32_t value) {
   return stream.str();
 }
 
-EncodableValue DiagnosticsValue(
-    const KirakaraFlutterCompositorDiagnostics& diagnostics) {
+EncodableValue
+DiagnosticsValue(const KirakaraFlutterCompositorDiagnostics &diagnostics) {
   return EncodableValue(flutter::EncodableMap{
       {EncodableValue("active"), EncodableValue(diagnostics.active != 0)},
       {EncodableValue("abiVersion"),
@@ -303,20 +411,52 @@ EncodableValue DiagnosticsValue(
       {EncodableValue("surfaceResizeCount"),
        EncodableValue(static_cast<int64_t>(diagnostics.surface_resize_count))},
       {EncodableValue("compositionTreeCommitCount"),
+       EncodableValue(
+           static_cast<int64_t>(diagnostics.composition_tree_commit_count))},
+      {EncodableValue("lastStageResourceHresult"),
+       EncodableValue(diagnostics.last_stage_resource_hresult)},
+      {EncodableValue("stageFrameSubmitCount"),
+       EncodableValue(
+           static_cast<int64_t>(diagnostics.stage_frame_submit_count))},
+      {EncodableValue("stageFrameCoalescedCount"),
+       EncodableValue(
+           static_cast<int64_t>(diagnostics.stage_frame_coalesced_count))},
+      {EncodableValue("stageFrameStaleCount"),
+       EncodableValue(
+           static_cast<int64_t>(diagnostics.stage_frame_stale_count))},
+      {EncodableValue("stageHandleDuplicateFailureCount"),
        EncodableValue(static_cast<int64_t>(
-           diagnostics.composition_tree_commit_count))},
+           diagnostics.stage_handle_duplicate_failure_count))},
+      {EncodableValue("stageResourceOpenFailureCount"),
+       EncodableValue(static_cast<int64_t>(
+           diagnostics.stage_resource_open_failure_count))},
+      {EncodableValue("stageAcquireBusyCount"),
+       EncodableValue(
+           static_cast<int64_t>(diagnostics.stage_acquire_busy_count))},
+      {EncodableValue("stageDetachCount"),
+       EncodableValue(static_cast<int64_t>(diagnostics.stage_detach_count))},
+      {EncodableValue("stageGeometryUpdateCount"),
+       EncodableValue(
+           static_cast<int64_t>(diagnostics.stage_geometry_update_count))},
+      {EncodableValue("stageResourceGeneration"),
+       EncodableValue(
+           static_cast<int64_t>(diagnostics.stage_resource_generation))},
+      {EncodableValue("stageContentGeneration"),
+       EncodableValue(
+           static_cast<int64_t>(diagnostics.stage_content_generation))},
+      {EncodableValue("stageFrameId"),
+       EncodableValue(static_cast<int64_t>(diagnostics.stage_frame_id))},
   });
 }
 
-}  // namespace
+} // namespace
 
 struct DcompCompositorBridge::Impl {
-  bool ResolveApi(std::string* error) {
+  bool ResolveApi(std::string *error) {
     const HMODULE engine_module = ::GetModuleHandleW(L"flutter_windows.dll");
     if (!engine_module) {
-      *error =
-          "KIRAKARA_COMPOSITOR_BACKEND=synthetic was requested, but "
-          "flutter_windows.dll is not loaded.";
+      *error = "KIRAKARA_COMPOSITOR_BACKEND=" + backend +
+               " was requested, but flutter_windows.dll is not loaded.";
       return false;
     }
 
@@ -325,10 +465,10 @@ struct DcompCompositorBridge::Impl {
             ::GetProcAddress(engine_module,
                              KIRAKARA_FLUTTER_COMPOSITOR_EXPORT_NAME));
     if (!get_api) {
-      *error =
-          "KIRAKARA_COMPOSITOR_BACKEND=synthetic requires the Kirakara "
-          "patched Flutter Engine, but its versioned API export is "
-          "missing. The selected DLL is likely the stock Engine.";
+      *error = "KIRAKARA_COMPOSITOR_BACKEND=" + backend +
+               " requires the Kirakara patched Flutter Engine, but its "
+               "versioned API export is missing. The selected DLL is likely "
+               "the stock Engine.";
       return false;
     }
 
@@ -352,7 +492,8 @@ struct DcompCompositorBridge::Impl {
         std::strcmp(api.engine_revision,
                     KIRAKARA_FLUTTER_COMPOSITOR_ENGINE_REVISION) != 0 ||
         !api.prepare_next_view || !api.cancel_prepared_view ||
-        !api.get_view_diagnostics) {
+        !api.get_view_diagnostics || !api.submit_stage_frame ||
+        !api.set_stage_geometry || !api.detach_stage) {
       std::ostringstream stream;
       stream << "Kirakara Flutter Engine metadata mismatch. Expected ABI "
              << KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION << ", patchset "
@@ -369,21 +510,21 @@ struct DcompCompositorBridge::Impl {
     return true;
   }
 
-  bool Prepare(HWND top_level_window, std::string* error) {
+  bool Prepare(HWND top_level_window, std::string *error) {
     KirakaraFlutterCompositorConfig config{};
     config.struct_size = sizeof(config);
     config.abi_version = KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION;
     config.patchset_version = KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION;
-    config.flags = kKirakaraFlutterCompositorSyntheticStage |
-                   kKirakaraFlutterCompositorRequireComposition;
+    config.flags =
+        (backend == "synthetic" ? kKirakaraFlutterCompositorSyntheticStage
+                                : kKirakaraFlutterCompositorExternalStage) |
+        kKirakaraFlutterCompositorRequireComposition;
     config.top_level_window = reinterpret_cast<uintptr_t>(top_level_window);
 
     const int32_t result = api.prepare_next_view(&config);
     if (result != kKirakaraFlutterCompositorSuccess) {
-      *error =
-          "The Kirakara Flutter Engine could not prepare the synthetic "
-          "DirectComposition view: " +
-          ResultName(result) + ".";
+      *error = "The Kirakara Flutter Engine could not prepare the " + backend +
+               " DirectComposition view: " + ResultName(result) + ".";
       return false;
     }
     window = top_level_window;
@@ -391,18 +532,356 @@ struct DcompCompositorBridge::Impl {
     return true;
   }
 
-  bool Attach(flutter::FlutterEngine* engine, std::string* error) {
-    prepared = false;
-    if (!engine) {
-      *error = "The synthetic DirectComposition view has no Flutter Engine.";
+  bool EnsureShowApi(std::string *error) {
+    if (show_api_available) {
+      return true;
+    }
+
+    HMODULE module = ::GetModuleHandleW(L"libshow_host.dll");
+    bool owns_module = false;
+    if (!module) {
+      module = ::LoadLibraryW(L"libshow_host.dll");
+      owns_module = module != nullptr;
+    }
+    if (!module) {
+      *error = "The composed Stage backend could not load libshow_host.dll. "
+               "Create the Show host before attaching its Stage Visual.";
       return false;
     }
+
+    const auto get_api = reinterpret_cast<ShowHostGetStageVisualApiProc>(
+        ::GetProcAddress(module, SHOW_HOST_STAGE_VISUAL_EXPORT_NAME));
+    const auto set_stage_device =
+        reinterpret_cast<ShowHostSetStageD3dDeviceProc>(
+            ::GetProcAddress(module, "show_host_set_stage_d3d_device"));
+    if (!get_api || !set_stage_device) {
+      if (owns_module) {
+        ::FreeLibrary(module);
+      }
+      *error = "libshow_host.dll does not export the required versioned Stage "
+               "Visual API and D3D device binding entrypoint.";
+      return false;
+    }
+
+    ShowHostStageVisualApi resolved{};
+    resolved.struct_size = sizeof(resolved);
+    const int32_t api_result =
+        get_api(SHOW_HOST_STAGE_VISUAL_ABI_VERSION, &resolved);
+    constexpr uint64_t kRequiredCapabilities =
+        SHOW_HOST_STAGE_VISUAL_CAP_NT_HANDLE |
+        SHOW_HOST_STAGE_VISUAL_CAP_KEYED_MUTEX |
+        SHOW_HOST_STAGE_VISUAL_CAP_LATEST_FRAME |
+        SHOW_HOST_STAGE_VISUAL_CAP_NONBLOCKING_PRODUCER;
+    const bool reserved_zero =
+        std::all_of(std::begin(resolved.reserved), std::end(resolved.reserved),
+                    [](uint64_t value) { return value == 0; });
+    if (api_result != SHOW_HOST_STAGE_VISUAL_SUCCESS ||
+        resolved.struct_size != sizeof(resolved) ||
+        resolved.abi_version != SHOW_HOST_STAGE_VISUAL_ABI_VERSION ||
+        (resolved.capabilities & kRequiredCapabilities) !=
+            kRequiredCapabilities ||
+        !resolved.protocol_revision ||
+        std::strcmp(resolved.protocol_revision,
+                    SHOW_HOST_STAGE_VISUAL_PROTOCOL_REVISION) != 0 ||
+        !resolved.create_source || !resolved.destroy_source ||
+        !resolved.set_active || !resolved.set_frame_callback ||
+        !resolved.get_stats || !reserved_zero) {
+      if (owns_module) {
+        ::FreeLibrary(module);
+      }
+      *error = "The Show Stage Visual API is incompatible. Expected ABI " +
+               std::to_string(SHOW_HOST_STAGE_VISUAL_ABI_VERSION) +
+               " and protocol " + SHOW_HOST_STAGE_VISUAL_PROTOCOL_REVISION +
+               ", got " + StageVisualResultName(api_result) + ".";
+      return false;
+    }
+
+    show_module = module;
+    owns_show_module = owns_module;
+    show_api = resolved;
+    show_set_stage_device = set_stage_device;
+    show_api_available = true;
+    return true;
+  }
+
+  bool EnsureShowStageDevice(std::string *error) {
+    if (show_stage_device &&
+        SUCCEEDED(show_stage_device->GetDeviceRemovedReason())) {
+      return true;
+    }
+    show_stage_device.Reset();
+    if (!flutter_engine) {
+      *error = "The composed Stage backend has no Flutter Engine adapter.";
+      return false;
+    }
+
+    IDXGIAdapter *raw_adapter = nullptr;
+    if (!flutter_engine->GetGraphicsAdapter(&raw_adapter) || !raw_adapter) {
+      *error = "The Flutter graphics adapter is unavailable.";
+      return false;
+    }
+    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+    adapter.Attach(raw_adapter);
+    constexpr D3D_FEATURE_LEVEL levels[] = {
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0,
+    };
+    D3D_FEATURE_LEVEL selected{};
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+    constexpr UINT flags =
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
+    const HRESULT result = ::D3D11CreateDevice(
+        adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, flags, levels,
+        static_cast<UINT>(std::size(levels)), D3D11_SDK_VERSION,
+        show_stage_device.GetAddressOf(), &selected, context.GetAddressOf());
+    if (FAILED(result) || !show_stage_device) {
+      *error = "Could not create the Show Stage producer device on Flutter's "
+               "DXGI adapter (HRESULT " +
+               HexHresult(result) + ").";
+      return false;
+    }
+    return true;
+  }
+
+  static void StageFrameAvailable(void *context,
+                                  const ShowHostStageVisualFrame *frame) {
+    auto *self = static_cast<Impl *>(context);
+    if (!self || !frame ||
+        self->shutting_down.load(std::memory_order_acquire) ||
+        !self->stage_active.load(std::memory_order_acquire) || !self->view) {
+      return;
+    }
+    const bool reserved_zero =
+        std::all_of(std::begin(frame->reserved), std::end(frame->reserved),
+                    [](uint64_t value) { return value == 0; });
+    if (frame->struct_size != sizeof(*frame) ||
+        frame->abi_version != SHOW_HOST_STAGE_VISUAL_ABI_VERSION ||
+        (frame->flags & ~SHOW_HOST_STAGE_VISUAL_FRAME_RESOURCE_CHANGED) != 0 ||
+        frame->sync_type != SHOW_HOST_STAGE_VISUAL_SYNC_KEYED_MUTEX ||
+        frame->shared_nt_handle == 0 || frame->width == 0 ||
+        frame->height == 0 || frame->reserved0 != 0 || !reserved_zero) {
+      self->stage_callback_rejected_count.fetch_add(1,
+                                                    std::memory_order_relaxed);
+      self->last_stage_submit_result.store(
+          kKirakaraFlutterCompositorInvalidArgument, std::memory_order_relaxed);
+      return;
+    }
+
+    KirakaraFlutterCompositorStageFrame engine_frame{};
+    engine_frame.struct_size = sizeof(engine_frame);
+    engine_frame.abi_version = KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION;
+    engine_frame.patchset_version =
+        KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION;
+    engine_frame.flags =
+        (frame->flags & SHOW_HOST_STAGE_VISUAL_FRAME_RESOURCE_CHANGED) != 0
+            ? kKirakaraFlutterCompositorStageResourceChanged
+            : 0;
+    engine_frame.shared_nt_handle = frame->shared_nt_handle;
+    engine_frame.width = frame->width;
+    engine_frame.height = frame->height;
+    engine_frame.dxgi_format = frame->dxgi_format;
+    engine_frame.sync_type = kKirakaraFlutterCompositorStageSyncKeyedMutex;
+    engine_frame.resource_generation = frame->resource_generation;
+    engine_frame.content_generation = frame->content_generation;
+    engine_frame.frame_id = frame->frame_id;
+    engine_frame.consumer_acquire_key = frame->consumer_acquire_key;
+    engine_frame.consumer_release_key = frame->consumer_release_key;
+
+    const int32_t result = self->api.submit_stage_frame(
+        reinterpret_cast<uintptr_t>(self->view), &engine_frame);
+    self->stage_callback_count.fetch_add(1, std::memory_order_relaxed);
+    self->last_stage_submit_result.store(result, std::memory_order_relaxed);
+    if (result != kKirakaraFlutterCompositorSuccess &&
+        result != kKirakaraFlutterCompositorFrameDropped) {
+      self->stage_callback_rejected_count.fetch_add(1,
+                                                    std::memory_order_relaxed);
+    }
+  }
+
+  void ReleaseStageSource() {
+    std::scoped_lock lock(stage_source_mutex);
+    stage_active.store(false, std::memory_order_release);
+    if (stage_source && show_api_available) {
+      show_api.set_frame_callback(stage_source, nullptr, nullptr);
+      show_api.set_active(stage_source, false);
+      show_api.destroy_source(stage_source);
+    }
+    stage_source = nullptr;
+    attached_show_host = nullptr;
+    if (view && api.detach_stage) {
+      api.detach_stage(reinterpret_cast<uintptr_t>(view));
+    }
+  }
+
+  bool AttachStage(ShowHostHandle host, std::string *error) {
+    if (backend != "composed" || !host || !view ||
+        shutting_down.load(std::memory_order_acquire)) {
+      *error = "The composed Stage source received an invalid Show host.";
+      return false;
+    }
+    if (!EnsureShowApi(error) || !EnsureShowStageDevice(error)) {
+      return false;
+    }
+
+    ReleaseStageSource();
+    std::scoped_lock lock(stage_source_mutex);
+    if (!show_set_stage_device(
+            host, reinterpret_cast<uintptr_t>(show_stage_device.Get()))) {
+      *error = "Show rejected the D3D11 producer device selected from "
+               "Flutter's DXGI adapter.";
+      return false;
+    }
+    ShowHostStageVisualSource source = nullptr;
+    const int32_t result = show_api.create_source(host, &source);
+    if (result != SHOW_HOST_STAGE_VISUAL_SUCCESS || !source) {
+      *error = "Show could not create the Stage Visual source: " +
+               StageVisualResultName(result) + ".";
+      return false;
+    }
+    stage_source = source;
+    attached_show_host = host;
+    show_api.set_frame_callback(stage_source, &StageFrameAvailable, this);
+    show_api.set_active(stage_source, false);
+    return true;
+  }
+
+  bool SetStageActive(bool active, std::string *error) {
+    std::scoped_lock lock(stage_source_mutex);
+    if (!stage_source || !show_api_available || !view ||
+        shutting_down.load(std::memory_order_acquire)) {
+      *error = "No composed Stage Visual source is attached.";
+      return false;
+    }
+    if (active) {
+      stage_active.store(true, std::memory_order_release);
+      show_api.set_active(stage_source, true);
+      return true;
+    }
+
+    stage_active.store(false, std::memory_order_release);
+    show_api.set_active(stage_source, false);
+    const int32_t result = api.detach_stage(reinterpret_cast<uintptr_t>(view));
+    if (result != kKirakaraFlutterCompositorSuccess) {
+      *error = "The Engine could not detach the Stage Visual: " +
+               ResultName(result) + ".";
+      return false;
+    }
+    return true;
+  }
+
+  bool SetStageGeometry(const EncodableValue *arguments, std::string *error) {
+    const auto visible = ReadMapBoolean(arguments, "visible");
+    const auto x = ReadMapNumber(arguments, "x");
+    const auto y = ReadMapNumber(arguments, "y");
+    const auto width = ReadMapNumber(arguments, "width");
+    const auto height = ReadMapNumber(arguments, "height");
+    const auto fit = ReadMapString(arguments, "fit");
+    if (!visible || !x || !y || !width || !height || !fit) {
+      *error = "Stage geometry requires visible, x, y, width, height and fit.";
+      return false;
+    }
+    uint32_t fit_value = kKirakaraFlutterCompositorStageFitContain;
+    if (*fit == "cover") {
+      fit_value = kKirakaraFlutterCompositorStageFitCover;
+    } else if (*fit == "fill") {
+      fit_value = kKirakaraFlutterCompositorStageFitFill;
+    } else if (*fit != "contain") {
+      *error = "Unsupported Stage fit '" + *fit + "'.";
+      return false;
+    }
+
+    KirakaraFlutterCompositorStageGeometry geometry{};
+    geometry.struct_size = sizeof(geometry);
+    geometry.abi_version = KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION;
+    geometry.patchset_version = KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION;
+    geometry.visible = *visible ? 1u : 0u;
+    geometry.x = static_cast<float>(*x);
+    geometry.y = static_cast<float>(*y);
+    geometry.width = static_cast<float>(*width);
+    geometry.height = static_cast<float>(*height);
+    geometry.fit = fit_value;
+    const int32_t result =
+        api.set_stage_geometry(reinterpret_cast<uintptr_t>(view), &geometry);
+    if (result != kKirakaraFlutterCompositorSuccess) {
+      *error =
+          "The Engine rejected Stage geometry: " + ResultName(result) + ".";
+      return false;
+    }
+    return true;
+  }
+
+  EncodableValue StageDiagnosticsValue(std::string *error) const {
+    KirakaraFlutterCompositorDiagnostics engine_diagnostics{};
+    if (!ReadDiagnostics(&engine_diagnostics, error)) {
+      return EncodableValue();
+    }
+    flutter::EncodableMap values{
+        {EncodableValue("engine"), DiagnosticsValue(engine_diagnostics)},
+        {EncodableValue("attached"), EncodableValue(stage_source != nullptr)},
+        {EncodableValue("active"),
+         EncodableValue(stage_active.load(std::memory_order_acquire))},
+        {EncodableValue("callbackCount"),
+         EncodableValue(static_cast<int64_t>(
+             stage_callback_count.load(std::memory_order_relaxed)))},
+        {EncodableValue("callbackRejectedCount"),
+         EncodableValue(static_cast<int64_t>(
+             stage_callback_rejected_count.load(std::memory_order_relaxed)))},
+        {EncodableValue("lastSubmitResult"),
+         EncodableValue(
+             last_stage_submit_result.load(std::memory_order_relaxed))},
+    };
+    if (stage_source && show_api_available) {
+      ShowHostStageVisualStats stats{};
+      stats.struct_size = sizeof(stats);
+      stats.abi_version = SHOW_HOST_STAGE_VISUAL_ABI_VERSION;
+      const int32_t result = show_api.get_stats(stage_source, &stats);
+      if (result != SHOW_HOST_STAGE_VISUAL_SUCCESS) {
+        *error = "Show Stage Visual diagnostics failed: " +
+                 StageVisualResultName(result) + ".";
+        return EncodableValue();
+      }
+      values.emplace(
+          EncodableValue("show"),
+          EncodableValue(flutter::EncodableMap{
+              {EncodableValue("lastHresult"),
+               EncodableValue(stats.last_hresult)},
+              {EncodableValue("publishedFrames"),
+               EncodableValue(static_cast<int64_t>(stats.published_frames))},
+              {EncodableValue("producerBusyDrops"),
+               EncodableValue(static_cast<int64_t>(stats.producer_busy_drops))},
+              {EncodableValue("callbackCount"),
+               EncodableValue(static_cast<int64_t>(stats.callback_count))},
+              {EncodableValue("resourceRecreations"),
+               EncodableValue(
+                   static_cast<int64_t>(stats.resource_recreations))},
+              {EncodableValue("resourceGeneration"),
+               EncodableValue(static_cast<int64_t>(stats.resource_generation))},
+              {EncodableValue("contentGeneration"),
+               EncodableValue(static_cast<int64_t>(stats.content_generation))},
+              {EncodableValue("frameId"),
+               EncodableValue(static_cast<int64_t>(stats.frame_id))},
+          }));
+    }
+    return EncodableValue(values);
+  }
+
+  bool Attach(flutter::FlutterEngine *engine, std::string *error) {
+    prepared = false;
+    if (!engine) {
+      *error =
+          "The " + backend + " DirectComposition view has no Flutter Engine.";
+      return false;
+    }
+    flutter_engine = engine;
     const FlutterDesktopPluginRegistrarRef registrar =
         engine->GetRegistrarForPlugin("kirakara_dcomp_compositor");
     view =
         registrar ? FlutterDesktopPluginRegistrarGetView(registrar) : nullptr;
     if (!view) {
-      *error = "The synthetic DirectComposition view reference is unavailable.";
+      *error = "The " + backend +
+               " DirectComposition view reference is unavailable.";
       return false;
     }
 
@@ -410,28 +889,115 @@ struct DcompCompositorBridge::Impl {
     if (!ReadDiagnostics(&diagnostics, error)) {
       return false;
     }
-    constexpr uint64_t kRequiredCapabilities =
+    constexpr uint64_t kBaseCapabilities =
         kKirakaraFlutterCompositorDirectComposition |
         kKirakaraFlutterCompositorPremultipliedAlpha |
-        kKirakaraFlutterCompositorSyntheticStageProducer |
         kKirakaraFlutterCompositorIndependentStageProducer |
-        kKirakaraFlutterCompositorCompositorClockPacing |
         kKirakaraFlutterCompositorInPlaceResize;
+    const uint64_t required_capabilities =
+        backend == "synthetic"
+            ? kBaseCapabilities |
+                  kKirakaraFlutterCompositorSyntheticStageProducer |
+                  kKirakaraFlutterCompositorCompositorClockPacing
+            : kBaseCapabilities |
+                  kKirakaraFlutterCompositorExternalStageConsumer |
+                  kKirakaraFlutterCompositorNtHandle |
+                  kKirakaraFlutterCompositorKeyedMutex |
+                  kKirakaraFlutterCompositorLatestFrame |
+                  kKirakaraFlutterCompositorEventDrivenConsumer |
+                  kKirakaraFlutterCompositorStageFitAndClip;
     if (!diagnostics.active ||
-        (diagnostics.capabilities & kRequiredCapabilities) !=
-            kRequiredCapabilities) {
-      *error =
-          "The patched Engine created a view, but the required synthetic "
-          "DirectComposition capabilities are not active (init HRESULT " +
-          HexHresult(diagnostics.initialization_hresult) + ").";
+        (diagnostics.capabilities & required_capabilities) !=
+            required_capabilities) {
+      *error = "The patched Engine created a view, but the required " +
+               backend +
+               " DirectComposition capabilities are not active (init "
+               "HRESULT " +
+               HexHresult(diagnostics.initialization_hresult) + ").";
       return false;
     }
 
     channel = std::make_unique<flutter::MethodChannel<EncodableValue>>(
         engine->messenger(), kChannelName,
         &flutter::StandardMethodCodec::GetInstance());
-    channel->SetMethodCallHandler([this](const MethodCall& call,
+    channel->SetMethodCallHandler([this](const MethodCall &call,
                                          std::unique_ptr<MethodResult> result) {
+      if (call.method_name() == "attachStage") {
+        if (backend != "composed") {
+          result->Error("dcomp_stage_backend_unavailable",
+                        "The active compositor backend is not composed.");
+          return;
+        }
+        const auto host = ReadMapInteger(call.arguments(), "hostHandle");
+        std::string error;
+        if (!host || *host == 0 ||
+            !AttachStage(
+                reinterpret_cast<ShowHostHandle>(static_cast<intptr_t>(*host)),
+                &error)) {
+          result->Error("dcomp_stage_attach_failed", error);
+          return;
+        }
+        result->Success(EncodableValue(flutter::EncodableMap{
+            {EncodableValue("backend"), EncodableValue("composed")},
+            {EncodableValue("protocol"),
+             EncodableValue(SHOW_HOST_STAGE_VISUAL_PROTOCOL_REVISION)},
+        }));
+        return;
+      }
+      if (call.method_name() == "setStageActive") {
+        const auto active = ReadMapBoolean(call.arguments(), "active");
+        if (backend != "composed") {
+          result->Error("dcomp_stage_backend_unavailable",
+                        "The active compositor backend is not composed.");
+          return;
+        }
+        if (!active) {
+          result->Error("dcomp_stage_invalid_activity",
+                        "Stage activity requires a boolean active value.");
+          return;
+        }
+        std::string error;
+        if (!SetStageActive(*active, &error)) {
+          result->Error("dcomp_stage_activity_failed", error);
+          return;
+        }
+        result->Success(EncodableValue(true));
+        return;
+      }
+      if (call.method_name() == "setStageGeometry") {
+        if (backend != "composed") {
+          result->Error("dcomp_stage_backend_unavailable",
+                        "The active compositor backend is not composed.");
+          return;
+        }
+        std::string error;
+        if (!SetStageGeometry(call.arguments(), &error)) {
+          result->Error("dcomp_stage_geometry_failed", error);
+          return;
+        }
+        result->Success(EncodableValue(true));
+        return;
+      }
+      if (call.method_name() == "detachStage") {
+        if (backend != "composed") {
+          result->Error("dcomp_stage_backend_unavailable",
+                        "The active compositor backend is not composed.");
+          return;
+        }
+        ReleaseStageSource();
+        result->Success(EncodableValue(true));
+        return;
+      }
+      if (call.method_name() == "getStageDiagnostics") {
+        std::string error;
+        const EncodableValue values = StageDiagnosticsValue(&error);
+        if (!error.empty()) {
+          result->Error("dcomp_stage_diagnostics_unavailable", error);
+          return;
+        }
+        result->Success(values);
+        return;
+      }
       if (call.method_name() == "getDiagnostics") {
         KirakaraFlutterCompositorDiagnostics diagnostics{};
         std::string error;
@@ -465,7 +1031,7 @@ struct DcompCompositorBridge::Impl {
                 window_dpi_context,
                 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE;
         result->Success(EncodableValue(flutter::EncodableMap{
-            {EncodableValue("backend"), EncodableValue("synthetic")},
+            {EncodableValue("backend"), EncodableValue(backend)},
             {EncodableValue("abiVersion"),
              EncodableValue(static_cast<int32_t>(api.abi_version))},
             {EncodableValue("patchsetVersion"),
@@ -478,9 +1044,12 @@ struct DcompCompositorBridge::Impl {
              EncodableValue(static_cast<int32_t>(top_level_windows.total))},
             {EncodableValue("visibleTopLevelWindowCount"),
              EncodableValue(static_cast<int32_t>(top_level_windows.visible))},
+            {EncodableValue("visibleInteractiveTopLevelWindowCount"),
+             EncodableValue(static_cast<int32_t>(
+                 top_level_windows.visible_interactive))},
             {EncodableValue("topLevelWindow"),
-             EncodableValue(static_cast<int64_t>(
-                 reinterpret_cast<uintptr_t>(window)))},
+             EncodableValue(
+                 static_cast<int64_t>(reinterpret_cast<uintptr_t>(window)))},
             {EncodableValue("windowDpi"),
              EncodableValue(static_cast<int32_t>(window_dpi))},
             {EncodableValue("windowScalePercent"),
@@ -499,7 +1068,7 @@ struct DcompCompositorBridge::Impl {
         return;
       }
       if (call.method_name() == "stallPlatformThreadForTest") {
-        if (!SyntheticTestModeEnabled()) {
+        if (!CompositorTestModeEnabled()) {
           result->Error(
               "dcomp_test_mode_disabled",
               "Set KIRAKARA_COMPOSITOR_TEST_MODE=1 to use the bounded "
@@ -545,7 +1114,7 @@ struct DcompCompositorBridge::Impl {
         return;
       }
       if (call.method_name() == "resizeWindowByForTest") {
-        if (!SyntheticTestModeEnabled()) {
+        if (!CompositorTestModeEnabled()) {
           result->Error(
               "dcomp_test_mode_disabled",
               "Set KIRAKARA_COMPOSITOR_TEST_MODE=1 to resize the probe "
@@ -572,11 +1141,10 @@ struct DcompCompositorBridge::Impl {
         return;
       }
       if (call.method_name() == "moveWindowToMonitorForTest") {
-        if (!SyntheticTestModeEnabled()) {
-          result->Error(
-              "dcomp_test_mode_disabled",
-              "Set KIRAKARA_COMPOSITOR_TEST_MODE=1 to move the probe "
-              "window between monitors.");
+        if (!CompositorTestModeEnabled()) {
+          result->Error("dcomp_test_mode_disabled",
+                        "Set KIRAKARA_COMPOSITOR_TEST_MODE=1 to move the probe "
+                        "window between monitors.");
           return;
         }
         const auto monitor_index = ReadTestMonitorIndex(call.arguments());
@@ -588,9 +1156,9 @@ struct DcompCompositorBridge::Impl {
           return;
         }
         if (!window || !::IsWindow(window) ||
-            !::PostMessageW(
-                window, kKirakaraCompositorMoveToMonitorForTestMessage,
-                static_cast<WPARAM>(*monitor_index), 0)) {
+            !::PostMessageW(window,
+                            kKirakaraCompositorMoveToMonitorForTestMessage,
+                            static_cast<WPARAM>(*monitor_index), 0)) {
           result->Error("dcomp_test_monitor_move_unavailable",
                         "Could not queue the synthetic compositor monitor "
                         "move.");
@@ -600,7 +1168,7 @@ struct DcompCompositorBridge::Impl {
         return;
       }
       if (call.method_name() == "closeWindowForTest") {
-        if (!SyntheticTestModeEnabled()) {
+        if (!CompositorTestModeEnabled()) {
           result->Error(
               "dcomp_test_mode_disabled",
               "Set KIRAKARA_COMPOSITOR_TEST_MODE=1 to close the probe window.");
@@ -620,8 +1188,8 @@ struct DcompCompositorBridge::Impl {
     return true;
   }
 
-  bool ReadDiagnostics(KirakaraFlutterCompositorDiagnostics* diagnostics,
-                       std::string* error) const {
+  bool ReadDiagnostics(KirakaraFlutterCompositorDiagnostics *diagnostics,
+                       std::string *error) const {
     *diagnostics = {};
     diagnostics->struct_size = sizeof(*diagnostics);
     diagnostics->abi_version = KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION;
@@ -638,19 +1206,54 @@ struct DcompCompositorBridge::Impl {
         diagnostics->abi_version != KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION ||
         diagnostics->patchset_version !=
             KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION) {
-      *error =
-          "Kirakara compositor diagnostics returned incompatible "
-          "version metadata.";
+      *error = "Kirakara compositor diagnostics returned incompatible "
+               "version metadata.";
       return false;
     }
     return true;
   }
 
+  void Shutdown() {
+    if (shutting_down.exchange(true, std::memory_order_acq_rel)) {
+      return;
+    }
+    if (backend == "composed") {
+      ReleaseStageSource();
+    }
+    show_stage_device.Reset();
+    show_set_stage_device = nullptr;
+    show_api = {};
+    show_api_available = false;
+    if (show_module && owns_show_module) {
+      ::FreeLibrary(show_module);
+    }
+    show_module = nullptr;
+    owns_show_module = false;
+    flutter_engine = nullptr;
+  }
+
   KirakaraFlutterCompositorApi api{};
+  std::string backend;
+  flutter::FlutterEngine *flutter_engine{};
   FlutterDesktopViewRef view{};
   HWND window{};
   bool prepared{};
   std::unique_ptr<flutter::MethodChannel<EncodableValue>> channel;
+  HMODULE show_module{};
+  bool owns_show_module{};
+  bool show_api_available{};
+  ShowHostStageVisualApi show_api{};
+  ShowHostSetStageD3dDeviceProc show_set_stage_device{};
+  ShowHostHandle attached_show_host{};
+  ShowHostStageVisualSource stage_source{};
+  Microsoft::WRL::ComPtr<ID3D11Device> show_stage_device;
+  std::atomic_bool stage_active{};
+  std::atomic_bool shutting_down{};
+  std::atomic_uint64_t stage_callback_count{};
+  std::atomic_uint64_t stage_callback_rejected_count{};
+  std::atomic_int32_t last_stage_submit_result{
+      kKirakaraFlutterCompositorSuccess};
+  std::mutex stage_source_mutex;
 };
 
 DcompCompositorBridge::DcompCompositorBridge()
@@ -659,28 +1262,28 @@ DcompCompositorBridge::DcompCompositorBridge()
 DcompCompositorBridge::~DcompCompositorBridge() { Shutdown(); }
 
 bool DcompCompositorBridge::PrepareNextView(HWND top_level_window,
-                                            std::string* error) {
+                                            std::string *error) {
   const std::string backend = ReadBackendEnvironment();
   if (backend.empty() || backend == "stock" || backend == "external_texture") {
     return true;
   }
-  if (backend != "synthetic") {
+  if (backend != "synthetic" && backend != "composed") {
     *error = "Unsupported KIRAKARA_COMPOSITOR_BACKEND='" + backend +
-             "'. Expected stock, external_texture, or synthetic.";
+             "'. Expected stock, external_texture, synthetic, or composed.";
     return false;
   }
   enabled_ = true;
+  impl_->backend = backend;
   if (!top_level_window || !::IsWindow(top_level_window)) {
-    *error =
-        "The synthetic DirectComposition backend requires a valid "
-        "top-level HWND.";
+    *error = "The " + backend +
+             " DirectComposition backend requires a valid top-level HWND.";
     return false;
   }
   return impl_->ResolveApi(error) && impl_->Prepare(top_level_window, error);
 }
 
-bool DcompCompositorBridge::Attach(flutter::FlutterEngine* engine,
-                                   std::string* error) {
+bool DcompCompositorBridge::Attach(flutter::FlutterEngine *engine,
+                                   std::string *error) {
   return !enabled_ || impl_->Attach(engine, error);
 }
 
@@ -696,6 +1299,7 @@ void DcompCompositorBridge::Shutdown() {
     return;
   }
   CancelPreparedView();
+  impl_->Shutdown();
   impl_->channel.reset();
   impl_->view = nullptr;
   impl_->window = nullptr;
@@ -703,7 +1307,8 @@ void DcompCompositorBridge::Shutdown() {
 
 bool DcompCompositorBridge::HandleTestResizeMessage(int32_t width_delta,
                                                     int32_t height_delta) {
-  if (!enabled_ || !SyntheticTestModeEnabled() || !impl_ || !impl_->window ||
+  if (!enabled_ || !CompositorTestModeEnabled() || !impl_ ||
+      !impl_->window ||
       !::IsWindow(impl_->window) || width_delta < -512 || width_delta > 512 ||
       height_delta < -512 || height_delta > 512 ||
       (width_delta == 0 && height_delta == 0)) {
@@ -721,14 +1326,15 @@ bool DcompCompositorBridge::HandleTestResizeMessage(int32_t width_delta,
   if (width < 320 || height < 240 || width > 16384 || height > 16384) {
     return false;
   }
-  return ::SetWindowPos(impl_->window, nullptr, 0, 0,
-                        static_cast<int>(width), static_cast<int>(height),
+  return ::SetWindowPos(impl_->window, nullptr, 0, 0, static_cast<int>(width),
+                        static_cast<int>(height),
                         SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER) != FALSE;
 }
 
 bool DcompCompositorBridge::HandleTestMoveToMonitorMessage(
     int32_t monitor_index) {
-  if (!enabled_ || !SyntheticTestModeEnabled() || !impl_ || !impl_->window ||
+  if (!enabled_ || !CompositorTestModeEnabled() || !impl_ ||
+      !impl_->window ||
       !::IsWindow(impl_->window) || ::IsZoomed(impl_->window) ||
       monitor_index < 0) {
     return false;
@@ -744,18 +1350,18 @@ bool DcompCompositorBridge::HandleTestMoveToMonitorMessage(
   }
   const LONG width = bounds.right - bounds.left;
   const LONG height = bounds.bottom - bounds.top;
-  const RECT& work_area = monitors[monitor_index].work_area;
+  const RECT &work_area = monitors[monitor_index].work_area;
   const LONG available_width = work_area.right - work_area.left;
   const LONG available_height = work_area.bottom - work_area.top;
-  const int x = work_area.left +
-                std::max<LONG>(0, (available_width - width) / 2);
-  const int y = work_area.top +
-                std::max<LONG>(0, (available_height - height) / 2);
+  const int x =
+      work_area.left + std::max<LONG>(0, (available_width - width) / 2);
+  const int y =
+      work_area.top + std::max<LONG>(0, (available_height - height) / 2);
   return ::SetWindowPos(impl_->window, nullptr, x, y, 0, 0,
                         SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER) != FALSE;
 }
 
-void ReportDcompCompositorStartupError(HWND owner, const std::string& error) {
+void ReportDcompCompositorStartupError(HWND owner, const std::string &error) {
   const std::string debug_message =
       "Kirakara DirectComposition startup failed: " + error + "\n";
   ::OutputDebugStringA(debug_message.c_str());

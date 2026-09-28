@@ -34,7 +34,9 @@ class _LeftPane extends StatelessWidget {
               child: Container(
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
-                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                foregroundDecoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: KiraColors.lineStrong),
                 ),

@@ -6,7 +6,7 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$WorkspaceRoot,
 
-  [string]$LocalEngine = 'host_debug_kirakara_v2',
+  [string]$LocalEngine = 'host_debug_kirakara_v3',
 
   [ValidateRange(10, 120)]
   [int]$TimeoutSeconds = 45,

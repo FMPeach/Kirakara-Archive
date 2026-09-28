@@ -33,7 +33,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'stock external texture attaches while a real Show source plays',
+    'external texture attaches while a real Show source plays',
     (tester) async {
       for (final fixture in <String>[
         _videoPath,
@@ -58,7 +58,10 @@ void main() {
       });
 
       show.setStageVisible(false);
-      final textureId = await texture.attach(show.nativeHandleAddress);
+      final attachment = await texture.attach(show.nativeHandleAddress);
+      expect(attachment, isNotNull);
+      expect(attachment!.isComposed, isFalse);
+      final textureId = attachment.textureId;
       expect(textureId, isNotNull);
       expect(textureId, greaterThanOrEqualTo(0));
       await texture.setActive(true);

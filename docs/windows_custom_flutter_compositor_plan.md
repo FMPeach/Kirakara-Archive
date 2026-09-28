@@ -63,6 +63,20 @@
   已改为保留同一 target/Visual tree 并原位 `ResizeBuffers`；修复后自动缩放/恢复门槛
   通过，tree commit 全程保持 1；用户实机复测确认白闪和缩放后整窗 Stage 穿透均已
   消失，Flutter 控件保持可见。
+- Phase 3 已完成：Show 在独立分支/提交中增加版本化 NT handle + keyed mutex 的
+  latest-frame Stage Visual API，App/Runner/Engine v3 将真实 Show GPU 帧接入下层
+  DirectComposition Visual。两秒静止 Flutter 样本为 Show submit `+120`、Stage
+  Present `+120`、Flutter Present `+0`；750 ms platform-thread stall 为 Stage
+  `+45`、Flutter `+0`。真实门槛已覆盖无标题/带标题、暂停/恢复、重唱、12 秒自然
+  EOF、预准备后的 seamless 自然切歌、generation、fit/clip、遮罩/页面、resize 和
+  detach/reattach；
+  没有 callback 拒绝、handle/resource 失败、stale frame 或 device removal。
+- 官方 debug Engine 与 `host_debug_kirakara_v3` 都通过强制 external texture 的同一
+  真实 Show integration smoke；定制合成器失败不会静默落入回退掩盖 Bug。当前原始
+  Win32 枚举还会看到 Show 既有的离屏 `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE`
+  MediaEngine 时钟宿主，但可交互顶层窗口精确为 1，没有恢复 Stage 子 HWND/叠加 HWND
+  方案。协议、所有权、复现命令与未验证矩阵见
+  `docs/windows_compositor/phase3_real_show_stage.md`。
 
 ## 为什么要做这件事
 
@@ -422,11 +436,36 @@ HWND、尺寸或 DComp tree，且显示期间 Stage 仍独立推进。100% DPI �
 - 实现最新帧选择、generation 切换、fit、clip 和 detach。
 - 保留现有 external texture 后端，支持即时 A/B 测试。
 
+进展（2026-09-28）：Show commit `40e51d8` 定义了
+`nt-keyed-latest-v1` 协议，生产者 callback 只提交带 resource/content generation、
+frame ID、NT handle 和 keyed mutex key 的最新帧描述符，不等待 Flutter/DComp，也不
+调用 Dart。Engine consumer 由 event 唤醒，先以零超时 `AcquireSync` 探测；若生产者
+已经 `ReleaseSync`、但跨设备 GPU 工作仍未完成，则只在专用 consumer thread 上等待
+这一次已发布帧完成，不能丢弃描述符并把 mutex 永久留在 consumer key。取得帧后以
+GPU `CopyResource` 写入独立 composition swapchain；过期 mailbox 帧直接覆盖，无 CPU
+readback、常驻 timer 或 composed 路径逐帧 Flush。App 通过
+`StagePresentationAttachment` 明确区分 composed 透明孔与 external Texture。
+Show follow-up `7a822b2` 同步修正 GPU smoke 的慢驱动等待语义，避免测试消费者在
+首次 `WAIT_TIMEOUT` 后丢弃已发布 key 并误报失败。
+
+真实探针在 96 DPI / RTX 4060 Ti 上通过所有门槛：静止 UI 2 秒 Stage `+120` /
+Flutter `+0`，平台线程阻塞 750 ms Stage `+45` / Flutter `+0`；暂停稳定窗口漂移
+0.000 秒，恢复 750 ms 推进 0.744 秒，重唱从 1.222 秒回到 0.718 秒，12 秒自然 EOF
+精确进入 stopped，随后预准备曲目以 seamless 模式自然接续，detach/reattach 和静止
+样本仍正常。官方与定制 debug
+Engine 的 external texture A/B 均通过。标题门槛验证标题 KRL 真实加载；逐像素标题
+正确性由 Show renderer tests 覆盖，不从无截图样本外推。
+
 退出条件：
 
 - composed backend 与回退路径的 Stage 画面和时间表现一致。
 - composed 预览不会反压物理 Stage 或 Cast。
 - 已覆盖切歌、带标题/无标题、重唱、暂停/恢复和自然切歌的长时间测试。
+
+完成结论（2026-09-28）：在当前单屏环境，三项 Phase 3 退出条件均已满足并有自动
+计数/运输状态证据。物理双屏和 Cast 并行实机、不同 GPU、音视频 EOF 不一致，以及
+最小化/热插拔/睡眠/device removal/Show 重建属于后续 Phase 4/7 门槛，明确保持未
+验证，不能据当前通过结果宣称兼容矩阵完成。
 
 ### Phase 4：生命周期与失败恢复
 

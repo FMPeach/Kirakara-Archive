@@ -11,6 +11,9 @@ param(
   [ValidateSet('official', 'local')]
   [string]$Engine = 'official',
 
+  [ValidateSet('stock', 'patched')]
+  [string]$LocalVariant = 'stock',
+
   [string]$EngineWorkspaceRoot,
 
   [switch]$SkipCadenceGate
@@ -62,11 +65,15 @@ if ($Engine -eq 'local') {
   $lock = Get-EngineLock
   $layout = Get-EngineWorkspaceLayout $EngineWorkspaceRoot
   Assert-ExternalEngineWorkspace $layout
-  Assert-PinnedFlutterSource `
+  if ($LocalVariant -eq 'patched') {
+    Assert-AppliedPatchset -Lock $lock -Layout $layout
+  } else {
+    Assert-PinnedFlutterSource -Lock $lock -Layout $layout
+  }
+  $build = Get-BuildLock `
     -Lock $lock `
-    -Layout $layout `
-    -RequireStockTree:($lock.patchset.patches.Count -eq 0)
-  $build = Get-BuildLock -Lock $lock -Mode $Mode
+    -Mode $Mode `
+    -Variant $LocalVariant
   $selectedEngineDirectory = Join-Path `
     $layout.EngineSource "out\$($build.localEngine)"
   Assert-LockedEngineArtifacts `
@@ -83,8 +90,13 @@ foreach ($entry in $fixtures.GetEnumerator()) {
 }
 
 $diagnosticsVariable = 'KIRAKARA_COMPOSITOR_DIAGNOSTICS'
+$backendVariable = 'KIRAKARA_COMPOSITOR_BACKEND'
 $previousDiagnostics = [Environment]::GetEnvironmentVariable(
   $diagnosticsVariable,
+  [EnvironmentVariableTarget]::Process
+)
+$previousBackend = [Environment]::GetEnvironmentVariable(
+  $backendVariable,
   [EnvironmentVariableTarget]::Process
 )
 $diagnosticsValue = if ($SkipCadenceGate) { '0' } else { '1' }
@@ -92,6 +104,11 @@ try {
   [Environment]::SetEnvironmentVariable(
     $diagnosticsVariable,
     $diagnosticsValue,
+    [EnvironmentVariableTarget]::Process
+  )
+  [Environment]::SetEnvironmentVariable(
+    $backendVariable,
+    'external_texture',
     [EnvironmentVariableTarget]::Process
   )
   Push-Location $appRoot
@@ -136,6 +153,11 @@ try {
   [Environment]::SetEnvironmentVariable(
     $diagnosticsVariable,
     $previousDiagnostics,
+    [EnvironmentVariableTarget]::Process
+  )
+  [Environment]::SetEnvironmentVariable(
+    $backendVariable,
+    $previousBackend,
     [EnvironmentVariableTarget]::Process
   )
 }

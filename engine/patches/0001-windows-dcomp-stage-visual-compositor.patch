@@ -42,10 +42,10 @@ index 09b52a96fb0b1c5271ca76079af495173aa4460a..8411ddf3e497011f2ab2b0a78caa023e
      "settings_plugin_unittests.cc",
 diff --git a/engine/src/flutter/shell/platform/windows/egl/composition_window_surface.cc b/engine/src/flutter/shell/platform/windows/egl/composition_window_surface.cc
 new file mode 100644
-index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5781bfbc0
+index 0000000000000000000000000000000000000000..326c46f69e0e1741723b5c4222e52edf3ed7bd00
 --- /dev/null
 +++ b/engine/src/flutter/shell/platform/windows/egl/composition_window_surface.cc
-@@ -0,0 +1,611 @@
+@@ -0,0 +1,1003 @@
 +// Copyright 2013 The Flutter Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -67,13 +67,20 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +
 +constexpr UINT kSwapChainBufferCount = 2;
 +constexpr DWORD kStatusGraphicsPresentOccluded = 0xC01E0006u;
-+constexpr uint64_t kCapabilities =
++constexpr uint64_t kBaseCapabilities =
 +    kKirakaraFlutterCompositorDirectComposition |
 +    kKirakaraFlutterCompositorPremultipliedAlpha |
-+    kKirakaraFlutterCompositorSyntheticStageProducer |
 +    kKirakaraFlutterCompositorIndependentStageProducer |
-+    kKirakaraFlutterCompositorCompositorClockPacing |
 +    kKirakaraFlutterCompositorInPlaceResize;
++constexpr uint64_t kSyntheticCapabilities =
++    kBaseCapabilities | kKirakaraFlutterCompositorSyntheticStageProducer |
++    kKirakaraFlutterCompositorCompositorClockPacing;
++constexpr uint64_t kExternalCapabilities =
++    kBaseCapabilities | kKirakaraFlutterCompositorExternalStageConsumer |
++    kKirakaraFlutterCompositorNtHandle | kKirakaraFlutterCompositorKeyedMutex |
++    kKirakaraFlutterCompositorLatestFrame |
++    kKirakaraFlutterCompositorEventDrivenConsumer |
++    kKirakaraFlutterCompositorStageFitAndClip;
 +
 +DXGI_SWAP_CHAIN_DESC1 MakeCompositionSwapChainDescription(size_t width,
 +                                                          size_t height,
@@ -132,6 +139,14 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +  Destroy();
 +}
 +
++bool CompositionWindowSurface::synthetic_stage() const {
++  return (config_.flags & kKirakaraFlutterCompositorSyntheticStage) != 0;
++}
++
++bool CompositionWindowSurface::external_stage() const {
++  return (config_.flags & kKirakaraFlutterCompositorExternalStage) != 0;
++}
++
 +bool CompositionWindowSurface::Initialize() {
 +  if (!manager_ || !manager_->IsValid() || !state_ || width_ == 0 ||
 +      height_ == 0 || width_ > std::numeric_limits<UINT>::max() ||
@@ -162,8 +177,16 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +    return Fail(result, "resolve IDXGIFactory2");
 +  }
 +
++  if ((!synthetic_stage() && !external_stage()) ||
++      (synthetic_stage() && external_stage()) ||
++      (external_stage() && !state_->stage_update_event)) {
++    return Fail(E_INVALIDARG, "validate Stage compositor mode");
++  }
++
 +  if (!CreateFlutterSwapChain(angle_device.Get(), factory.Get()) ||
-+      !CreateSyntheticStage(adapter.Get(), factory.Get()) ||
++      !CreateStageDevice(adapter.Get(), factory.Get()) ||
++      (synthetic_stage() &&
++       !CreateSyntheticStage(adapter.Get(), factory.Get())) ||
 +      !CreateCompositionTree(angle_dxgi_device.Get()) ||
 +      !CreateFlutterEglSurface(angle_device.Get())) {
 +    return false;
@@ -178,9 +201,12 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +  state_->width.store(static_cast<uint32_t>(width_), std::memory_order_relaxed);
 +  state_->height.store(static_cast<uint32_t>(height_),
 +                       std::memory_order_relaxed);
-+  state_->capabilities.store(kCapabilities, std::memory_order_release);
++  state_->capabilities.store(
++      synthetic_stage() ? kSyntheticCapabilities : kExternalCapabilities,
++      std::memory_order_release);
 +  state_->initialization_hresult.store(S_OK, std::memory_order_release);
 +  state_->last_resize_hresult.store(S_OK, std::memory_order_release);
++  state_->last_stage_resource_hresult.store(S_OK, std::memory_order_release);
 +  state_->active.store(true, std::memory_order_release);
 +  valid_ = true;
 +  StartStageProducer();
@@ -207,19 +233,10 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +
 +bool CompositionWindowSurface::CreateSyntheticStage(IDXGIAdapter* adapter,
 +                                                    IDXGIFactory2* factory) {
-+  D3D_FEATURE_LEVEL feature_level{};
-+  HRESULT result = ::D3D11CreateDevice(
-+      adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr,
-+      D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
-+      &stage_device_, &feature_level, &stage_context_);
-+  if (FAILED(result)) {
-+    return Fail(result, "create independent Stage D3D11 device");
-+  }
-+
 +  const DXGI_SWAP_CHAIN_DESC1 description =
 +      MakeCompositionSwapChainDescription(width_, height_, 0);
 +  Microsoft::WRL::ComPtr<IDXGISwapChain1> swap_chain;
-+  result = factory->CreateSwapChainForComposition(
++  HRESULT result = factory->CreateSwapChainForComposition(
 +      stage_device_.Get(), &description, nullptr, &swap_chain);
 +  if (FAILED(result)) {
 +    return Fail(result, "create Stage composition swapchain");
@@ -239,15 +256,17 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +  if (FAILED(result)) {
 +    return Fail(result, "create DirectComposition device");
 +  }
-+  const HMODULE dcomp_module = ::GetModuleHandleW(L"dcomp.dll");
-+  wait_for_compositor_clock_ =
-+      dcomp_module
-+          ? reinterpret_cast<WaitForCompositorClockProc>(::GetProcAddress(
-+                dcomp_module, "DCompositionWaitForCompositorClock"))
-+          : nullptr;
-+  if (!wait_for_compositor_clock_) {
-+    return Fail(HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND),
-+                "resolve DirectComposition compositor clock");
++  if (synthetic_stage()) {
++    const HMODULE dcomp_module = ::GetModuleHandleW(L"dcomp.dll");
++    wait_for_compositor_clock_ =
++        dcomp_module
++            ? reinterpret_cast<WaitForCompositorClockProc>(::GetProcAddress(
++                  dcomp_module, "DCompositionWaitForCompositorClock"))
++            : nullptr;
++    if (!wait_for_compositor_clock_) {
++      return Fail(HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND),
++                  "resolve DirectComposition compositor clock");
++    }
 +  }
 +
 +  result = composition_device_->CreateTargetForHwnd(
@@ -261,7 +280,8 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +      FAILED(result = composition_device_->CreateVisual(&flutter_visual_))) {
 +    return Fail(result, "create DirectComposition visuals");
 +  }
-+  if (FAILED(result = stage_visual_->SetContent(stage_swap_chain_.Get())) ||
++  if ((synthetic_stage() &&
++       FAILED(result = stage_visual_->SetContent(stage_swap_chain_.Get()))) ||
 +      FAILED(result = flutter_visual_->SetContent(flutter_swap_chain_.Get())) ||
 +      FAILED(result = root_visual_->AddVisual(stage_visual_.Get(), FALSE,
 +                                              nullptr)) ||
@@ -271,8 +291,30 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +      FAILED(result = composition_device_->Commit())) {
 +    return Fail(result, "commit DirectComposition visual tree");
 +  }
-+  state_->composition_tree_commit_count.fetch_add(1,
-+                                                   std::memory_order_relaxed);
++  state_->composition_tree_commit_count.fetch_add(1, std::memory_order_relaxed);
++  return true;
++}
++
++bool CompositionWindowSurface::CreateStageDevice(IDXGIAdapter* adapter,
++                                                 IDXGIFactory2* factory) {
++  if (!adapter || !factory) {
++    return Fail(E_INVALIDARG, "validate independent Stage device inputs");
++  }
++  D3D_FEATURE_LEVEL feature_level{};
++  HRESULT result = ::D3D11CreateDevice(
++      adapter, D3D_DRIVER_TYPE_UNKNOWN, nullptr,
++      D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
++      &stage_device_, &feature_level, &stage_context_);
++  if (FAILED(result)) {
++    return Fail(result, "create independent Stage D3D11 device");
++  }
++  stage_factory_ = factory;
++  if (external_stage()) {
++    result = stage_device_.As(&stage_device1_);
++    if (FAILED(result)) {
++      return Fail(result, "query external Stage ID3D11Device1");
++    }
++  }
 +  return true;
 +}
 +
@@ -320,8 +362,13 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +
 +void CompositionWindowSurface::StartStageProducer(
 +    bool render_initial_frame) const {
-+  stage_thread_ = std::thread(&CompositionWindowSurface::StageProducerMain,
-+                              this, render_initial_frame);
++  if (synthetic_stage()) {
++    stage_thread_ = std::thread(&CompositionWindowSurface::StageProducerMain,
++                                this, render_initial_frame);
++  } else {
++    stage_thread_ =
++        std::thread(&CompositionWindowSurface::ExternalStageConsumerMain, this);
++  }
 +}
 +
 +void CompositionWindowSurface::StopStageProducer() {
@@ -337,8 +384,8 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +    bool render_initial_frame) const {
 +  uint64_t frame_number =
 +      state_->stage_present_count.load(std::memory_order_relaxed);
-+  HRESULT result = render_initial_frame ? RenderSyntheticStage(frame_number++)
-+                                        : S_OK;
++  HRESULT result =
++      render_initial_frame ? RenderSyntheticStage(frame_number++) : S_OK;
 +  while (SUCCEEDED(result)) {
 +    const DWORD wait_result =
 +        wait_for_compositor_clock_(1, &stage_stop_event_, INFINITE);
@@ -360,6 +407,324 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +    state_->stage_wait_wake_count.fetch_add(1, std::memory_order_relaxed);
 +    result = RenderSyntheticStage(frame_number++);
 +  }
++}
++
++void CompositionWindowSurface::ExternalStageConsumerMain() const {
++  const HANDLE handles[] = {stage_stop_event_, state_->stage_update_event};
++  while (true) {
++    const DWORD wait_result =
++        ::WaitForMultipleObjects(2, handles, FALSE, INFINITE);
++    if (wait_result == WAIT_OBJECT_0) {
++      break;
++    }
++    if (wait_result != WAIT_OBJECT_0 + 1) {
++      const HRESULT result = HRESULT_FROM_WIN32(::GetLastError());
++      state_->last_stage_resource_hresult.store(result,
++                                                std::memory_order_relaxed);
++      FML_LOG(ERROR) << "Kirakara external Stage event wait failed "
++                        "(HRESULT 0x"
++                     << std::hex << static_cast<uint32_t>(result) << ")";
++      break;
++    }
++
++    state_->stage_wait_wake_count.fetch_add(1, std::memory_order_relaxed);
++    KirakaraStageUpdate update = state_->TakeLatestStageUpdate();
++    HRESULT result = S_OK;
++    {
++      std::scoped_lock graphics_lock(stage_graphics_mutex_);
++      if (update.detach_sequence != external_stage_detach_sequence_) {
++        result = DetachExternalStageVisual();
++        external_stage_texture_.Reset();
++        external_stage_mutex_.Reset();
++        external_stage_resource_generation_ = 0;
++        state_->stage_resource_generation.store(0, std::memory_order_relaxed);
++        state_->stage_content_generation.store(0, std::memory_order_relaxed);
++        state_->stage_frame_id.store(0, std::memory_order_relaxed);
++        external_stage_detach_sequence_ = update.detach_sequence;
++      }
++
++      const bool geometry_changed =
++          update.geometry_sequence != external_stage_geometry_sequence_;
++      if (geometry_changed) {
++        external_stage_geometry_ = update.geometry;
++        external_stage_geometry_sequence_ = update.geometry_sequence;
++      }
++
++      if (SUCCEEDED(result) && update.has_frame) {
++        result = ConsumeExternalStageFrame(&update, geometry_changed);
++      } else if (SUCCEEDED(result) && geometry_changed) {
++        result = ApplyExternalStageGeometry(true);
++      }
++    }
++    if (update.duplicated_nt_handle) {
++      ::CloseHandle(update.duplicated_nt_handle);
++      update.duplicated_nt_handle = nullptr;
++    }
++    state_->last_stage_resource_hresult.store(result,
++                                              std::memory_order_relaxed);
++    if (result == DXGI_ERROR_DEVICE_REMOVED ||
++        result == DXGI_ERROR_DEVICE_RESET) {
++      state_->stage_device_removed_count.fetch_add(1,
++                                                   std::memory_order_relaxed);
++    }
++  }
++}
++
++HRESULT CompositionWindowSurface::OpenExternalStageResource(
++    KirakaraStageUpdate* update) const {
++  if (!update || !update->duplicated_nt_handle || !stage_device1_) {
++    return E_INVALIDARG;
++  }
++
++  Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
++  HRESULT result = stage_device1_->OpenSharedResource1(
++      update->duplicated_nt_handle, IID_PPV_ARGS(&texture));
++  ::CloseHandle(update->duplicated_nt_handle);
++  update->duplicated_nt_handle = nullptr;
++  if (FAILED(result)) {
++    state_->stage_resource_open_failure_count.fetch_add(
++        1, std::memory_order_relaxed);
++    state_->ResetSubmittedResourceAfterOpenFailure(
++        update->frame.resource_generation);
++    return result;
++  }
++
++  D3D11_TEXTURE2D_DESC description{};
++  texture->GetDesc(&description);
++  constexpr UINT kRequiredMiscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
++                                      D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
++  if (description.Width != update->frame.width ||
++      description.Height != update->frame.height ||
++      description.Format !=
++          static_cast<DXGI_FORMAT>(update->frame.dxgi_format) ||
++      (description.MiscFlags & kRequiredMiscFlags) != kRequiredMiscFlags ||
++      description.SampleDesc.Count != 1) {
++    state_->stage_resource_open_failure_count.fetch_add(
++        1, std::memory_order_relaxed);
++    state_->ResetSubmittedResourceAfterOpenFailure(
++        update->frame.resource_generation);
++    return E_INVALIDARG;
++  }
++
++  Microsoft::WRL::ComPtr<IDXGIKeyedMutex> keyed_mutex;
++  result = texture.As(&keyed_mutex);
++  if (FAILED(result)) {
++    state_->stage_resource_open_failure_count.fetch_add(
++        1, std::memory_order_relaxed);
++    state_->ResetSubmittedResourceAfterOpenFailure(
++        update->frame.resource_generation);
++    return result;
++  }
++
++  external_stage_texture_ = std::move(texture);
++  external_stage_mutex_ = std::move(keyed_mutex);
++  external_stage_resource_generation_ = update->frame.resource_generation;
++  return S_OK;
++}
++
++HRESULT CompositionWindowSurface::EnsureExternalStageSwapChain(
++    uint32_t width,
++    uint32_t height) const {
++  if (!stage_device_ || !stage_context_ || !stage_factory_ || width == 0 ||
++      height == 0) {
++    return E_INVALIDARG;
++  }
++  if (stage_swap_chain_ && external_stage_width_ == width &&
++      external_stage_height_ == height) {
++    return S_OK;
++  }
++
++  HRESULT result = DetachExternalStageVisual();
++  if (FAILED(result)) {
++    return result;
++  }
++  stage_context_->ClearState();
++  if (!stage_swap_chain_) {
++    const DXGI_SWAP_CHAIN_DESC1 description =
++        MakeCompositionSwapChainDescription(width, height, 0);
++    Microsoft::WRL::ComPtr<IDXGISwapChain1> swap_chain;
++    result = stage_factory_->CreateSwapChainForComposition(
++        stage_device_.Get(), &description, nullptr, &swap_chain);
++    if (SUCCEEDED(result)) {
++      result = swap_chain.As(&stage_swap_chain_);
++    }
++  } else {
++    result = stage_swap_chain_->ResizeBuffers(kSwapChainBufferCount, width,
++                                              height, DXGI_FORMAT_UNKNOWN, 0);
++  }
++  if (FAILED(result)) {
++    return result;
++  }
++  external_stage_width_ = width;
++  external_stage_height_ = height;
++  return S_OK;
++}
++
++HRESULT CompositionWindowSurface::ConsumeExternalStageFrame(
++    KirakaraStageUpdate* update,
++    bool geometry_changed) const {
++  if (!update || !update->has_frame) {
++    return E_INVALIDARG;
++  }
++  const bool opened_new_resource = update->duplicated_nt_handle != nullptr;
++  HRESULT result = S_OK;
++  if (opened_new_resource) {
++    result = OpenExternalStageResource(update);
++    if (FAILED(result)) {
++      return result;
++    }
++  }
++  if (!external_stage_texture_ || !external_stage_mutex_ ||
++      external_stage_resource_generation_ !=
++          update->frame.resource_generation) {
++    return HRESULT_FROM_WIN32(ERROR_INVALID_HANDLE);
++  }
++
++  result =
++      external_stage_mutex_->AcquireSync(update->frame.consumer_acquire_key, 0);
++  if (result == WAIT_TIMEOUT) {
++    state_->stage_acquire_busy_count.fetch_add(1, std::memory_order_relaxed);
++    // ReleaseSync publishes the consumer key before Show invokes the callback,
++    // but cross-device GPU work can still be completing when this thread first
++    // probes it. Dropping the descriptor here would strand the keyed mutex at
++    // the consumer key: Show intentionally never waits for the producer key,
++    // so every later preview frame would then be dropped. Wait exactly once on
++    // this dedicated consumer thread. This cannot block Show, Flutter's
++    // platform/raster threads, the physical Stage or Cast, and it introduces
++    // no timer or polling loop.
++    result = external_stage_mutex_->AcquireSync(
++        update->frame.consumer_acquire_key, INFINITE);
++  }
++  if (FAILED(result)) {
++    return result;
++  }
++
++  HRESULT copy_result =
++      EnsureExternalStageSwapChain(update->frame.width, update->frame.height);
++  Microsoft::WRL::ComPtr<ID3D11Texture2D> swap_chain_buffer;
++  if (SUCCEEDED(copy_result)) {
++    copy_result = stage_swap_chain_->GetBuffer(
++        stage_swap_chain_->GetCurrentBackBufferIndex(),
++        IID_PPV_ARGS(&swap_chain_buffer));
++  }
++  if (SUCCEEDED(copy_result)) {
++    stage_context_->CopyResource(swap_chain_buffer.Get(),
++                                 external_stage_texture_.Get());
++  }
++
++  // ReleaseSync is the cross-device command submission boundary. There is no
++  // unconditional per-frame Flush on this path.
++  const HRESULT release_result =
++      external_stage_mutex_->ReleaseSync(update->frame.consumer_release_key);
++  if (FAILED(copy_result)) {
++    return copy_result;
++  }
++  if (FAILED(release_result)) {
++    return release_result;
++  }
++
++  result = stage_swap_chain_->Present(0, 0);
++  state_->last_stage_present_hresult.store(result, std::memory_order_relaxed);
++  if (FAILED(result)) {
++    return result;
++  }
++  state_->stage_present_count.fetch_add(1, std::memory_order_relaxed);
++  state_->stage_resource_generation.store(update->frame.resource_generation,
++                                          std::memory_order_relaxed);
++  state_->stage_content_generation.store(update->frame.content_generation,
++                                         std::memory_order_relaxed);
++  state_->stage_frame_id.store(update->frame.frame_id,
++                               std::memory_order_relaxed);
++
++  if (opened_new_resource || geometry_changed || !stage_visual_attached_) {
++    result = ApplyExternalStageGeometry(true);
++  }
++  return result;
++}
++
++HRESULT CompositionWindowSurface::ApplyExternalStageGeometry(
++    bool force_commit) const {
++  if (!force_commit) {
++    return S_OK;
++  }
++  if (stage_suspended_for_flutter_resize_ ||
++      external_stage_geometry_.visible == 0 || !stage_swap_chain_ ||
++      external_stage_width_ == 0 || external_stage_height_ == 0) {
++    return DetachExternalStageVisual();
++  }
++
++  const float source_width = static_cast<float>(external_stage_width_);
++  const float source_height = static_cast<float>(external_stage_height_);
++  const float target_width = external_stage_geometry_.width;
++  const float target_height = external_stage_geometry_.height;
++  float scale_x = target_width / source_width;
++  float scale_y = target_height / source_height;
++  float clip_left = 0.0f;
++  float clip_top = 0.0f;
++  float clip_right = source_width;
++  float clip_bottom = source_height;
++  float translation_x = external_stage_geometry_.x;
++  float translation_y = external_stage_geometry_.y;
++
++  if (external_stage_geometry_.fit ==
++      kKirakaraFlutterCompositorStageFitContain) {
++    const float scale = std::min(scale_x, scale_y);
++    scale_x = scale_y = scale;
++    translation_x += (target_width - source_width * scale) * 0.5f;
++    translation_y += (target_height - source_height * scale) * 0.5f;
++  } else if (external_stage_geometry_.fit ==
++             kKirakaraFlutterCompositorStageFitCover) {
++    const float scale = std::max(scale_x, scale_y);
++    scale_x = scale_y = scale;
++    const float visible_source_width = target_width / scale;
++    const float visible_source_height = target_height / scale;
++    clip_left = (source_width - visible_source_width) * 0.5f;
++    clip_top = (source_height - visible_source_height) * 0.5f;
++    clip_right = clip_left + visible_source_width;
++    clip_bottom = clip_top + visible_source_height;
++    translation_x -= clip_left * scale;
++    translation_y -= clip_top * scale;
++  }
++
++  const D2D_MATRIX_3X2_F transform = {scale_x, 0.0f,          0.0f,
++                                      scale_y, translation_x, translation_y};
++  const D2D_RECT_F clip = {clip_left, clip_top, clip_right, clip_bottom};
++  HRESULT result = stage_visual_->SetTransform(transform);
++  if (SUCCEEDED(result)) {
++    result = stage_visual_->SetClip(clip);
++  }
++  if (SUCCEEDED(result)) {
++    result = stage_visual_->SetBitmapInterpolationMode(
++        DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
++  }
++  if (SUCCEEDED(result) && !stage_visual_attached_) {
++    result = stage_visual_->SetContent(stage_swap_chain_.Get());
++  }
++  if (SUCCEEDED(result)) {
++    result = composition_device_->Commit();
++  }
++  if (SUCCEEDED(result)) {
++    stage_visual_attached_ = true;
++    state_->composition_tree_commit_count.fetch_add(1,
++                                                    std::memory_order_relaxed);
++  }
++  return result;
++}
++
++HRESULT CompositionWindowSurface::DetachExternalStageVisual() const {
++  if (!stage_visual_attached_) {
++    return S_OK;
++  }
++  HRESULT result = stage_visual_->SetContent(nullptr);
++  if (SUCCEEDED(result)) {
++    result = composition_device_->Commit();
++  }
++  if (SUCCEEDED(result)) {
++    stage_visual_attached_ = false;
++    state_->composition_tree_commit_count.fetch_add(1,
++                                                    std::memory_order_relaxed);
++  }
++  return result;
 +}
 +
 +HRESULT CompositionWindowSurface::RenderSyntheticStage(
@@ -435,8 +800,18 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +  // root, and only then constructed a new tree. During interactive WM_SIZE
 +  // traffic that deliberately exposed the uncomposited HWND as a white flash.
 +  resizing_ = true;
-+  StopStageProducer();
 +  stage_restart_pending_ = false;
++  HRESULT result = S_OK;
++  if (synthetic_stage()) {
++    StopStageProducer();
++  } else {
++    std::scoped_lock graphics_lock(stage_graphics_mutex_);
++    stage_suspended_for_flutter_resize_ = true;
++    result = DetachExternalStageVisual();
++    if (FAILED(result)) {
++      return Fail(result, "suspend external Stage visual for resize");
++    }
++  }
 +
 +  if (::eglGetCurrentContext() == context_ &&
 +      ::eglMakeCurrent(display_, EGL_NO_SURFACE, EGL_NO_SURFACE,
@@ -454,23 +829,26 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +  flutter_buffer_.texture.Reset();
 +
 +  // ResizeBuffers requires every direct and indirect reference to the old
-+  // back buffers to be released. Flutter only accesses its current back buffer
-+  // through a short-lived CopyResource destination, so no ANGLE state is
-+  // disturbed here. The independent Stage context owns its pipeline state and
-+  // can safely drop any remaining bindings without a per-frame Flush.
-+  stage_context_->ClearState();
++  // Flutter back buffers to be released. The external Stage swapchain retains
++  // source dimensions and continues accepting latest frames while its Visual
++  // is temporarily detached; it is never resized to the HWND.
++  if (synthetic_stage()) {
++    stage_context_->ClearState();
++  }
 +
-+  HRESULT result = flutter_swap_chain_->ResizeBuffers(
++  result = flutter_swap_chain_->ResizeBuffers(
 +      kSwapChainBufferCount, static_cast<UINT>(width),
 +      static_cast<UINT>(height), DXGI_FORMAT_UNKNOWN, 0);
 +  if (FAILED(result)) {
 +    return Fail(result, "resize Flutter composition swapchain");
 +  }
-+  result = stage_swap_chain_->ResizeBuffers(
-+      kSwapChainBufferCount, static_cast<UINT>(width),
-+      static_cast<UINT>(height), DXGI_FORMAT_UNKNOWN, 0);
-+  if (FAILED(result)) {
-+    return Fail(result, "resize Stage composition swapchain");
++  if (synthetic_stage()) {
++    result = stage_swap_chain_->ResizeBuffers(
++        kSwapChainBufferCount, static_cast<UINT>(width),
++        static_cast<UINT>(height), DXGI_FORMAT_UNKNOWN, 0);
++    if (FAILED(result)) {
++      return Fail(result, "resize synthetic Stage composition swapchain");
++    }
 +  }
 +
 +  width_ = width;
@@ -481,19 +859,18 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +    return false;
 +  }
 +
-+  state_->width.store(static_cast<uint32_t>(width_),
-+                      std::memory_order_relaxed);
++  state_->width.store(static_cast<uint32_t>(width_), std::memory_order_relaxed);
 +  state_->height.store(static_cast<uint32_t>(height_),
 +                       std::memory_order_relaxed);
 +  state_->last_resize_hresult.store(S_OK, std::memory_order_release);
 +  state_->surface_resize_count.fetch_add(1, std::memory_order_relaxed);
 +
 +  // OnFrameGenerated immediately blits the already-produced Flutter frame and
-+  // calls SwapBuffers. Deferring Stage restart until that Present keeps DWM
-+  // from composing a resized lower visual with an undefined upper buffer.
-+  if (!::ResetEvent(stage_stop_event_)) {
++  // calls SwapBuffers. Deferring Stage reappearance until that Present keeps
++  // DWM from composing a live lower visual with an undefined upper buffer.
++  if (synthetic_stage() && !::ResetEvent(stage_stop_event_)) {
 +    return Fail(HRESULT_FROM_WIN32(::GetLastError()),
-+                "reset Stage stop event after resize");
++                "reset synthetic Stage stop event after resize");
 +  }
 +  stage_restart_pending_ = true;
 +  resizing_ = false;
@@ -546,8 +923,12 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +  flutter_swap_chain_.Reset();
 +  flutter_context_.Reset();
 +
++  external_stage_mutex_.Reset();
++  external_stage_texture_.Reset();
 +  stage_swap_chain_.Reset();
++  stage_factory_.Reset();
 +  stage_context_.Reset();
++  stage_device1_.Reset();
 +  stage_device_.Reset();
 +  if (stage_stop_event_) {
 +    ::CloseHandle(stage_stop_event_);
@@ -619,14 +1000,25 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +  state_->flutter_present_count.fetch_add(1, std::memory_order_relaxed);
 +
 +  if (stage_restart_pending_) {
-+    const uint64_t frame_number =
-+        state_->stage_present_count.load(std::memory_order_relaxed);
-+    const HRESULT stage_result = RenderSyntheticStage(frame_number);
-+    if (FAILED(stage_result)) {
-+      return false;
++    if (synthetic_stage()) {
++      const uint64_t frame_number =
++          state_->stage_present_count.load(std::memory_order_relaxed);
++      const HRESULT stage_result = RenderSyntheticStage(frame_number);
++      if (FAILED(stage_result)) {
++        return false;
++      }
++      StartStageProducer(false);
++    } else {
++      std::scoped_lock graphics_lock(stage_graphics_mutex_);
++      stage_suspended_for_flutter_resize_ = false;
++      const HRESULT stage_result = ApplyExternalStageGeometry(true);
++      state_->last_stage_resource_hresult.store(stage_result,
++                                                std::memory_order_relaxed);
++      if (FAILED(stage_result)) {
++        return false;
++      }
 +    }
 +    stage_restart_pending_ = false;
-+    StartStageProducer(false);
 +  }
 +  return true;
 +}
@@ -659,10 +1051,10 @@ index 0000000000000000000000000000000000000000..63bcd653af7dec625c8552860c2039f5
 +}  // namespace flutter
 diff --git a/engine/src/flutter/shell/platform/windows/egl/composition_window_surface.h b/engine/src/flutter/shell/platform/windows/egl/composition_window_surface.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..dfa952e371373d9f1978a3dd5dcdfdd81b146ffa
+index 0000000000000000000000000000000000000000..5384deae1ba96d9fc833014e4b9e893a613ca238
 --- /dev/null
 +++ b/engine/src/flutter/shell/platform/windows/egl/composition_window_surface.h
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,144 @@
 +// Copyright 2013 The Flutter Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -671,12 +1063,14 @@ index 0000000000000000000000000000000000000000..dfa952e371373d9f1978a3dd5dcdfdd8
 +#define FLUTTER_SHELL_PLATFORM_WINDOWS_EGL_COMPOSITION_WINDOW_SURFACE_H_
 +
 +#include <d3d11.h>
++#include <d3d11_1.h>
 +#include <dcomp.h>
 +#include <dxgi1_4.h>
 +#include <windows.h>
 +#include <wrl/client.h>
 +
 +#include <memory>
++#include <mutex>
 +#include <thread>
 +
 +#include "flutter/fml/macros.h"
@@ -689,8 +1083,9 @@ index 0000000000000000000000000000000000000000..dfa952e371373d9f1978a3dd5dcdfdd8
 +class Manager;
 +
 +// A Flutter render surface backed by a premultiplied-alpha composition
-+// swapchain. It also owns a sibling synthetic Stage swapchain whose producer
-+// never calls into Flutter and blocks only on the DComp compositor clock.
++// swapchain. Its lower sibling is either the Phase 2 synthetic producer or an
++// event-driven consumer of the latest keyed-mutex Stage frame. Neither path
++// calls into Flutter or depends on the Flutter frame pump.
 +class CompositionWindowSurface final : public WindowSurface {
 + public:
 +  static std::unique_ptr<CompositionWindowSurface> Create(
@@ -713,9 +1108,9 @@ index 0000000000000000000000000000000000000000..dfa952e371373d9f1978a3dd5dcdfdd8
 +  size_t height() const override;
 +  bool vsync_enabled() const override;
 +
-+  // Resizes both composition swapchains without detaching the DirectComposition
-+  // root from the HWND. The next Flutter present publishes the resized upper
-+  // visual and then resumes the independent Stage producer.
++  // Resizes the Flutter composition swapchain without detaching the
++  // DirectComposition root from the HWND. Synthetic Stage follows the window;
++  // external Stage retains source dimensions and is transformed by its Visual.
 +  bool Resize(size_t width, size_t height);
 +
 + private:
@@ -738,12 +1133,22 @@ index 0000000000000000000000000000000000000000..dfa952e371373d9f1978a3dd5dcdfdd8
 +  bool CreateFlutterSwapChain(ID3D11Device* angle_device,
 +                              IDXGIFactory2* factory);
 +  bool CreateCompositionTree(IDXGIDevice* angle_dxgi_device);
++  bool CreateStageDevice(IDXGIAdapter* adapter, IDXGIFactory2* factory);
 +  bool CreateSyntheticStage(IDXGIAdapter* adapter, IDXGIFactory2* factory);
 +  bool CreateFlutterEglSurface(ID3D11Device* angle_device);
 +  void StartStageProducer(bool render_initial_frame = true) const;
 +  void StopStageProducer();
 +  void StageProducerMain(bool render_initial_frame) const;
++  void ExternalStageConsumerMain() const;
 +  HRESULT RenderSyntheticStage(uint64_t frame_number) const;
++  HRESULT ConsumeExternalStageFrame(KirakaraStageUpdate* update,
++                                    bool geometry_changed) const;
++  HRESULT OpenExternalStageResource(KirakaraStageUpdate* update) const;
++  HRESULT EnsureExternalStageSwapChain(uint32_t width, uint32_t height) const;
++  HRESULT ApplyExternalStageGeometry(bool force_commit) const;
++  HRESULT DetachExternalStageVisual() const;
++  bool synthetic_stage() const;
++  bool external_stage() const;
 +  bool Fail(HRESULT result, const char* operation);
 +
 +  Manager* manager_ = nullptr;
@@ -769,8 +1174,21 @@ index 0000000000000000000000000000000000000000..dfa952e371373d9f1978a3dd5dcdfdd8
 +  WaitForCompositorClockProc wait_for_compositor_clock_ = nullptr;
 +
 +  Microsoft::WRL::ComPtr<ID3D11Device> stage_device_;
++  Microsoft::WRL::ComPtr<ID3D11Device1> stage_device1_;
 +  Microsoft::WRL::ComPtr<ID3D11DeviceContext> stage_context_;
-+  Microsoft::WRL::ComPtr<IDXGISwapChain3> stage_swap_chain_;
++  Microsoft::WRL::ComPtr<IDXGIFactory2> stage_factory_;
++  mutable Microsoft::WRL::ComPtr<IDXGISwapChain3> stage_swap_chain_;
++  mutable Microsoft::WRL::ComPtr<ID3D11Texture2D> external_stage_texture_;
++  mutable Microsoft::WRL::ComPtr<IDXGIKeyedMutex> external_stage_mutex_;
++  mutable uint32_t external_stage_width_ = 0;
++  mutable uint32_t external_stage_height_ = 0;
++  mutable uint64_t external_stage_resource_generation_ = 0;
++  mutable uint64_t external_stage_geometry_sequence_ = 0;
++  mutable uint64_t external_stage_detach_sequence_ = 0;
++  mutable KirakaraFlutterCompositorStageGeometry external_stage_geometry_{};
++  mutable bool stage_visual_attached_ = false;
++  mutable bool stage_suspended_for_flutter_resize_ = false;
++  mutable std::mutex stage_graphics_mutex_;
 +  HANDLE stage_stop_event_ = nullptr;
 +  mutable std::thread stage_thread_;
 +
@@ -988,10 +1406,10 @@ index 2f68436bb094389d0265c259988049fc1fca0950..ae9054d6e15f61f8f64e69287d654a10
  
 diff --git a/engine/src/flutter/shell/platform/windows/kirakara_compositor.cc b/engine/src/flutter/shell/platform/windows/kirakara_compositor.cc
 new file mode 100644
-index 0000000000000000000000000000000000000000..a9c9134d55460babd48a994c9aa7b4c6892dfd04
+index 0000000000000000000000000000000000000000..06f63d31635f0b05d9464108782038629dc737e6
 --- /dev/null
 +++ b/engine/src/flutter/shell/platform/windows/kirakara_compositor.cc
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,439 @@
 +// Copyright 2013 The Flutter Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -999,6 +1417,7 @@ index 0000000000000000000000000000000000000000..a9c9134d55460babd48a994c9aa7b4c6
 +#include "flutter/shell/platform/windows/kirakara_compositor.h"
 +
 +#include <algorithm>
++#include <cmath>
 +#include <cstring>
 +#include <iterator>
 +#include <mutex>
@@ -1019,6 +1438,19 @@ index 0000000000000000000000000000000000000000..a9c9134d55460babd48a994c9aa7b4c6
 +                     [](uint64_t value) { return value == 0; });
 +}
 +
++bool IsExternalStageConfig(const KirakaraFlutterCompositorConfig& config) {
++  return (config.flags & kKirakaraFlutterCompositorExternalStage) != 0;
++}
++
++std::shared_ptr<KirakaraCompositorState> FindViewState(uintptr_t view) {
++  if (!view) {
++    return nullptr;
++  }
++  std::scoped_lock lock(g_state_mutex);
++  const auto found = g_view_states.find(view);
++  return found == g_view_states.end() ? nullptr : found->second.lock();
++}
++
 +bool IsValidTopLevelWindow(uintptr_t window_value) {
 +  const HWND window = reinterpret_cast<HWND>(window_value);
 +  if (!window || !::IsWindow(window) ||
@@ -1034,14 +1466,21 @@ index 0000000000000000000000000000000000000000..a9c9134d55460babd48a994c9aa7b4c6
 +int32_t PrepareNextView(const KirakaraFlutterCompositorConfig* config) {
 +  constexpr uint32_t kSupportedFlags =
 +      kKirakaraFlutterCompositorSyntheticStage |
-+      kKirakaraFlutterCompositorRequireComposition;
++      kKirakaraFlutterCompositorRequireComposition |
++      kKirakaraFlutterCompositorExternalStage;
 +  if (!config || config->struct_size != sizeof(*config) ||
 +      config->abi_version != KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION ||
 +      config->patchset_version !=
 +          KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION) {
 +    return kKirakaraFlutterCompositorVersionMismatch;
 +  }
-+  if (config->flags != kSupportedFlags ||
++  const uint32_t selected_stage_modes =
++      config->flags & (kKirakaraFlutterCompositorSyntheticStage |
++                       kKirakaraFlutterCompositorExternalStage);
++  if ((config->flags & ~kSupportedFlags) != 0 ||
++      (config->flags & kKirakaraFlutterCompositorRequireComposition) == 0 ||
++      (selected_stage_modes != kKirakaraFlutterCompositorSyntheticStage &&
++       selected_stage_modes != kKirakaraFlutterCompositorExternalStage) ||
 +      !ReservedFieldsAreZero(config->reserved) ||
 +      !IsValidTopLevelWindow(config->top_level_window)) {
 +    return kKirakaraFlutterCompositorInvalidArgument;
@@ -1076,15 +1515,7 @@ index 0000000000000000000000000000000000000000..a9c9134d55460babd48a994c9aa7b4c6
 +    return kKirakaraFlutterCompositorVersionMismatch;
 +  }
 +
-+  std::shared_ptr<KirakaraCompositorState> state;
-+  {
-+    std::scoped_lock lock(g_state_mutex);
-+    const auto found = g_view_states.find(view);
-+    if (found == g_view_states.end()) {
-+      return kKirakaraFlutterCompositorViewNotConfigured;
-+    }
-+    state = found->second.lock();
-+  }
++  const auto state = FindViewState(view);
 +  if (!state) {
 +    return kKirakaraFlutterCompositorViewNotConfigured;
 +  }
@@ -1120,15 +1551,255 @@ index 0000000000000000000000000000000000000000..a9c9134d55460babd48a994c9aa7b4c6
 +      state->surface_resize_count.load(std::memory_order_relaxed);
 +  result.composition_tree_commit_count =
 +      state->composition_tree_commit_count.load(std::memory_order_relaxed);
++  result.last_stage_resource_hresult =
++      state->last_stage_resource_hresult.load(std::memory_order_relaxed);
++  result.stage_frame_submit_count =
++      state->stage_frame_submit_count.load(std::memory_order_relaxed);
++  result.stage_frame_coalesced_count =
++      state->stage_frame_coalesced_count.load(std::memory_order_relaxed);
++  result.stage_frame_stale_count =
++      state->stage_frame_stale_count.load(std::memory_order_relaxed);
++  result.stage_handle_duplicate_failure_count =
++      state->stage_handle_duplicate_failure_count.load(
++          std::memory_order_relaxed);
++  result.stage_resource_open_failure_count =
++      state->stage_resource_open_failure_count.load(std::memory_order_relaxed);
++  result.stage_acquire_busy_count =
++      state->stage_acquire_busy_count.load(std::memory_order_relaxed);
++  result.stage_detach_count =
++      state->stage_detach_count.load(std::memory_order_relaxed);
++  result.stage_geometry_update_count =
++      state->stage_geometry_update_count.load(std::memory_order_relaxed);
++  result.stage_resource_generation =
++      state->stage_resource_generation.load(std::memory_order_relaxed);
++  result.stage_content_generation =
++      state->stage_content_generation.load(std::memory_order_relaxed);
++  result.stage_frame_id = state->stage_frame_id.load(std::memory_order_relaxed);
 +  *diagnostics = result;
 +  return kKirakaraFlutterCompositorSuccess;
++}
++
++int32_t SubmitStageFrame(uintptr_t view,
++                         const KirakaraFlutterCompositorStageFrame* frame) {
++  const auto state = FindViewState(view);
++  return state ? state->SubmitStageFrame(frame)
++               : kKirakaraFlutterCompositorViewNotConfigured;
++}
++
++int32_t SetStageGeometry(
++    uintptr_t view,
++    const KirakaraFlutterCompositorStageGeometry* geometry) {
++  const auto state = FindViewState(view);
++  return state ? state->SetStageGeometry(geometry)
++               : kKirakaraFlutterCompositorViewNotConfigured;
++}
++
++int32_t DetachStage(uintptr_t view) {
++  const auto state = FindViewState(view);
++  return state ? state->DetachStage()
++               : kKirakaraFlutterCompositorViewNotConfigured;
 +}
 +
 +}  // namespace
 +
 +KirakaraCompositorState::KirakaraCompositorState(
 +    const KirakaraFlutterCompositorConfig& configuration)
-+    : config(configuration) {}
++    : config(configuration) {
++  stage_update_event = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
++  stage_geometry_.struct_size = sizeof(stage_geometry_);
++  stage_geometry_.abi_version = KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION;
++  stage_geometry_.patchset_version =
++      KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION;
++  stage_geometry_.fit = kKirakaraFlutterCompositorStageFitContain;
++}
++
++KirakaraCompositorState::~KirakaraCompositorState() {
++  {
++    std::scoped_lock lock(stage_mailbox_mutex_);
++    if (pending_nt_handle_) {
++      ::CloseHandle(pending_nt_handle_);
++      pending_nt_handle_ = nullptr;
++    }
++  }
++  if (stage_update_event) {
++    ::CloseHandle(stage_update_event);
++    stage_update_event = nullptr;
++  }
++}
++
++int32_t KirakaraCompositorState::SubmitStageFrame(
++    const KirakaraFlutterCompositorStageFrame* frame) {
++  constexpr uint32_t kSupportedFlags =
++      kKirakaraFlutterCompositorStageResourceChanged;
++  constexpr uint32_t kBgra8888Unorm = 87u;
++  if (!frame || frame->struct_size != sizeof(*frame) ||
++      frame->abi_version != KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION ||
++      frame->patchset_version != KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION) {
++    return kKirakaraFlutterCompositorVersionMismatch;
++  }
++  if (!external_stage() || !stage_update_event ||
++      (frame->flags & ~kSupportedFlags) != 0 ||
++      frame->sync_type != kKirakaraFlutterCompositorStageSyncKeyedMutex ||
++      frame->shared_nt_handle == 0 || frame->width == 0 || frame->height == 0 ||
++      frame->width > 16384 || frame->height > 16384 ||
++      frame->dxgi_format != kBgra8888Unorm || frame->resource_generation == 0 ||
++      frame->consumer_acquire_key == frame->consumer_release_key ||
++      !ReservedFieldsAreZero(frame->reserved)) {
++    return kKirakaraFlutterCompositorInvalidArgument;
++  }
++
++  std::scoped_lock lock(stage_mailbox_mutex_);
++  const bool new_resource =
++      frame->resource_generation != submitted_resource_generation_;
++  if (submitted_resource_generation_ != 0 &&
++      frame->resource_generation < submitted_resource_generation_) {
++    stage_frame_stale_count.fetch_add(1, std::memory_order_relaxed);
++    return kKirakaraFlutterCompositorFrameDropped;
++  }
++  if (!new_resource &&
++      (frame->content_generation < submitted_content_generation_ ||
++       (frame->content_generation == submitted_content_generation_ &&
++        frame->frame_id <= submitted_frame_id_))) {
++    stage_frame_stale_count.fetch_add(1, std::memory_order_relaxed);
++    return kKirakaraFlutterCompositorFrameDropped;
++  }
++
++  HANDLE duplicated_handle = nullptr;
++  if (new_resource) {
++    if (!::DuplicateHandle(::GetCurrentProcess(),
++                           reinterpret_cast<HANDLE>(frame->shared_nt_handle),
++                           ::GetCurrentProcess(), &duplicated_handle, 0, FALSE,
++                           DUPLICATE_SAME_ACCESS)) {
++      const HRESULT result = HRESULT_FROM_WIN32(::GetLastError());
++      last_stage_resource_hresult.store(result, std::memory_order_relaxed);
++      stage_handle_duplicate_failure_count.fetch_add(1,
++                                                     std::memory_order_relaxed);
++      return kKirakaraFlutterCompositorOperationFailed;
++    }
++  }
++
++  if (pending_stage_frame_) {
++    stage_frame_coalesced_count.fetch_add(1, std::memory_order_relaxed);
++  }
++  if (new_resource) {
++    if (pending_nt_handle_) {
++      ::CloseHandle(pending_nt_handle_);
++    }
++    pending_nt_handle_ = duplicated_handle;
++    submitted_resource_generation_ = frame->resource_generation;
++  }
++  pending_frame_ = *frame;
++  pending_stage_frame_ = true;
++  submitted_content_generation_ = frame->content_generation;
++  submitted_frame_id_ = frame->frame_id;
++  stage_frame_submit_count.fetch_add(1, std::memory_order_relaxed);
++  if (!::SetEvent(stage_update_event)) {
++    last_stage_resource_hresult.store(HRESULT_FROM_WIN32(::GetLastError()),
++                                      std::memory_order_relaxed);
++    return kKirakaraFlutterCompositorOperationFailed;
++  }
++  return kKirakaraFlutterCompositorSuccess;
++}
++
++int32_t KirakaraCompositorState::SetStageGeometry(
++    const KirakaraFlutterCompositorStageGeometry* geometry) {
++  if (!geometry || geometry->struct_size != sizeof(*geometry) ||
++      geometry->abi_version != KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION ||
++      geometry->patchset_version !=
++          KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION) {
++    return kKirakaraFlutterCompositorVersionMismatch;
++  }
++  const bool finite =
++      std::isfinite(geometry->x) && std::isfinite(geometry->y) &&
++      std::isfinite(geometry->width) && std::isfinite(geometry->height);
++  if (!external_stage() || !stage_update_event || !finite ||
++      geometry->visible > 1 || geometry->width < 0.0f ||
++      geometry->height < 0.0f || geometry->width > 16384.0f ||
++      geometry->height > 16384.0f || geometry->x < -16384.0f ||
++      geometry->y < -16384.0f || geometry->x > 16384.0f ||
++      geometry->y > 16384.0f ||
++      (geometry->visible != 0 &&
++       (geometry->width == 0.0f || geometry->height == 0.0f)) ||
++      geometry->fit > kKirakaraFlutterCompositorStageFitFill ||
++      geometry->reserved0 != 0 || !ReservedFieldsAreZero(geometry->reserved)) {
++    return kKirakaraFlutterCompositorInvalidArgument;
++  }
++
++  {
++    std::scoped_lock lock(stage_mailbox_mutex_);
++    if (std::memcmp(&stage_geometry_, geometry, sizeof(*geometry)) == 0) {
++      return kKirakaraFlutterCompositorSuccess;
++    }
++    stage_geometry_ = *geometry;
++    ++stage_geometry_sequence_;
++    stage_geometry_update_count.fetch_add(1, std::memory_order_relaxed);
++  }
++  if (!::SetEvent(stage_update_event)) {
++    last_stage_resource_hresult.store(HRESULT_FROM_WIN32(::GetLastError()),
++                                      std::memory_order_relaxed);
++    return kKirakaraFlutterCompositorOperationFailed;
++  }
++  return kKirakaraFlutterCompositorSuccess;
++}
++
++int32_t KirakaraCompositorState::DetachStage() {
++  if (!external_stage() || !stage_update_event) {
++    return kKirakaraFlutterCompositorUnavailable;
++  }
++  {
++    std::scoped_lock lock(stage_mailbox_mutex_);
++    if (pending_nt_handle_) {
++      ::CloseHandle(pending_nt_handle_);
++      pending_nt_handle_ = nullptr;
++    }
++    pending_stage_frame_ = false;
++    pending_frame_ = {};
++    submitted_resource_generation_ = 0;
++    submitted_content_generation_ = 0;
++    submitted_frame_id_ = 0;
++    ++stage_detach_sequence_;
++    stage_detach_count.fetch_add(1, std::memory_order_relaxed);
++  }
++  if (!::SetEvent(stage_update_event)) {
++    last_stage_resource_hresult.store(HRESULT_FROM_WIN32(::GetLastError()),
++                                      std::memory_order_relaxed);
++    return kKirakaraFlutterCompositorOperationFailed;
++  }
++  return kKirakaraFlutterCompositorSuccess;
++}
++
++KirakaraStageUpdate KirakaraCompositorState::TakeLatestStageUpdate() {
++  std::scoped_lock lock(stage_mailbox_mutex_);
++  KirakaraStageUpdate update{};
++  update.has_frame = pending_stage_frame_;
++  update.frame = pending_frame_;
++  update.duplicated_nt_handle = pending_nt_handle_;
++  update.geometry = stage_geometry_;
++  update.geometry_sequence = stage_geometry_sequence_;
++  update.detach_sequence = stage_detach_sequence_;
++  pending_stage_frame_ = false;
++  pending_frame_ = {};
++  pending_nt_handle_ = nullptr;
++  return update;
++}
++
++void KirakaraCompositorState::ResetSubmittedResourceAfterOpenFailure(
++    uint64_t resource_generation) {
++  std::scoped_lock lock(stage_mailbox_mutex_);
++  if (submitted_resource_generation_ != resource_generation) {
++    return;
++  }
++  submitted_resource_generation_ = 0;
++  submitted_content_generation_ = 0;
++  submitted_frame_id_ = 0;
++  if (pending_stage_frame_ &&
++      pending_frame_.resource_generation == resource_generation &&
++      !pending_nt_handle_) {
++    pending_stage_frame_ = false;
++    pending_frame_ = {};
++    stage_frame_coalesced_count.fetch_add(1, std::memory_order_relaxed);
++  }
++}
 +
 +std::optional<KirakaraFlutterCompositorConfig>
 +TakePreparedKirakaraCompositorConfig() {
@@ -1172,15 +1843,18 @@ index 0000000000000000000000000000000000000000..a9c9134d55460babd48a994c9aa7b4c6
 +  result.prepare_next_view = flutter::PrepareNextView;
 +  result.cancel_prepared_view = flutter::CancelPreparedView;
 +  result.get_view_diagnostics = flutter::GetViewDiagnostics;
++  result.submit_stage_frame = flutter::SubmitStageFrame;
++  result.set_stage_geometry = flutter::SetStageGeometry;
++  result.detach_stage = flutter::DetachStage;
 +  *api = result;
 +  return kKirakaraFlutterCompositorSuccess;
 +}
 diff --git a/engine/src/flutter/shell/platform/windows/kirakara_compositor.h b/engine/src/flutter/shell/platform/windows/kirakara_compositor.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..17748e4979833adabfda6afad4074c273b886cc5
+index 0000000000000000000000000000000000000000..1f4978c781a038aa76cf603cfb9ed205119332e1
 --- /dev/null
 +++ b/engine/src/flutter/shell/platform/windows/kirakara_compositor.h
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,112 @@
 +// Copyright 2013 The Flutter Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1193,11 +1867,23 @@ index 0000000000000000000000000000000000000000..17748e4979833adabfda6afad4074c27
 +#include <atomic>
 +#include <cstdint>
 +#include <memory>
++#include <mutex>
 +#include <optional>
 +
 +#include "flutter/shell/platform/windows/kirakara_flutter_compositor_api.h"
 +
 +namespace flutter {
++
++struct KirakaraStageUpdate {
++  bool has_frame = false;
++  KirakaraFlutterCompositorStageFrame frame{};
++  // Owned by the receiver. Null for a frame that reuses the currently opened
++  // resource generation.
++  HANDLE duplicated_nt_handle = nullptr;
++  KirakaraFlutterCompositorStageGeometry geometry{};
++  uint64_t geometry_sequence = 0;
++  uint64_t detach_sequence = 0;
++};
 +
 +// Per-view state shared by the raster surface, the independent synthetic Stage
 +// producer, and the versioned diagnostics export. All fields read by the API
@@ -1205,6 +1891,21 @@ index 0000000000000000000000000000000000000000..17748e4979833adabfda6afad4074c27
 +struct KirakaraCompositorState {
 +  explicit KirakaraCompositorState(
 +      const KirakaraFlutterCompositorConfig& configuration);
++  ~KirakaraCompositorState();
++
++  KirakaraCompositorState(const KirakaraCompositorState&) = delete;
++  KirakaraCompositorState& operator=(const KirakaraCompositorState&) = delete;
++
++  int32_t SubmitStageFrame(const KirakaraFlutterCompositorStageFrame* frame);
++  int32_t SetStageGeometry(
++      const KirakaraFlutterCompositorStageGeometry* geometry);
++  int32_t DetachStage();
++  KirakaraStageUpdate TakeLatestStageUpdate();
++  void ResetSubmittedResourceAfterOpenFailure(uint64_t resource_generation);
++
++  bool external_stage() const {
++    return (config.flags & kKirakaraFlutterCompositorExternalStage) != 0;
++  }
 +
 +  KirakaraFlutterCompositorConfig config{};
 +  std::atomic_bool active{false};
@@ -1222,6 +1923,34 @@ index 0000000000000000000000000000000000000000..17748e4979833adabfda6afad4074c27
 +  std::atomic_uint64_t stage_occluded_count{0};
 +  std::atomic_uint64_t surface_resize_count{0};
 +  std::atomic_uint64_t composition_tree_commit_count{0};
++  std::atomic_int32_t last_stage_resource_hresult{E_PENDING};
++  std::atomic_uint64_t stage_frame_submit_count{0};
++  std::atomic_uint64_t stage_frame_coalesced_count{0};
++  std::atomic_uint64_t stage_frame_stale_count{0};
++  std::atomic_uint64_t stage_handle_duplicate_failure_count{0};
++  std::atomic_uint64_t stage_resource_open_failure_count{0};
++  std::atomic_uint64_t stage_acquire_busy_count{0};
++  std::atomic_uint64_t stage_detach_count{0};
++  std::atomic_uint64_t stage_geometry_update_count{0};
++  std::atomic_uint64_t stage_resource_generation{0};
++  std::atomic_uint64_t stage_content_generation{0};
++  std::atomic_uint64_t stage_frame_id{0};
++
++  // Auto-reset and signaled only by a submitted frame, geometry change, or
++  // detach. The external Stage consumer has no timer or polling loop.
++  HANDLE stage_update_event = nullptr;
++
++ private:
++  std::mutex stage_mailbox_mutex_;
++  bool pending_stage_frame_ = false;
++  KirakaraFlutterCompositorStageFrame pending_frame_{};
++  HANDLE pending_nt_handle_ = nullptr;
++  uint64_t submitted_resource_generation_ = 0;
++  uint64_t submitted_content_generation_ = 0;
++  uint64_t submitted_frame_id_ = 0;
++  KirakaraFlutterCompositorStageGeometry stage_geometry_{};
++  uint64_t stage_geometry_sequence_ = 0;
++  uint64_t stage_detach_sequence_ = 0;
 +};
 +
 +// Consumes the one-shot configuration prepared through the exported API. A
@@ -1240,10 +1969,10 @@ index 0000000000000000000000000000000000000000..17748e4979833adabfda6afad4074c27
 +#endif  // FLUTTER_SHELL_PLATFORM_WINDOWS_KIRAKARA_COMPOSITOR_H_
 diff --git a/engine/src/flutter/shell/platform/windows/kirakara_compositor_unittests.cc b/engine/src/flutter/shell/platform/windows/kirakara_compositor_unittests.cc
 new file mode 100644
-index 0000000000000000000000000000000000000000..84b35d9460f0806d82c00fe8a046e7737579934f
+index 0000000000000000000000000000000000000000..9a17e28ea2cac4f71b7ff331ec8db8481a7a3291
 --- /dev/null
 +++ b/engine/src/flutter/shell/platform/windows/kirakara_compositor_unittests.cc
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,344 @@
 +// Copyright 2013 The Flutter Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1317,6 +2046,13 @@ index 0000000000000000000000000000000000000000..84b35d9460f0806d82c00fe8a046e773
 +    return config;
 +  }
 +
++  KirakaraFlutterCompositorConfig ValidExternalConfig() const {
++    auto config = ValidConfig();
++    config.flags = kKirakaraFlutterCompositorExternalStage |
++                   kKirakaraFlutterCompositorRequireComposition;
++    return config;
++  }
++
 +  KirakaraFlutterCompositorApi api_{};
 +  HWND window_ = nullptr;
 +  uintptr_t registered_view_ = 0;
@@ -1349,6 +2085,9 @@ index 0000000000000000000000000000000000000000..84b35d9460f0806d82c00fe8a046e773
 +  EXPECT_NE(api.prepare_next_view, nullptr);
 +  EXPECT_NE(api.cancel_prepared_view, nullptr);
 +  EXPECT_NE(api.get_view_diagnostics, nullptr);
++  EXPECT_NE(api.submit_stage_frame, nullptr);
++  EXPECT_NE(api.set_stage_geometry, nullptr);
++  EXPECT_NE(api.detach_stage, nullptr);
 +  EXPECT_TRUE(std::all_of(std::begin(api.reserved), std::end(api.reserved),
 +                          [](uint64_t value) { return value == 0; }));
 +}
@@ -1373,6 +2112,17 @@ index 0000000000000000000000000000000000000000..84b35d9460f0806d82c00fe8a046e773
 +            kKirakaraFlutterCompositorInvalidArgument);
 +
 +  config = ValidConfig();
++  config.flags = kKirakaraFlutterCompositorSyntheticStage |
++                 kKirakaraFlutterCompositorExternalStage |
++                 kKirakaraFlutterCompositorRequireComposition;
++  EXPECT_EQ(api_.prepare_next_view(&config),
++            kKirakaraFlutterCompositorInvalidArgument);
++
++  config = ValidExternalConfig();
++  EXPECT_EQ(api_.prepare_next_view(&config), kKirakaraFlutterCompositorSuccess);
++  EXPECT_EQ(api_.cancel_prepared_view(), kKirakaraFlutterCompositorSuccess);
++
++  config = ValidConfig();
 +  config.reserved[2] = 1;
 +  EXPECT_EQ(api_.prepare_next_view(&config),
 +            kKirakaraFlutterCompositorInvalidArgument);
@@ -1383,6 +2133,109 @@ index 0000000000000000000000000000000000000000..84b35d9460f0806d82c00fe8a046e773
 +  EXPECT_EQ(api_.cancel_prepared_view(), kKirakaraFlutterCompositorSuccess);
 +  EXPECT_EQ(api_.cancel_prepared_view(),
 +            kKirakaraFlutterCompositorViewNotConfigured);
++}
++
++TEST_F(KirakaraCompositorApiTest,
++       ExternalStageMailboxKeepsLatestFrameAndOwnedHandle) {
++  const auto config = ValidExternalConfig();
++  auto state = std::make_shared<KirakaraCompositorState>(config);
++  ASSERT_NE(state->stage_update_event, nullptr);
++  registered_view_ = reinterpret_cast<uintptr_t>(state.get());
++  RegisterKirakaraCompositorView(registered_view_, state);
++
++  HANDLE borrowed_handle = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
++  ASSERT_NE(borrowed_handle, nullptr);
++  KirakaraFlutterCompositorStageFrame frame{};
++  frame.struct_size = sizeof(frame);
++  frame.abi_version = KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION;
++  frame.patchset_version = KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION;
++  frame.flags = kKirakaraFlutterCompositorStageResourceChanged;
++  frame.shared_nt_handle = reinterpret_cast<uintptr_t>(borrowed_handle);
++  frame.width = 1920;
++  frame.height = 1080;
++  frame.dxgi_format = 87;
++  frame.sync_type = kKirakaraFlutterCompositorStageSyncKeyedMutex;
++  frame.resource_generation = 4;
++  frame.content_generation = 9;
++  frame.frame_id = 31;
++  frame.consumer_acquire_key = 1;
++  frame.consumer_release_key = 0;
++  ASSERT_EQ(api_.submit_stage_frame(registered_view_, &frame),
++            kKirakaraFlutterCompositorSuccess);
++
++  frame.flags = 0;
++  frame.frame_id = 32;
++  ASSERT_EQ(api_.submit_stage_frame(registered_view_, &frame),
++            kKirakaraFlutterCompositorSuccess);
++  EXPECT_EQ(api_.submit_stage_frame(registered_view_, &frame),
++            kKirakaraFlutterCompositorFrameDropped);
++  ASSERT_TRUE(::CloseHandle(borrowed_handle));
++
++  auto update = state->TakeLatestStageUpdate();
++  EXPECT_TRUE(update.has_frame);
++  EXPECT_EQ(update.frame.frame_id, 32u);
++  ASSERT_NE(update.duplicated_nt_handle, nullptr);
++  DWORD handle_flags = 0;
++  EXPECT_TRUE(
++      ::GetHandleInformation(update.duplicated_nt_handle, &handle_flags));
++  EXPECT_TRUE(::CloseHandle(update.duplicated_nt_handle));
++  update.duplicated_nt_handle = nullptr;
++
++  KirakaraFlutterCompositorDiagnostics diagnostics{};
++  diagnostics.struct_size = sizeof(diagnostics);
++  diagnostics.abi_version = KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION;
++  diagnostics.patchset_version = KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION;
++  ASSERT_EQ(api_.get_view_diagnostics(registered_view_, &diagnostics),
++            kKirakaraFlutterCompositorSuccess);
++  EXPECT_EQ(diagnostics.stage_frame_submit_count, 2u);
++  EXPECT_EQ(diagnostics.stage_frame_coalesced_count, 1u);
++  EXPECT_EQ(diagnostics.stage_frame_stale_count, 1u);
++}
++
++TEST_F(KirakaraCompositorApiTest,
++       ExternalStageGeometryAndDetachAreVersionedAndEventDriven) {
++  const auto config = ValidExternalConfig();
++  auto state = std::make_shared<KirakaraCompositorState>(config);
++  registered_view_ = reinterpret_cast<uintptr_t>(state.get());
++  RegisterKirakaraCompositorView(registered_view_, state);
++
++  KirakaraFlutterCompositorStageGeometry geometry{};
++  geometry.struct_size = sizeof(geometry);
++  geometry.abi_version = KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION;
++  geometry.patchset_version = KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION;
++  geometry.visible = 1;
++  geometry.x = 25.0f;
++  geometry.y = 40.0f;
++  geometry.width = 1280.0f;
++  geometry.height = 720.0f;
++  geometry.fit = kKirakaraFlutterCompositorStageFitContain;
++  ASSERT_EQ(api_.set_stage_geometry(registered_view_, &geometry),
++            kKirakaraFlutterCompositorSuccess);
++  // An identical geometry does not manufacture another update.
++  ASSERT_EQ(api_.set_stage_geometry(registered_view_, &geometry),
++            kKirakaraFlutterCompositorSuccess);
++
++  auto update = state->TakeLatestStageUpdate();
++  EXPECT_FALSE(update.has_frame);
++  EXPECT_EQ(update.geometry_sequence, 1u);
++  EXPECT_EQ(update.geometry.width, 1280.0f);
++
++  geometry.reserved[1] = 1;
++  EXPECT_EQ(api_.set_stage_geometry(registered_view_, &geometry),
++            kKirakaraFlutterCompositorInvalidArgument);
++  EXPECT_EQ(api_.detach_stage(registered_view_),
++            kKirakaraFlutterCompositorSuccess);
++  update = state->TakeLatestStageUpdate();
++  EXPECT_EQ(update.detach_sequence, 1u);
++
++  KirakaraFlutterCompositorDiagnostics diagnostics{};
++  diagnostics.struct_size = sizeof(diagnostics);
++  diagnostics.abi_version = KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION;
++  diagnostics.patchset_version = KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION;
++  ASSERT_EQ(api_.get_view_diagnostics(registered_view_, &diagnostics),
++            kKirakaraFlutterCompositorSuccess);
++  EXPECT_EQ(diagnostics.stage_geometry_update_count, 1u);
++  EXPECT_EQ(diagnostics.stage_detach_count, 1u);
 +}
 +
 +TEST_F(KirakaraCompositorApiTest, PreparedConfigurationIsConsumedOnce) {
@@ -1466,10 +2319,10 @@ index 0000000000000000000000000000000000000000..84b35d9460f0806d82c00fe8a046e773
 +}  // namespace flutter
 diff --git a/engine/src/flutter/shell/platform/windows/kirakara_flutter_compositor_api.h b/engine/src/flutter/shell/platform/windows/kirakara_flutter_compositor_api.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..7b41da05a168fade834e5c49af35bbae2687d42f
+index 0000000000000000000000000000000000000000..d087927b051fa29138af666f5efa8a58ac2919f6
 --- /dev/null
 +++ b/engine/src/flutter/shell/platform/windows/kirakara_flutter_compositor_api.h
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,189 @@
 +// Copyright 2013 The Flutter Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1485,9 +2338,10 @@ index 0000000000000000000000000000000000000000..7b41da05a168fade834e5c49af35bbae
 +
 +#define KIRAKARA_FLUTTER_COMPOSITOR_EXPORT_NAME \
 +  "FlutterDesktopKirakaraCompositorGetApi"
-+#define KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION 1u
-+#define KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION 2u
-+#define KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_REVISION "windows-dcomp-synthetic"
++#define KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION 2u
++#define KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION 3u
++#define KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_REVISION \
++  "windows-dcomp-stage-visual"
 +#define KIRAKARA_FLUTTER_COMPOSITOR_ENGINE_REVISION \
 +  "a10d8ac38de835021c8d2f920dbf50a920ccc030"
 +
@@ -1498,11 +2352,14 @@ index 0000000000000000000000000000000000000000..7b41da05a168fade834e5c49af35bbae
 +  kKirakaraFlutterCompositorBusy = 3,
 +  kKirakaraFlutterCompositorUnavailable = 4,
 +  kKirakaraFlutterCompositorViewNotConfigured = 5,
++  kKirakaraFlutterCompositorFrameDropped = 6,
++  kKirakaraFlutterCompositorOperationFailed = 7,
 +} KirakaraFlutterCompositorResult;
 +
 +typedef enum KirakaraFlutterCompositorConfigFlag {
 +  kKirakaraFlutterCompositorSyntheticStage = 1u << 0,
 +  kKirakaraFlutterCompositorRequireComposition = 1u << 1,
++  kKirakaraFlutterCompositorExternalStage = 1u << 2,
 +} KirakaraFlutterCompositorConfigFlag;
 +
 +typedef enum KirakaraFlutterCompositorCapability {
@@ -1512,7 +2369,27 @@ index 0000000000000000000000000000000000000000..7b41da05a168fade834e5c49af35bbae
 +  kKirakaraFlutterCompositorIndependentStageProducer = 1ull << 3,
 +  kKirakaraFlutterCompositorCompositorClockPacing = 1ull << 4,
 +  kKirakaraFlutterCompositorInPlaceResize = 1ull << 5,
++  kKirakaraFlutterCompositorExternalStageConsumer = 1ull << 6,
++  kKirakaraFlutterCompositorNtHandle = 1ull << 7,
++  kKirakaraFlutterCompositorKeyedMutex = 1ull << 8,
++  kKirakaraFlutterCompositorLatestFrame = 1ull << 9,
++  kKirakaraFlutterCompositorEventDrivenConsumer = 1ull << 10,
++  kKirakaraFlutterCompositorStageFitAndClip = 1ull << 11,
 +} KirakaraFlutterCompositorCapability;
++
++typedef enum KirakaraFlutterCompositorStageFrameFlag {
++  kKirakaraFlutterCompositorStageResourceChanged = 1u << 0,
++} KirakaraFlutterCompositorStageFrameFlag;
++
++typedef enum KirakaraFlutterCompositorStageSyncType {
++  kKirakaraFlutterCompositorStageSyncKeyedMutex = 1,
++} KirakaraFlutterCompositorStageSyncType;
++
++typedef enum KirakaraFlutterCompositorStageFit {
++  kKirakaraFlutterCompositorStageFitContain = 0,
++  kKirakaraFlutterCompositorStageFitCover = 1,
++  kKirakaraFlutterCompositorStageFitFill = 2,
++} KirakaraFlutterCompositorStageFit;
 +
 +typedef struct KirakaraFlutterCompositorConfig {
 +  uint32_t struct_size;
@@ -1522,6 +2399,43 @@ index 0000000000000000000000000000000000000000..7b41da05a168fade834e5c49af35bbae
 +  uintptr_t top_level_window;
 +  uint64_t reserved[4];
 +} KirakaraFlutterCompositorConfig;
++
++// The shared_nt_handle value is borrowed for this call. The Engine duplicates
++// it before returning whenever a new resource_generation is accepted.
++typedef struct KirakaraFlutterCompositorStageFrame {
++  uint32_t struct_size;
++  uint32_t abi_version;
++  uint32_t patchset_version;
++  uint32_t flags;
++  uintptr_t shared_nt_handle;
++  uint32_t width;
++  uint32_t height;
++  uint32_t dxgi_format;
++  uint32_t sync_type;
++  uint64_t resource_generation;
++  uint64_t content_generation;
++  uint64_t frame_id;
++  uint64_t consumer_acquire_key;
++  uint64_t consumer_release_key;
++  uint64_t reserved[4];
++} KirakaraFlutterCompositorStageFrame;
++
++// Coordinates are physical client pixels in the top-level HWND. The Engine
++// applies fit and clip only when this value changes; Stage frames never call
++// DirectComposition from their producer callback.
++typedef struct KirakaraFlutterCompositorStageGeometry {
++  uint32_t struct_size;
++  uint32_t abi_version;
++  uint32_t patchset_version;
++  uint32_t visible;
++  float x;
++  float y;
++  float width;
++  float height;
++  uint32_t fit;
++  uint32_t reserved0;
++  uint64_t reserved[4];
++} KirakaraFlutterCompositorStageGeometry;
 +
 +typedef struct KirakaraFlutterCompositorDiagnostics {
 +  uint32_t struct_size;
@@ -1543,7 +2457,20 @@ index 0000000000000000000000000000000000000000..7b41da05a168fade834e5c49af35bbae
 +  uint64_t stage_occluded_count;
 +  uint64_t surface_resize_count;
 +  uint64_t composition_tree_commit_count;
-+  uint64_t reserved[2];
++  int32_t last_stage_resource_hresult;
++  uint32_t reserved0;
++  uint64_t stage_frame_submit_count;
++  uint64_t stage_frame_coalesced_count;
++  uint64_t stage_frame_stale_count;
++  uint64_t stage_handle_duplicate_failure_count;
++  uint64_t stage_resource_open_failure_count;
++  uint64_t stage_acquire_busy_count;
++  uint64_t stage_detach_count;
++  uint64_t stage_geometry_update_count;
++  uint64_t stage_resource_generation;
++  uint64_t stage_content_generation;
++  uint64_t stage_frame_id;
++  uint64_t reserved[4];
 +} KirakaraFlutterCompositorDiagnostics;
 +
 +typedef int32_t (*KirakaraFlutterCompositorPrepareNextView)(
@@ -1552,6 +2479,13 @@ index 0000000000000000000000000000000000000000..7b41da05a168fade834e5c49af35bbae
 +typedef int32_t (*KirakaraFlutterCompositorGetViewDiagnostics)(
 +    uintptr_t flutter_view,
 +    KirakaraFlutterCompositorDiagnostics* diagnostics);
++typedef int32_t (*KirakaraFlutterCompositorSubmitStageFrame)(
++    uintptr_t flutter_view,
++    const KirakaraFlutterCompositorStageFrame* frame);
++typedef int32_t (*KirakaraFlutterCompositorSetStageGeometry)(
++    uintptr_t flutter_view,
++    const KirakaraFlutterCompositorStageGeometry* geometry);
++typedef int32_t (*KirakaraFlutterCompositorDetachStage)(uintptr_t flutter_view);
 +
 +typedef struct KirakaraFlutterCompositorApi {
 +  uint32_t struct_size;
@@ -1563,7 +2497,10 @@ index 0000000000000000000000000000000000000000..7b41da05a168fade834e5c49af35bbae
 +  KirakaraFlutterCompositorPrepareNextView prepare_next_view;
 +  KirakaraFlutterCompositorCancelPreparedView cancel_prepared_view;
 +  KirakaraFlutterCompositorGetViewDiagnostics get_view_diagnostics;
-+  uint64_t reserved[4];
++  KirakaraFlutterCompositorSubmitStageFrame submit_stage_frame;
++  KirakaraFlutterCompositorSetStageGeometry set_stage_geometry;
++  KirakaraFlutterCompositorDetachStage detach_stage;
++  uint64_t reserved[1];
 +} KirakaraFlutterCompositorApi;
 +
 +typedef int32_t (*FlutterDesktopKirakaraCompositorGetApiProc)(

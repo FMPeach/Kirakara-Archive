@@ -65,7 +65,7 @@ $definitions = [ordered]@{
     [ordered]@{
       name = 'kirakara-compositor-api'
       filter = 'KirakaraCompositorApiExportTest.*:KirakaraCompositorApiTest.*'
-      expectedTestCount = 4
+      expectedTestCount = 6
     }
   )
   critical = @(
@@ -98,7 +98,7 @@ $definitions = [ordered]@{
     [ordered]@{
       name = 'full'
       filter = '*'
-      expectedTestCount = 358
+      expectedTestCount = 360
     }
   )
 }

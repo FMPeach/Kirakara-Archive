@@ -21,16 +21,13 @@ class StageScreen extends StatelessWidget {
       animation: playbackService,
       builder: (context, _) {
         final song = playbackService.state.currentSong;
-        return ColoredBox(
-          color: Colors.black,
-          child: SizedBox.expand(
-            child: stageRenderer.buildStage(
-              playbackState: playbackService.state,
-              mediaFrame: MediaFrame(
-                backgroundColor: Color(song?.coverColor ?? 0xff111216),
-              ),
-              preset: RenderPreset(showGuidePills: showGuidePills),
+        return SizedBox.expand(
+          child: stageRenderer.buildStage(
+            playbackState: playbackService.state,
+            mediaFrame: MediaFrame(
+              backgroundColor: Color(song?.coverColor ?? 0xff111216),
             ),
+            preset: RenderPreset(showGuidePills: showGuidePills),
           ),
         );
       },

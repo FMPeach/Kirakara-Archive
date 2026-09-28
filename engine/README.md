@@ -6,7 +6,7 @@ and downloaded toolchains must remain in an external workspace or a versioned
 release artifact. They must not be committed to the App repository.
 
 The root `builds` entries preserve the completely stock Phase 1 artifacts for
-Flutter 3.44.4. `patchset` separately locks the Phase 2 Kirakara source patch,
+Flutter 3.44.4. `patchset` separately locks the Phase 2/3 Kirakara source patch,
 its resulting Git tree, additional public export and custom debug artifacts.
 Switching variants never edits the installed Flutter SDK and never removes the
 other variant's `out/` directory.
@@ -24,7 +24,7 @@ E:\Kirakara-Flutter-Engine\
       ├─ host_debug\
       ├─ host_profile\
       ├─ host_release\
-      └─ host_debug_kirakara_v2\
+      └─ host_debug_kirakara_v3\
 ```
 
 No absolute host path is stored in `engine.lock.json`. The example uses E: only
@@ -96,8 +96,8 @@ stock output, reverse only the known patch stack and select the stock variant:
 
 Reapply `-Variant patched` before continuing custom Engine work. Stock builds
 use the upstream `windows/host_debug`, `windows/host_profile` and
-`windows/host_release` configurations; the Phase 2 patch currently locks only
-`host_debug_kirakara_v2`. Both paths disable RBE and never copy Engine products
+`windows/host_release` configurations; the Phase 3 patch currently locks only
+`host_debug_kirakara_v3`. Both paths disable RBE and never copy Engine products
 into this repository. Verification rejects a generated `toolchain.ninja` or PE
 linker version that does not use the locked 14.34 toolset.
 
@@ -239,7 +239,7 @@ Dart entry point and records counter gates:
 .\tool\windows_compositor\run_synthetic_compositor_probe.ps1 `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
-  -LocalEngine host_debug_kirakara_v2 `
+  -LocalEngine host_debug_kirakara_v3 `
   -TimeoutSeconds 45
 ```
 
@@ -272,6 +272,61 @@ monitors are available, the harness automatically prefers a different-DPI
 target, moves the same HWND there and back, and checks DPI transitions, restored
 geometry, the single DComp tree and Stage progress. A single-monitor run records
 that sample as explicitly skipped instead of treating it as a pass.
+
+## Phase 3 real Show Stage probe
+
+The real probe selects `composed`, loads two bounded Show fixtures, and validates
+the NT-handle/keyed-mutex latest-frame path without changing the physical Stage
+or Cast APIs:
+
+The Engine consumer first probes `AcquireSync` with a zero timeout. If the
+producer has already published the descriptor but cross-device GPU work is
+still completing, only the dedicated consumer thread waits once for that
+published key. Dropping that descriptor would strand the keyed mutex on the
+consumer key and make every later non-blocking producer acquire fail. This is
+not a polling loop and never blocks Show, Flutter platform/raster threads, the
+physical Stage, or Cast.
+
+```powershell
+.\tool\windows_compositor\run_real_stage_compositor_probe.ps1 `
+  -FlutterSdkRoot 'D:\Program Files\Flutter' `
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -LocalEngine host_debug_kirakara_v3 `
+  -TimeoutSeconds 90
+```
+
+It checks static Flutter isolation, a bounded platform-thread stall, in-place
+resize, contain/cover geometry, Flutter overlays/pages, untitled and titled
+program generations, pause/resume, replay, natural EOF, reload, detach and
+reattach. The report rejects callback/schema errors, handle duplication or
+resource-open failures, stale frames, failed HRESULTs and device removal. It
+uses one duration-derived EOF wait and no recurring timer or active polling.
+
+Preserve and test the compatibility backend independently with both the
+official Engine and the patched Engine:
+
+```powershell
+.\tool\windows_compositor\run_windows_stage_texture_baseline.ps1 `
+  -ShowRepository 'D:\仓库\Kirakara Show' `
+  -FlutterExecutable 'D:\Program Files\Flutter\bin\flutter.bat' `
+  -Mode debug `
+  -Engine official
+
+.\tool\windows_compositor\run_windows_stage_texture_baseline.ps1 `
+  -ShowRepository 'D:\仓库\Kirakara Show' `
+  -FlutterExecutable 'D:\Program Files\Flutter\bin\flutter.bat' `
+  -Mode debug `
+  -Engine local `
+  -LocalVariant patched `
+  -EngineWorkspaceRoot 'E:\Kirakara-Flutter-Engine'
+```
+
+The A/B runner explicitly sets `KIRAKARA_COMPOSITOR_BACKEND=external_texture`
+for its child process and restores the caller's environment afterward. A
+selected composed backend fails visibly on an ABI, synchronization or runtime
+error; it does not silently use external texture to hide an implementation
+defect. Full protocol, ownership and current evidence are recorded in
+`docs/windows_compositor/phase3_real_show_stage.md`.
 
 ## Safety rules
 

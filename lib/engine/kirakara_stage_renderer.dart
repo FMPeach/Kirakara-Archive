@@ -54,7 +54,7 @@ class _KirakaraGpuStageWidget extends StatefulWidget {
 }
 
 class _KirakaraGpuStageWidgetState extends State<_KirakaraGpuStageWidget> {
-  int? _textureId;
+  StagePresentationAttachment? _attachment;
 
   @override
   void initState() {
@@ -63,17 +63,23 @@ class _KirakaraGpuStageWidgetState extends State<_KirakaraGpuStageWidget> {
   }
 
   Future<void> _attachTexture() async {
-    final textureId = await widget.textureController.attach(
+    final attachment = await widget.textureController.attach(
       widget.showService.nativeHandleAddress,
     );
     if (!mounted) {
       await widget.textureController.setActive(false);
       return;
     }
-    if (textureId == null) return;
-    await widget.textureController.setActive(true);
+    if (attachment == null) return;
+    setState(() => _attachment = attachment);
+    if (attachment.isComposed) {
+      // Let the transparent slot publish its physical bounds before Show can
+      // deliver the first frame. The Engine keeps the lower Visual detached
+      // until both geometry and a resource are available.
+      await WidgetsBinding.instance.endOfFrame;
+    }
     if (!mounted) return;
-    setState(() => _textureId = textureId);
+    await widget.textureController.setActive(true);
   }
 
   @override
@@ -84,15 +90,111 @@ class _KirakaraGpuStageWidgetState extends State<_KirakaraGpuStageWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final textureId = _textureId;
+    final attachment = _attachment;
+    if (attachment == null) {
+      return const ColoredBox(color: Colors.black);
+    }
+    if (attachment.isComposed) {
+      return _ComposedStageHole(controller: widget.textureController);
+    }
     return ColoredBox(
       color: Colors.black,
-      child: textureId == null
-          ? const SizedBox.expand()
-          : Texture(
-              textureId: textureId,
-              filterQuality: FilterQuality.high,
-            ),
+      child: Texture(
+        textureId: attachment.textureId!,
+        filterQuality: FilterQuality.high,
+      ),
     );
   }
+}
+
+class _ComposedStageHole extends StatefulWidget {
+  const _ComposedStageHole({required this.controller});
+
+  final StageTextureController controller;
+
+  @override
+  State<_ComposedStageHole> createState() => _ComposedStageHoleState();
+}
+
+class _ComposedStageHoleState extends State<_ComposedStageHole>
+    with WidgetsBindingObserver {
+  final _slotKey = GlobalKey();
+  bool _reportScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _scheduleGeometryReport();
+  }
+
+  @override
+  void didUpdateWidget(_ComposedStageHole oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _scheduleGeometryReport();
+  }
+
+  @override
+  void didChangeMetrics() {
+    _scheduleGeometryReport();
+  }
+
+  void _scheduleGeometryReport() {
+    if (_reportScheduled) return;
+    _reportScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _reportScheduled = false;
+      if (!mounted) return;
+      final renderObject =
+          _slotKey.currentContext?.findRenderObject() as RenderBox?;
+      if (renderObject == null || !renderObject.hasSize) return;
+      final logicalTopLeft = renderObject.localToGlobal(Offset.zero);
+      final logicalBounds = logicalTopLeft & renderObject.size;
+      final scale = View.of(context).devicePixelRatio;
+      unawaited(widget.controller.setComposedGeometry(
+        physicalBounds: Rect.fromLTWH(
+          logicalBounds.left * scale,
+          logicalBounds.top * scale,
+          logicalBounds.width * scale,
+          logicalBounds.height * scale,
+        ),
+      ));
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _scheduleGeometryReport();
+    return CustomPaint(
+      key: _slotKey,
+      painter: const _ClearStageHolePainter(),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+class _ClearStageHolePainter extends CustomPainter {
+  const _ClearStageHolePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Do not wrap this in saveLayer: the clear operation intentionally removes
+    // the already-painted Flutter background from the upper premultiplied-alpha
+    // surface. Later Stack children (buttons, dialogs, masks) paint above it.
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..isAntiAlias = false
+        ..blendMode = BlendMode.clear,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _ClearStageHolePainter oldDelegate) => false;
 }
