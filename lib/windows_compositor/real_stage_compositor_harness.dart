@@ -60,6 +60,7 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
   bool _geometryScheduled = false;
   bool _overlayVisible = false;
   bool _pageVisible = false;
+  bool _skipDisposeCleanup = false;
   String _fit = 'contain';
   String _status = '正在准备真实 Show Stage…';
 
@@ -157,7 +158,9 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
           !titleFixtureText.contains('"enabled": true')) {
         throw StateError('The title fixture does not enable songTitle.');
       }
-      final show = KirakaraShowFFI();
+      final lifecycleProbe =
+          Platform.environment['KIRAKARA_COMPOSITOR_LIFECYCLE_PROBE'] == '1';
+      var show = KirakaraShowFFI();
       _show = show;
       final attachment =
           await _stageController.attach(show.nativeHandleAddress);
@@ -345,11 +348,6 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
       await Future<void>.delayed(const Duration(seconds: 1));
       final detachAfter = await _readMap('getStageDiagnostics');
 
-      await Future<void>.delayed(const Duration(milliseconds: 750));
-      final settledBefore = await _readMap('getStageDiagnostics');
-      await Future<void>.delayed(const Duration(seconds: 2));
-      final settledAfter = await _readMap('getStageDiagnostics');
-
       Map<Object?, Object?> engine(Map<String, Object?> sample) =>
           _map(sample['engine'], 'engine');
       int engineDelta(
@@ -358,6 +356,282 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
         String counter,
       ) =>
           _counter(engine(after), counter) - _counter(engine(before), counter);
+      int showDelta(
+        Map<String, Object?> before,
+        Map<String, Object?> after,
+        String counter,
+      ) =>
+          _counter(_map(after['show'], 'after Show diagnostics'), counter) -
+          _counter(_map(before['show'], 'before Show diagnostics'), counter);
+
+      final lifecycleSamples = <String, Object?>{};
+      final lifecycleGates = <String, bool>{};
+      if (lifecycleProbe) {
+        final lifecycleWindow = _counter(backend, 'topLevelWindow');
+
+        final minimizeBefore = await _readMap('getStageDiagnostics');
+        await _compositorChannel.invokeMethod<void>(
+          'setWindowShowStateForTest',
+          <String, Object?>{'state': 'minimized'},
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        final minimizedBackend = await _readMap('getBackendInfo');
+        final minimized = await _readMap('getStageDiagnostics');
+        await _compositorChannel.invokeMethod<void>(
+          'setWindowShowStateForTest',
+          <String, Object?>{'state': 'restored'},
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 1250));
+        await _reportGeometry();
+        final restoredBackend = await _readMap('getBackendInfo');
+        final restored = await _readMap('getStageDiagnostics');
+
+        await _compositorChannel.invokeMethod<void>(
+          'setWindowShowStateForTest',
+          <String, Object?>{'state': 'maximized'},
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        await _reportGeometry();
+        final maximizedBackend = await _readMap('getBackendInfo');
+        final maximized = await _readMap('getStageDiagnostics');
+        await _compositorChannel.invokeMethod<void>(
+          'setWindowShowStateForTest',
+          <String, Object?>{'state': 'restored'},
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 1250));
+        await _reportGeometry();
+        final finalWindowBackend = await _readMap('getBackendInfo');
+        final finalWindowState = await _readMap('getStageDiagnostics');
+
+        // These bounded, test-only messages validate the same Win32 routing
+        // and preview state machine used by real session/power notifications.
+        // They do not claim that this workstation actually locked or slept;
+        // those remain explicit manual hardware gates.
+        final sessionBefore = await _readMap('getStageDiagnostics');
+        await _compositorChannel.invokeMethod<void>(
+          'postLifecycleSignalForTest',
+          <String, Object?>{'signal': 'sessionLock'},
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+        final sessionLocked = await _readMap('getStageDiagnostics');
+        await _compositorChannel.invokeMethod<void>(
+          'postLifecycleSignalForTest',
+          <String, Object?>{'signal': 'sessionUnlock'},
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        final sessionUnlocked = await _readMap('getStageDiagnostics');
+
+        final powerBefore = await _readMap('getStageDiagnostics');
+        await _compositorChannel.invokeMethod<void>(
+          'postLifecycleSignalForTest',
+          <String, Object?>{'signal': 'powerSuspend'},
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+        final powerSuspended = await _readMap('getStageDiagnostics');
+        await _compositorChannel.invokeMethod<void>(
+          'postLifecycleSignalForTest',
+          <String, Object?>{'signal': 'powerResume'},
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 900));
+        final powerResumed = await _readMap('getStageDiagnostics');
+
+        final displayChangeBefore = await _readMap('getStageDiagnostics');
+        await _compositorChannel.invokeMethod<void>(
+          'postLifecycleSignalForTest',
+          <String, Object?>{'signal': 'displayChange'},
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        final displayChangeAfter = await _readMap('getStageDiagnostics');
+
+        final rapidNavigationBefore = await _readMap('getStageDiagnostics');
+        for (var index = 0; index < 6; index++) {
+          if (mounted) setState(() => _pageVisible = true);
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+          if (mounted) setState(() => _pageVisible = false);
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+        }
+        final rapidNavigationAfter = await _readMap('getStageDiagnostics');
+
+        final rebuildBefore = await _readMap('getStageDiagnostics');
+        final oldShowHandle = show.nativeHandleAddress;
+        await _stageController.setActive(false);
+        await _stageController.detach();
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        final rebuildDetached = await _readMap('getStageDiagnostics');
+        show.stop();
+        show.dispose();
+        _show = null;
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        final afterShowDestroy = await _readMap('getStageDiagnostics');
+
+        show = KirakaraShowFFI();
+        _show = show;
+        final newShowHandle = show.nativeHandleAddress;
+        final rebuiltAttachment = await _stageController.attach(newShowHandle);
+        if (rebuiltAttachment == null || !rebuiltAttachment.isComposed) {
+          throw StateError('The rebuilt Show source did not attach.');
+        }
+        await _reportGeometry();
+        await _stageController.setActive(true);
+        await _loadFixture(show, fixtureRoot, 2);
+        await Future<void>.delayed(const Duration(milliseconds: 1250));
+        final rebuildAfter = await _readMap('getStageDiagnostics');
+
+        lifecycleGates.addAll(<String, bool>{
+          'minimizeObserved': minimizedBackend['windowIsMinimized'] == true,
+          'stageSuspendedWhileMinimized': minimized['active'] == false &&
+              minimized['requestedActive'] == true &&
+              minimized['windowAvailable'] == false &&
+              engineDelta(
+                    minimizeBefore,
+                    minimized,
+                    'stagePresentCount',
+                  ) <=
+                  3 &&
+              showDelta(minimizeBefore, minimized, 'publishedFrames') <= 3,
+          'restoreObserved': restoredBackend['windowIsMinimized'] == false &&
+              restoredBackend['windowIsVisible'] == true &&
+              restored['active'] == true &&
+              restored['requestedActive'] == true &&
+              restored['windowAvailable'] == true &&
+              _counter(restored, 'lastActivityTransitionResult') == 0,
+          'stageRecoveredAfterRestore':
+              engineDelta(minimized, restored, 'stagePresentCount') >= 20,
+          'maximizeObserved': maximizedBackend['windowIsMaximized'] == true,
+          'maximizedStageContinued':
+              engineDelta(restored, maximized, 'stagePresentCount') >= 20,
+          'finalRestoreObserved':
+              finalWindowBackend['windowIsMinimized'] == false &&
+                  finalWindowBackend['windowIsMaximized'] == false &&
+                  finalWindowBackend['windowIsVisible'] == true,
+          'windowIdentityPreserved': <Map<String, Object?>>[
+            minimizedBackend,
+            restoredBackend,
+            maximizedBackend,
+            finalWindowBackend,
+          ].every(
+            (sample) => _counter(sample, 'topLevelWindow') == lifecycleWindow,
+          ),
+          'stageRecoveredAfterFinalRestore': engineDelta(
+                maximized,
+                finalWindowState,
+                'stagePresentCount',
+              ) >=
+              20,
+          'sessionSignalSuspendedPreview': sessionLocked['active'] == false &&
+              sessionLocked['requestedActive'] == true &&
+              sessionLocked['windowAvailable'] == false &&
+              engineDelta(
+                    sessionBefore,
+                    sessionLocked,
+                    'stagePresentCount',
+                  ) <=
+                  3 &&
+              showDelta(sessionBefore, sessionLocked, 'publishedFrames') <= 3,
+          'sessionSignalRecoveredPreview': sessionUnlocked['active'] == true &&
+              sessionUnlocked['windowAvailable'] == true &&
+              engineDelta(
+                    sessionLocked,
+                    sessionUnlocked,
+                    'stagePresentCount',
+                  ) >=
+                  20,
+          'powerSignalSuspendedPreview': powerSuspended['active'] == false &&
+              powerSuspended['requestedActive'] == true &&
+              powerSuspended['windowAvailable'] == false &&
+              engineDelta(
+                    powerBefore,
+                    powerSuspended,
+                    'stagePresentCount',
+                  ) <=
+                  3 &&
+              showDelta(powerBefore, powerSuspended, 'publishedFrames') <= 3,
+          'powerSignalRecoveredPreview': powerResumed['active'] == true &&
+              powerResumed['windowAvailable'] == true &&
+              engineDelta(
+                    powerSuspended,
+                    powerResumed,
+                    'stagePresentCount',
+                  ) >=
+                  20,
+          'displayChangeSignalKeptStageAlive':
+              displayChangeAfter['active'] == true &&
+                  engineDelta(
+                        displayChangeBefore,
+                        displayChangeAfter,
+                        'stagePresentCount',
+                      ) >=
+                      15,
+          'rapidNavigationDidNotStopStage': engineDelta(
+                rapidNavigationBefore,
+                rapidNavigationAfter,
+                'stagePresentCount',
+              ) >=
+              30,
+          'rebuildDetachedOldSource': rebuildDetached['attached'] == false &&
+              rebuildDetached['active'] == false &&
+              afterShowDestroy['attached'] == false,
+          'rebuiltShowAttached': rebuildAfter['attached'] == true &&
+              rebuildAfter['active'] == true,
+          'rebuiltShowProducedFrames': _counter(
+                      _map(rebuildAfter['show'], 'rebuilt Show diagnostics'),
+                      'publishedFrames') >=
+                  45 &&
+              engineDelta(
+                    afterShowDestroy,
+                    rebuildAfter,
+                    'stagePresentCount',
+                  ) >=
+                  45,
+        });
+        lifecycleSamples.addAll(<String, Object?>{
+          'window': <String, Object?>{
+            'before': minimizeBefore,
+            'minimizedBackend': minimizedBackend,
+            'minimized': minimized,
+            'restoredBackend': restoredBackend,
+            'restored': restored,
+            'maximizedBackend': maximizedBackend,
+            'maximized': maximized,
+            'finalBackend': finalWindowBackend,
+            'final': finalWindowState,
+          },
+          'rapidNavigation': <String, Object?>{
+            'before': rapidNavigationBefore,
+            'after': rapidNavigationAfter,
+          },
+          'syntheticLifecycleSignals': <String, Object?>{
+            'realOperatingSystemTransition': false,
+            'session': <String, Object?>{
+              'before': sessionBefore,
+              'locked': sessionLocked,
+              'unlocked': sessionUnlocked,
+            },
+            'power': <String, Object?>{
+              'before': powerBefore,
+              'suspended': powerSuspended,
+              'resumed': powerResumed,
+            },
+            'displayChange': <String, Object?>{
+              'before': displayChangeBefore,
+              'after': displayChangeAfter,
+            },
+          },
+          'showRebuild': <String, Object?>{
+            'oldHandle': oldShowHandle,
+            'newHandle': newShowHandle,
+            'before': rebuildBefore,
+            'detached': rebuildDetached,
+            'afterDestroy': afterShowDestroy,
+            'after': rebuildAfter,
+          },
+        });
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 750));
+      final settledBefore = await _readMap('getStageDiagnostics');
+      await Future<void>.delayed(const Duration(seconds: 2));
+      final settledAfter = await _readMap('getStageDiagnostics');
 
       final staticShow = _map(staticAfter['show'], 'Show diagnostics');
       final switchBeforeShow = _map(switchBefore['show'], 'Show diagnostics');
@@ -374,6 +648,8 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
                 _counter(backend, 'visibleTopLevelWindowCount') >= 1 &&
                 _counter(backend, 'topLevelWindow') != 0,
         'windowIsPerMonitorV2': backend['windowIsPerMonitorV2'] == true,
+        'sessionNotificationsRegistered':
+            backend['sessionNotificationsRegistered'] == true,
         'stageAttachedAndActive':
             staticAfter['attached'] == true && staticAfter['active'] == true,
         'stageMadeProgressWhileFlutterStatic': staticStageDelta >= 45,
@@ -449,8 +725,10 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
         'stageContinuedAfterInteractions':
             engineDelta(settledBefore, settledAfter, 'stagePresentCount') >= 45,
         'showReportedFrames': _counter(staticShow, 'publishedFrames') >= 45 &&
-            _counter(finalShow, 'publishedFrames') >=
-                _counter(staticShow, 'publishedFrames'),
+            (lifecycleProbe
+                ? _counter(finalShow, 'publishedFrames') >= 45
+                : _counter(finalShow, 'publishedFrames') >=
+                    _counter(staticShow, 'publishedFrames')),
         'noRejectedCallbacks':
             _counter(settledAfter, 'callbackRejectedCount') == 0,
         'noHandleDuplicationFailures':
@@ -464,6 +742,9 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
             _counter(finalEngine, 'stageDeviceRemovedCount') == 0,
         'showLastOperationSucceeded': _counter(finalShow, 'lastHresult') == 0,
       };
+      for (final entry in lifecycleGates.entries) {
+        gates['lifecycle.${entry.key}'] = entry.value;
+      }
       report = <String, Object?>{
         'schemaVersion': 1,
         'recordedAtUtc': DateTime.now().toUtc().toIso8601String(),
@@ -550,6 +831,12 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
           'before': settledBefore,
           'after': settledAfter,
         },
+        if (lifecycleProbe)
+          'lifecycle': <String, Object?>{
+            ...lifecycleSamples,
+            'gates': lifecycleGates,
+            'passed': lifecycleGates.values.every((value) => value),
+          },
         'gates': gates,
         'passed': gates.values.every((value) => value),
       };
@@ -574,7 +861,12 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
     }
     final keepOpen =
         Platform.environment['KIRAKARA_COMPOSITOR_KEEP_OPEN'] == '1';
-    if (!keepOpen) {
+    final exitWhileActive =
+        Platform.environment['KIRAKARA_COMPOSITOR_EXIT_WHILE_ACTIVE'] == '1';
+    if (exitWhileActive) {
+      _skipDisposeCleanup = true;
+    }
+    if (!keepOpen && !exitWhileActive) {
       await _stageController.setActive(false);
       await _stageController.detach();
       _show?.dispose();
@@ -598,9 +890,11 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    unawaited(_stageController.setActive(false));
-    unawaited(_stageController.detach());
-    _show?.dispose();
+    if (!_skipDisposeCleanup) {
+      unawaited(_stageController.setActive(false));
+      unawaited(_stageController.detach());
+      _show?.dispose();
+    }
     super.dispose();
   }
 

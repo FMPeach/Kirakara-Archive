@@ -49,10 +49,11 @@ void main() {
         expect(File(fixture).existsSync(), isTrue, reason: fixture);
       }
 
-      final show = KirakaraShowFFI();
+      var show = KirakaraShowFFI();
       final texture = StageTextureController();
       addTearDown(() async {
         await texture.setActive(false);
+        await texture.detach();
         show.stop();
         show.dispose();
       });
@@ -200,6 +201,66 @@ void main() {
         );
         expect(inactiveCallbacks, lessThanOrEqualTo(1));
         expect(inactivePresents, lessThanOrEqualTo(2));
+      }
+
+      // Rebuild Show in the same process while keeping Flutter and the
+      // registered Texture widget alive. Detach is the transaction boundary:
+      // no bridge may retain a source or borrowed DLL entrypoint owned by the
+      // old FFI instance.
+      await texture.setActive(false);
+      await texture.detach();
+      show.stop();
+      show.dispose();
+
+      show = KirakaraShowFFI();
+      show.setStageVisible(false);
+      final replacement = await texture.attach(show.nativeHandleAddress);
+      expect(replacement, isNotNull);
+      expect(replacement!.isComposed, isFalse);
+      expect(replacement.textureId, textureId);
+      await texture.setActive(true);
+      expect(
+        show.load(
+          _videoPath,
+          lyricPath: _lyricPath,
+          vocalPath: _vocalPath,
+          accompanimentPath: _accompanimentPath,
+        ),
+        isTrue,
+      );
+      show.play();
+
+      final replacementDeadline =
+          DateTime.now().add(const Duration(seconds: 5));
+      while (show.position < 0.25 &&
+          DateTime.now().isBefore(replacementDeadline)) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(show.position, greaterThanOrEqualTo(0.25));
+      expect(tester.takeException(), isNull);
+
+      if (Platform.environment['KIRAKARA_COMPOSITOR_DIAGNOSTICS'] == '1') {
+        final rebuildBefore = await _readDiagnosticsCounters();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 750)),
+        );
+        final rebuildAfter = await _readDiagnosticsCounters();
+        final rebuildCallbacks = _counterDelta(
+          rebuildBefore,
+          rebuildAfter,
+          'textureCallbacks',
+        );
+        final rebuildAcquires = _counterDelta(
+          rebuildBefore,
+          rebuildAfter,
+          'advancedTextureAcquires',
+        );
+        debugPrint(
+          '[stage-baseline] rebuilt Show 750ms: '
+          'callbacks=$rebuildCallbacks, advanced_acquires=$rebuildAcquires',
+        );
+        expect(rebuildCallbacks, greaterThanOrEqualTo(30));
+        expect(rebuildAcquires, greaterThanOrEqualTo(20));
       }
     },
     skip: !Platform.isWindows,

@@ -48,8 +48,25 @@ class StageTextureController {
     final pending = _pendingAttach;
     if (_hostHandle == hostHandle && pending != null) return pending;
 
+    final previousHostHandle = _hostHandle;
+    final previousAttachment = _attachment;
     _hostHandle = hostHandle;
-    final future = _attach(hostHandle);
+    final future = _attach(hostHandle).then(
+      (attachment) {
+        if (attachment == null && _hostHandle == hostHandle) {
+          _hostHandle = previousHostHandle;
+          _attachment = previousAttachment;
+        }
+        return attachment;
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (_hostHandle == hostHandle) {
+          _hostHandle = previousHostHandle;
+          _attachment = previousAttachment;
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      },
+    );
     _pendingAttach = future;
     return future;
   }
@@ -161,13 +178,17 @@ class StageTextureController {
     final attachment = _attachment;
     _attachment = null;
     _lastGeometry = null;
-    if (attachment == null || !attachment.isComposed) return;
+    if (attachment == null) return;
     try {
-      await _compositorChannel.invokeMethod<void>('detachStage');
+      if (attachment.isComposed) {
+        await _compositorChannel.invokeMethod<void>('detachStage');
+      } else {
+        await _textureChannel.invokeMethod<void>('detach');
+      }
     } on MissingPluginException catch (error) {
-      debugPrint('Composed Stage detach bridge is unavailable: $error');
+      debugPrint('Stage detach bridge is unavailable: $error');
     } on PlatformException catch (error) {
-      debugPrint('Unable to detach composed Stage: ${error.message}');
+      debugPrint('Unable to detach Stage: ${error.message}');
     }
   }
 }

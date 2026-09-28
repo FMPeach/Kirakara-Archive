@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <optional>
+#include <wtsapi32.h>
 
 #include "dcomp_compositor_bridge.h"
 #include "flutter/generated_plugin_registrant.h"
@@ -58,6 +59,14 @@ bool FlutterWindow::OnCreate() {
     flutter_controller_.reset();
     return false;
   }
+  if (dcomp_compositor_bridge_->enabled()) {
+    session_notifications_registered_ =
+        ::WTSRegisterSessionNotification(GetHandle(),
+                                         NOTIFY_FOR_THIS_SESSION) != FALSE;
+    dcomp_compositor_bridge_->SetSessionNotificationsRegistered(
+        session_notifications_registered_);
+    UpdateCompositorWindowAvailability();
+  }
   RegisterPlugins(flutter_controller_->engine());
   RegisterImeBridge(flutter_controller_->engine()->messenger());
   RegisterMediaIoBridge(flutter_controller_->engine()->messenger());
@@ -96,6 +105,13 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (session_notifications_registered_) {
+    ::WTSUnRegisterSessionNotification(GetHandle());
+    session_notifications_registered_ = false;
+    if (dcomp_compositor_bridge_) {
+      dcomp_compositor_bridge_->SetSessionNotificationsRegistered(false);
+    }
+  }
   if (flutter_present_trace_state_) {
     flutter_present_trace_state_->enabled.store(
         false, std::memory_order_release);
@@ -143,6 +159,38 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     return 0;
   }
 
+  // Lifecycle state must be observed even when Flutter's top-level window
+  // handler consumes the corresponding message below.
+  switch (message) {
+    case WM_SIZE:
+      compositor_window_minimized_ = wparam == SIZE_MINIMIZED;
+      UpdateCompositorWindowAvailability();
+      break;
+    case WM_SHOWWINDOW:
+      UpdateCompositorWindowAvailability();
+      break;
+    case WM_POWERBROADCAST:
+      if (wparam == PBT_APMSUSPEND) {
+        compositor_power_suspended_ = true;
+        UpdateCompositorWindowAvailability();
+      } else if (wparam == PBT_APMRESUMEAUTOMATIC ||
+                 wparam == PBT_APMRESUMECRITICAL ||
+                 wparam == PBT_APMRESUMESUSPEND) {
+        compositor_power_suspended_ = false;
+        UpdateCompositorWindowAvailability();
+      }
+      break;
+    case WM_WTSSESSION_CHANGE:
+      if (wparam == WTS_SESSION_LOCK) {
+        compositor_session_locked_ = true;
+        UpdateCompositorWindowAvailability();
+      } else if (wparam == WTS_SESSION_UNLOCK) {
+        compositor_session_locked_ = false;
+        UpdateCompositorWindowAvailability();
+      }
+      break;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
@@ -164,6 +212,18 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
+}
+
+void FlutterWindow::UpdateCompositorWindowAvailability() {
+  if (!dcomp_compositor_bridge_ || !dcomp_compositor_bridge_->enabled()) {
+    return;
+  }
+  const HWND window = GetHandle();
+  const bool available = window && ::IsWindowVisible(window) &&
+                         !compositor_window_minimized_ &&
+                         !compositor_power_suspended_ &&
+                         !compositor_session_locked_;
+  dcomp_compositor_bridge_->HandleWindowAvailabilityChanged(available);
 }
 
 void FlutterWindow::ArmFlutterPresentTrace() {

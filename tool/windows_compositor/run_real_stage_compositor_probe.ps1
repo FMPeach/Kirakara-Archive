@@ -21,6 +21,10 @@ param(
 
   [switch]$SkipBuild,
 
+  [switch]$LifecycleProbe,
+
+  [switch]$ExitWhileActive,
+
   [switch]$KeepOpen
 )
 
@@ -95,8 +99,13 @@ Assert-LockedEngineArtifacts `
 
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
   $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+  $reportStem = if ($LifecycleProbe) {
+    'real-stage-lifecycle'
+  } else {
+    'real-stage-compositor'
+  }
   $ReportPath = Join-Path $repositoryRoot `
-    "build\diagnostics\real-stage-compositor-$stamp.json"
+    "build\diagnostics\$reportStem-$stamp.json"
 }
 $absoluteReport = Resolve-UnresolvedPath $ReportPath
 if (Test-Path -LiteralPath $absoluteReport) {
@@ -161,6 +170,20 @@ $startInfo.Environment['KIRAKARA_COMPOSITOR_KEEP_OPEN'] = if ($KeepOpen) {
 } else {
   '0'
 }
+$startInfo.Environment['KIRAKARA_COMPOSITOR_LIFECYCLE_PROBE'] = if (
+  $LifecycleProbe
+) {
+  '1'
+} else {
+  '0'
+}
+$startInfo.Environment['KIRAKARA_COMPOSITOR_EXIT_WHILE_ACTIVE'] = if (
+  $ExitWhileActive
+) {
+  '1'
+} else {
+  '0'
+}
 
 $process = [Diagnostics.Process]::new()
 $process.StartInfo = $startInfo
@@ -205,4 +228,5 @@ $report.replaySample | Format-List | Out-Host
 $report.naturalEofSample | Format-List | Out-Host
 $report.reloadAfterNaturalEofSample | Format-List | Out-Host
 $report.detachReattachSample | Format-List | Out-Host
+$report.lifecycle | Format-List | Out-Host
 $report.postInteractionStaticSample | Format-List | Out-Host

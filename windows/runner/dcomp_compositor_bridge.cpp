@@ -7,6 +7,7 @@
 #include <flutter/standard_method_codec.h>
 #include <flutter_windows.h>
 #include <wrl/client.h>
+#include <wtsapi32.h>
 
 #include <algorithm>
 #include <array>
@@ -537,12 +538,11 @@ struct DcompCompositorBridge::Impl {
       return true;
     }
 
-    HMODULE module = ::GetModuleHandleW(L"libshow_host.dll");
-    bool owns_module = false;
-    if (!module) {
-      module = ::LoadLibraryW(L"libshow_host.dll");
-      owns_module = module != nullptr;
-    }
+    // Hold an independent loader reference for as long as any resolved API
+    // pointer or Stage source can be used. KirakaraShowFFI may close and reopen
+    // its DynamicLibrary while rebuilding Show; GetModuleHandle alone would
+    // leave these pointers targeting an unloaded DLL during that transition.
+    HMODULE module = ::LoadLibraryW(L"libshow_host.dll");
     if (!module) {
       *error = "The composed Stage backend could not load libshow_host.dll. "
                "Create the Show host before attaching its Stage Visual.";
@@ -555,9 +555,7 @@ struct DcompCompositorBridge::Impl {
         reinterpret_cast<ShowHostSetStageD3dDeviceProc>(
             ::GetProcAddress(module, "show_host_set_stage_d3d_device"));
     if (!get_api || !set_stage_device) {
-      if (owns_module) {
-        ::FreeLibrary(module);
-      }
+      ::FreeLibrary(module);
       *error = "libshow_host.dll does not export the required versioned Stage "
                "Visual API and D3D device binding entrypoint.";
       return false;
@@ -586,9 +584,7 @@ struct DcompCompositorBridge::Impl {
         !resolved.create_source || !resolved.destroy_source ||
         !resolved.set_active || !resolved.set_frame_callback ||
         !resolved.get_stats || !reserved_zero) {
-      if (owns_module) {
-        ::FreeLibrary(module);
-      }
+      ::FreeLibrary(module);
       *error = "The Show Stage Visual API is incompatible. Expected ABI " +
                std::to_string(SHOW_HOST_STAGE_VISUAL_ABI_VERSION) +
                " and protocol " + SHOW_HOST_STAGE_VISUAL_PROTOCOL_REVISION +
@@ -597,7 +593,6 @@ struct DcompCompositorBridge::Impl {
     }
 
     show_module = module;
-    owns_show_module = owns_module;
     show_api = resolved;
     show_set_stage_device = set_stage_device;
     show_api_available = true;
@@ -702,6 +697,7 @@ struct DcompCompositorBridge::Impl {
 
   void ReleaseStageSource() {
     std::scoped_lock lock(stage_source_mutex);
+    stage_requested_active.store(false, std::memory_order_release);
     stage_active.store(false, std::memory_order_release);
     if (stage_source && show_api_available) {
       show_api.set_frame_callback(stage_source, nullptr, nullptr);
@@ -725,8 +721,6 @@ struct DcompCompositorBridge::Impl {
       return false;
     }
 
-    ReleaseStageSource();
-    std::scoped_lock lock(stage_source_mutex);
     if (!show_set_stage_device(
             host, reinterpret_cast<uintptr_t>(show_stage_device.Get()))) {
       *error = "Show rejected the D3D11 producer device selected from "
@@ -740,10 +734,83 @@ struct DcompCompositorBridge::Impl {
                StageVisualResultName(result) + ".";
       return false;
     }
+    show_api.set_active(source, false);
+
+    // Prepare the replacement source completely before disturbing the
+    // currently visible one. If any preparation step above fails, the old
+    // source and Visual remain intact.
+    std::scoped_lock lock(stage_source_mutex);
+    if (shutting_down.load(std::memory_order_acquire)) {
+      show_api.destroy_source(source);
+      *error = "The composed Stage backend is shutting down.";
+      return false;
+    }
+    const bool old_requested =
+        stage_requested_active.load(std::memory_order_acquire);
+    const bool old_active =
+        stage_active.exchange(false, std::memory_order_acq_rel);
+    if (stage_source) {
+      show_api.set_active(stage_source, false);
+    }
+    const int32_t detach_result =
+        api.detach_stage(reinterpret_cast<uintptr_t>(view));
+    if (detach_result != kKirakaraFlutterCompositorSuccess) {
+      if (stage_source && old_active) {
+        stage_active.store(true, std::memory_order_release);
+        show_api.set_active(stage_source, true);
+      }
+      stage_requested_active.store(old_requested, std::memory_order_release);
+      show_api.destroy_source(source);
+      *error = "The Engine could not transactionally replace the Stage "
+               "Visual: " +
+               ResultName(detach_result) + ".";
+      return false;
+    }
+    if (stage_source) {
+      show_api.set_frame_callback(stage_source, nullptr, nullptr);
+      show_api.destroy_source(stage_source);
+    }
     stage_source = source;
     attached_show_host = host;
+    stage_requested_active.store(false, std::memory_order_release);
     show_api.set_frame_callback(stage_source, &StageFrameAvailable, this);
+    return true;
+  }
+
+  bool ApplyStageActivityLocked(std::string *error) {
+    const bool should_be_active =
+        stage_requested_active.load(std::memory_order_acquire) &&
+        window_available.load(std::memory_order_acquire);
+    const bool was_active = stage_active.load(std::memory_order_acquire);
+    if (was_active == should_be_active) {
+      return true;
+    }
+
+    if (should_be_active) {
+      // Publish the callback eligibility before enabling Show so an immediate
+      // producer callback cannot be mistaken for a stale frame.
+      stage_active.store(true, std::memory_order_release);
+      show_api.set_active(stage_source, true);
+      stage_activity_transition_count.fetch_add(1,
+                                                std::memory_order_relaxed);
+      last_stage_activity_result.store(kKirakaraFlutterCompositorSuccess,
+                                       std::memory_order_relaxed);
+      return true;
+    }
+
+    // Prevent any racing producer callback from submitting before asking Show
+    // to stop this preview source. Show playback and physical/Cast outputs are
+    // intentionally unaffected by this preview-only activity bit.
+    stage_active.store(false, std::memory_order_release);
     show_api.set_active(stage_source, false);
+    const int32_t result = api.detach_stage(reinterpret_cast<uintptr_t>(view));
+    stage_activity_transition_count.fetch_add(1, std::memory_order_relaxed);
+    last_stage_activity_result.store(result, std::memory_order_relaxed);
+    if (result != kKirakaraFlutterCompositorSuccess) {
+      *error = "The Engine could not detach the Stage Visual: " +
+               ResultName(result) + ".";
+      return false;
+    }
     return true;
   }
 
@@ -754,21 +821,18 @@ struct DcompCompositorBridge::Impl {
       *error = "No composed Stage Visual source is attached.";
       return false;
     }
-    if (active) {
-      stage_active.store(true, std::memory_order_release);
-      show_api.set_active(stage_source, true);
+    stage_requested_active.store(active, std::memory_order_release);
+    return ApplyStageActivityLocked(error);
+  }
+
+  bool SetWindowAvailability(bool available, std::string *error) {
+    std::scoped_lock lock(stage_source_mutex);
+    window_available.store(available, std::memory_order_release);
+    if (!stage_source || !show_api_available || !view ||
+        shutting_down.load(std::memory_order_acquire)) {
       return true;
     }
-
-    stage_active.store(false, std::memory_order_release);
-    show_api.set_active(stage_source, false);
-    const int32_t result = api.detach_stage(reinterpret_cast<uintptr_t>(view));
-    if (result != kKirakaraFlutterCompositorSuccess) {
-      *error = "The Engine could not detach the Stage Visual: " +
-               ResultName(result) + ".";
-      return false;
-    }
-    return true;
+    return ApplyStageActivityLocked(error);
   }
 
   bool SetStageGeometry(const EncodableValue *arguments, std::string *error) {
@@ -822,6 +886,17 @@ struct DcompCompositorBridge::Impl {
         {EncodableValue("attached"), EncodableValue(stage_source != nullptr)},
         {EncodableValue("active"),
          EncodableValue(stage_active.load(std::memory_order_acquire))},
+        {EncodableValue("requestedActive"),
+         EncodableValue(
+             stage_requested_active.load(std::memory_order_acquire))},
+        {EncodableValue("windowAvailable"),
+         EncodableValue(window_available.load(std::memory_order_acquire))},
+        {EncodableValue("activityTransitionCount"),
+         EncodableValue(static_cast<int64_t>(
+             stage_activity_transition_count.load(std::memory_order_relaxed)))},
+        {EncodableValue("lastActivityTransitionResult"),
+         EncodableValue(
+             last_stage_activity_result.load(std::memory_order_relaxed))},
         {EncodableValue("callbackCount"),
          EncodableValue(static_cast<int64_t>(
              stage_callback_count.load(std::memory_order_relaxed)))},
@@ -1059,12 +1134,93 @@ struct DcompCompositorBridge::Impl {
              EncodableValue(static_cast<int32_t>(window_dpi_awareness))},
             {EncodableValue("windowIsPerMonitorV2"),
              EncodableValue(window_is_per_monitor_v2)},
+            {EncodableValue("windowIsVisible"),
+             EncodableValue(::IsWindowVisible(window) != FALSE)},
+            {EncodableValue("windowIsMinimized"),
+             EncodableValue(::IsIconic(window) != FALSE)},
+            {EncodableValue("windowIsMaximized"),
+             EncodableValue(::IsZoomed(window) != FALSE)},
+            {EncodableValue("sessionNotificationsRegistered"),
+             EncodableValue(session_notifications_registered.load(
+                 std::memory_order_acquire))},
             {EncodableValue("monitorCount"),
              EncodableValue(static_cast<int32_t>(monitors.size()))},
             {EncodableValue("currentMonitorIndex"),
              EncodableValue(current_monitor_index)},
             {EncodableValue("monitors"), EncodableValue(monitors)},
         }));
+        return;
+      }
+      if (call.method_name() == "setWindowShowStateForTest") {
+        if (!CompositorTestModeEnabled()) {
+          result->Error(
+              "dcomp_test_mode_disabled",
+              "Set KIRAKARA_COMPOSITOR_TEST_MODE=1 to change the probe "
+              "window state.");
+          return;
+        }
+        const auto state = ReadMapString(call.arguments(), "state");
+        WPARAM command = 0;
+        if (state && *state == "minimized") {
+          command = SC_MINIMIZE;
+        } else if (state && *state == "maximized") {
+          command = SC_MAXIMIZE;
+        } else if (state && *state == "restored") {
+          command = SC_RESTORE;
+        } else {
+          result->Error(
+              "dcomp_invalid_test_window_state",
+              "Test window state must be minimized, maximized, or restored.");
+          return;
+        }
+        if (!window || !::IsWindow(window) ||
+            !::PostMessageW(window, WM_SYSCOMMAND, command, 0)) {
+          result->Error("dcomp_test_window_state_unavailable",
+                        "Could not queue the compositor window state change.");
+          return;
+        }
+        result->Success();
+        return;
+      }
+      if (call.method_name() == "postLifecycleSignalForTest") {
+        if (!CompositorTestModeEnabled()) {
+          result->Error(
+              "dcomp_test_mode_disabled",
+              "Set KIRAKARA_COMPOSITOR_TEST_MODE=1 to post a lifecycle "
+              "signal to the probe window.");
+          return;
+        }
+        const auto signal = ReadMapString(call.arguments(), "signal");
+        UINT message = 0;
+        WPARAM parameter = 0;
+        if (signal && *signal == "sessionLock") {
+          message = WM_WTSSESSION_CHANGE;
+          parameter = WTS_SESSION_LOCK;
+        } else if (signal && *signal == "sessionUnlock") {
+          message = WM_WTSSESSION_CHANGE;
+          parameter = WTS_SESSION_UNLOCK;
+        } else if (signal && *signal == "powerSuspend") {
+          message = WM_POWERBROADCAST;
+          parameter = PBT_APMSUSPEND;
+        } else if (signal && *signal == "powerResume") {
+          message = WM_POWERBROADCAST;
+          parameter = PBT_APMRESUMEAUTOMATIC;
+        } else if (signal && *signal == "displayChange") {
+          message = WM_DISPLAYCHANGE;
+        } else {
+          result->Error(
+              "dcomp_invalid_test_lifecycle_signal",
+              "Lifecycle signal must be sessionLock, sessionUnlock, "
+              "powerSuspend, powerResume, or displayChange.");
+          return;
+        }
+        if (!window || !::IsWindow(window) ||
+            !::PostMessageW(window, message, parameter, 0)) {
+          result->Error("dcomp_test_lifecycle_signal_unavailable",
+                        "Could not queue the compositor lifecycle signal.");
+          return;
+        }
+        result->Success();
         return;
       }
       if (call.method_name() == "stallPlatformThreadForTest") {
@@ -1224,11 +1380,10 @@ struct DcompCompositorBridge::Impl {
     show_set_stage_device = nullptr;
     show_api = {};
     show_api_available = false;
-    if (show_module && owns_show_module) {
+    if (show_module) {
       ::FreeLibrary(show_module);
     }
     show_module = nullptr;
-    owns_show_module = false;
     flutter_engine = nullptr;
   }
 
@@ -1240,15 +1395,20 @@ struct DcompCompositorBridge::Impl {
   bool prepared{};
   std::unique_ptr<flutter::MethodChannel<EncodableValue>> channel;
   HMODULE show_module{};
-  bool owns_show_module{};
   bool show_api_available{};
   ShowHostStageVisualApi show_api{};
   ShowHostSetStageD3dDeviceProc show_set_stage_device{};
   ShowHostHandle attached_show_host{};
   ShowHostStageVisualSource stage_source{};
   Microsoft::WRL::ComPtr<ID3D11Device> show_stage_device;
+  std::atomic_bool stage_requested_active{};
   std::atomic_bool stage_active{};
+  std::atomic_bool window_available{true};
   std::atomic_bool shutting_down{};
+  std::atomic_bool session_notifications_registered{};
+  std::atomic_uint64_t stage_activity_transition_count{};
+  std::atomic_int32_t last_stage_activity_result{
+      kKirakaraFlutterCompositorSuccess};
   std::atomic_uint64_t stage_callback_count{};
   std::atomic_uint64_t stage_callback_rejected_count{};
   std::atomic_int32_t last_stage_submit_result{
@@ -1359,6 +1519,27 @@ bool DcompCompositorBridge::HandleTestMoveToMonitorMessage(
       work_area.top + std::max<LONG>(0, (available_height - height) / 2);
   return ::SetWindowPos(impl_->window, nullptr, x, y, 0, 0,
                         SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER) != FALSE;
+}
+
+void DcompCompositorBridge::HandleWindowAvailabilityChanged(bool available) {
+  if (!enabled_ || !impl_ || impl_->backend != "composed") {
+    return;
+  }
+  std::string error;
+  if (!impl_->SetWindowAvailability(available, &error) && !error.empty()) {
+    const std::string diagnostic =
+        "Kirakara compositor lifecycle transition failed: " + error + "\n";
+    ::OutputDebugStringA(diagnostic.c_str());
+  }
+}
+
+void DcompCompositorBridge::SetSessionNotificationsRegistered(
+    bool registered) {
+  if (!enabled_ || !impl_) {
+    return;
+  }
+  impl_->session_notifications_registered.store(registered,
+                                                std::memory_order_release);
 }
 
 void ReportDcompCompositorStartupError(HWND owner, const std::string &error) {

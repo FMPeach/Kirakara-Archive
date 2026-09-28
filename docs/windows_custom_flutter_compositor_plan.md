@@ -77,6 +77,17 @@
   MediaEngine 时钟宿主，但可交互顶层窗口精确为 1，没有恢复 Stage 子 HWND/叠加 HWND
   方案。协议、所有权、复现命令与未验证矩阵见
   `docs/windows_compositor/phase3_real_show_stage.md`。
+- Phase 4 的当前环境实现与自动门禁已完成：Runner 独立持有 Show DLL、composed 与
+  external texture 均可显式 detach，Show source 事务式替换；最小化、会话锁定和系统
+  挂起将“请求激活”保留在内存中但停止预览生产并 detach 下层 Visual，恢复后在同一
+  HWND 自动续接。真实 Show probe 已覆盖最小化/恢复、最大化、模拟 session/power/
+  display 消息、快速导航、Show 同进程重建和 Stage 活跃退出；最小化 900 ms 只剩 1
+  个边界帧，模拟 lock/suspend 的 Stage 增量均为 0，恢复分别重新前进 47/51 帧，
+  最终两秒 Stage
+  `+120` 而 Flutter `+0`。真实锁屏、睡眠、热插拔、混合 DPI 和 device removal 仍是
+  Phase 7 实机门槛，明确未宣告通过；session notification 注册状态已由运行时门槛
+  确认。详见
+  `docs/windows_compositor/phase4_lifecycle_recovery.md`。
 
 ## 为什么要做这件事
 

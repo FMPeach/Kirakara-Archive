@@ -28,6 +28,7 @@ class FlutterWindow : public Win32Window {
 
  private:
   void ArmFlutterPresentTrace();
+  void UpdateCompositorWindowAvailability();
 
   // The project to run.
   flutter::DartProject project_;
@@ -37,6 +38,10 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<DcompCompositorBridge> dcomp_compositor_bridge_;
   std::unique_ptr<StageTextureBridge> stage_texture_bridge_;
   std::shared_ptr<FlutterPresentTraceState> flutter_present_trace_state_;
+  bool compositor_window_minimized_ = false;
+  bool compositor_power_suspended_ = false;
+  bool compositor_session_locked_ = false;
+  bool session_notifications_registered_ = false;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

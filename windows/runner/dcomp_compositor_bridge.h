@@ -42,6 +42,17 @@ class DcompCompositorBridge {
   // window receives WM_DPICHANGED and applies the OS recommended bounds.
   bool HandleTestMoveToMonitorMessage(int32_t monitor_index);
 
+  // Updates whether the top-level window can currently display composition.
+  // The requested Stage activity is retained while the window is minimized,
+  // the user session is locked, or the machine is suspended, then restored
+  // without rebuilding the Show host or HWND.
+  void HandleWindowAvailabilityChanged(bool available);
+
+  // Records whether the Runner successfully subscribed to this session's
+  // lock/unlock messages so diagnostics can distinguish a tested route from
+  // an unavailable OS notification source.
+  void SetSessionNotificationsRegistered(bool registered);
+
   bool enabled() const { return enabled_; }
 
  private:

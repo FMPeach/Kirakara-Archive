@@ -56,6 +56,7 @@ target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "d3d11.lib" "dxgi.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "advapi32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "winhttp.lib")
+target_link_libraries(${BINARY_NAME} PRIVATE "wtsapi32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE kirakara_zinnia)
 target_include_directories(${BINARY_NAME} PRIVATE
   "${CMAKE_SOURCE_DIR}"

@@ -26,11 +26,13 @@ void main() {
     expect((await controller.attach(1001))?.textureId, 73);
     await controller.setActive(false);
     await controller.setActive(true);
+    await controller.detach();
 
     expect(calls.map((call) => call.method), <String>[
       'attach',
       'setActive',
       'setActive',
+      'detach',
     ]);
     expect(calls.first.arguments, <String, Object?>{'hostHandle': 1001});
     expect(calls[1].arguments, <String, Object?>{'active': false});
@@ -134,5 +136,40 @@ void main() {
     await controller.setComposedGeometry(physicalBounds: bounds);
 
     expect(geometryAttempts, 2);
+  });
+
+  test('failed replacement attach preserves and can retry the old source',
+      () async {
+    const compositorChannel = MethodChannel('kirakara/test_dcomp_replace');
+    var replacementAttempts = 0;
+    messenger.setMockMethodCallHandler(compositorChannel, (call) async {
+      switch (call.method) {
+        case 'getBackendInfo':
+          return <String, Object?>{'backend': 'composed'};
+        case 'attachStage':
+          final arguments = call.arguments! as Map<Object?, Object?>;
+          if (arguments['hostHandle'] == 2002 && replacementAttempts++ == 0) {
+            throw PlatformException(code: 'candidate_source_failed');
+          }
+          return <String, Object?>{'backend': 'composed'};
+        default:
+          return true;
+      }
+    });
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(compositorChannel, null);
+    });
+
+    final controller = StageTextureController(
+      textureChannel: channel,
+      compositorChannel: compositorChannel,
+    );
+    final original = await controller.attach(1001);
+    expect(original?.isComposed, isTrue);
+
+    expect(await controller.attach(2002), isNull);
+    expect(controller.attachment, same(original));
+    expect((await controller.attach(2002))?.isComposed, isTrue);
+    expect(replacementAttempts, 2);
   });
 }

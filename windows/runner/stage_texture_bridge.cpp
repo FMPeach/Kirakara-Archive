@@ -51,10 +51,10 @@ struct ShowTextureApi {
   SetStageDevice set_stage_device{};
 
   bool Load() {
-    module = GetModuleHandleW(L"libshow_host.dll");
-    if (!module) {
-      module = LoadLibraryW(L"libshow_host.dll");
-    }
+    // Keep a loader reference independent from KirakaraShowFFI. The Dart FFI
+    // owner may close and reopen its DynamicLibrary during a Show rebuild,
+    // while this bridge still needs its source teardown entrypoints.
+    module = LoadLibraryW(L"libshow_host.dll");
     if (!module) {
       return false;
     }
@@ -68,8 +68,24 @@ struct ShowTextureApi {
         module, "show_host_stage_texture_source_set_frame_callback"));
     set_stage_device = reinterpret_cast<SetStageDevice>(
         GetProcAddress(module, "show_host_set_stage_d3d_device"));
-    return create_source && destroy_source && set_active && set_callback &&
-           set_stage_device;
+    if (create_source && destroy_source && set_active && set_callback &&
+        set_stage_device) {
+      return true;
+    }
+    Unload();
+    return false;
+  }
+
+  void Unload() {
+    create_source = nullptr;
+    destroy_source = nullptr;
+    set_active = nullptr;
+    set_callback = nullptr;
+    set_stage_device = nullptr;
+    if (module) {
+      FreeLibrary(module);
+      module = nullptr;
+    }
   }
 };
 
@@ -134,6 +150,7 @@ struct StageTextureBridge::Impl {
     ReleaseCurrentFrame();
     DestroySource();
     channel.reset();
+    api.Unload();
     stage_texture_trace::UnregisterProvider();
   }
 
@@ -166,6 +183,11 @@ struct StageTextureBridge::Impl {
             const bool active = ReadBool(
                 call.arguments(), "active", false);
             SetActive(active);
+            result->Success(flutter::EncodableValue(true));
+            return;
+          }
+          if (call.method_name() == "detach") {
+            DetachSource();
             result->Success(flutter::EncodableValue(true));
             return;
           }
@@ -429,6 +451,21 @@ struct StageTextureBridge::Impl {
           registrar, registered_texture_id, nullptr, nullptr);
       texture_id.store(-1);
     }
+  }
+
+  void DetachSource() {
+    {
+      std::lock_guard lock(source_mutex);
+      active.store(false);
+      if (source && api_available) {
+        api.set_callback(source, nullptr, nullptr);
+        api.set_active(source, false);
+        api.destroy_source(source);
+      }
+      source = nullptr;
+      attached_host = nullptr;
+    }
+    ReleaseCurrentFrame();
   }
 
   void ReleaseCurrentFrame() {
