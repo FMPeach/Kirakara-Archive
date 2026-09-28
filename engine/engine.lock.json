@@ -27,9 +27,44 @@
     ]
   },
   "patchset": {
-    "revision": "stock",
-    "version": 0,
-    "patches": []
+    "revision": "windows-dcomp-synthetic",
+    "version": 2,
+    "sourceTree": "245d4c2b9d94052be9c7be3c841ae85b177be4be",
+    "additionalExports": [
+      "FlutterDesktopKirakaraCompositorGetApi"
+    ],
+    "patches": [
+      {
+        "path": "engine/patches/0001-windows-dcomp-synthetic-compositor.patch",
+        "sha256": "05CC626407306850C81591962DFF1466276FCFF9029BAF311781D873CF07FE89"
+      }
+    ],
+    "builds": [
+      {
+        "mode": "debug",
+        "localEngine": "host_debug_kirakara_v2",
+        "localEngineHost": "host_debug_kirakara_v2",
+        "gnArguments": [
+          "--runtime-mode",
+          "debug",
+          "--no-stripped",
+          "--no-lto",
+          "--no-rbe",
+          "--no-goma"
+        ],
+        "ninjaTargets": [
+          "flutter/shell/platform/windows:windows",
+          "flutter_windows_unittests"
+        ],
+        "argsGnSha256": "3A3B2DBF61EB76D4BAC522EE9EB67E4A6B4745ED24E2C40B433C1DFE4FF34986",
+        "artifacts": [
+          { "path": "flutter_windows.dll", "size": 45561344, "sha256": "6685F643A2E1FA2FCB48DD2F108897D5379D13CC83FBBD0D2D40D4C765D23083" },
+          { "path": "flutter_windows.dll.lib", "size": 37536, "sha256": "146E1B45019BB4C974EE1107F615B108895EEBDBCBE13401D1FD289CBEF26AF2" },
+          { "path": "flutter_windows.dll.pdb", "size": 279162880, "sha256": "1AD2770E5BA135CA15C9890451DCB7B8141CD7895A3F4248229303B37C1E0820" },
+          { "path": "icudtl.dat", "size": 10822192, "sha256": "1CF67874B5A87A8363A86FB3F81E3CBBED54D389062DAB8FB52308D5CF8C8612" }
+        ]
+      }
+    ]
   },
   "target": {
     "os": "windows",

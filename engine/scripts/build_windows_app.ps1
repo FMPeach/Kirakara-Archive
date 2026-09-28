@@ -6,7 +6,12 @@ param(
   [ValidateSet('official', 'local')]
   [string]$Engine = 'local',
 
+  [ValidateSet('stock', 'patched')]
+  [string]$LocalVariant = 'stock',
+
   [string]$WorkspaceRoot,
+
+  [string]$WindowsSdkPath = 'C:\Program Files (x86)\Windows Kits\10',
 
   [ValidateSet('debug', 'profile', 'release')]
   [string[]]$Mode = @('debug', 'profile', 'release')
@@ -40,10 +45,19 @@ if ($Engine -eq 'local') {
   }
   $layout = Get-EngineWorkspaceLayout $WorkspaceRoot
   Assert-ExternalEngineWorkspace $layout
-  Assert-PinnedFlutterSource `
-    -Lock $lock `
-    -Layout $layout `
-    -RequireStockTree:($lock.patchset.patches.Count -eq 0)
+  if ($LocalVariant -eq 'stock') {
+    Assert-PinnedFlutterSource -Lock $lock -Layout $layout -RequireStockTree
+  } else {
+    Assert-AppliedPatchset -Lock $lock -Layout $layout
+    Assert-MatchingTextFile `
+      -ExpectedPath (Join-Path $layout.EngineSource `
+        'flutter\shell\platform\windows\kirakara_flutter_compositor_api.h') `
+      -ActualPath (Join-Path (Get-AppRepositoryRoot) `
+        'engine\include\kirakara_flutter_compositor_api.h') `
+      -Label 'Kirakara compositor ABI header'
+  }
+} elseif ($LocalVariant -ne 'stock') {
+  throw '-LocalVariant patched applies only to -Engine local.'
 }
 
 function Get-OfficialEngineDirectory {
@@ -72,7 +86,11 @@ function Get-AppBundleDirectory {
 Push-Location (Get-AppRepositoryRoot)
 try {
   foreach ($buildMode in $Mode) {
-    $build = Get-BuildLock -Lock $lock -Mode $buildMode
+    $buildVariant = if ($Engine -eq 'local') { $LocalVariant } else { 'stock' }
+    $build = Get-BuildLock `
+      -Lock $lock `
+      -Mode $buildMode `
+      -Variant $buildVariant
     $engineDirectory = if ($Engine -eq 'local') {
       Join-Path $layout.EngineSource "out\$($build.localEngine)"
     } else {
@@ -92,9 +110,14 @@ try {
         "--local-engine-src-path=$($layout.EngineSource)"
       )
     }
-    Write-Host "Building Kirakara App mode '$buildMode' with '$Engine' Engine..."
+    $engineLabel = if ($Engine -eq 'local') {
+      "$Engine/$LocalVariant"
+    } else {
+      $Engine
+    }
+    Write-Host "Building Kirakara App mode '$buildMode' with '$engineLabel' Engine..."
     Invoke-CheckedNative $flutter $arguments `
-      "Kirakara App build failed for mode '$buildMode' with '$Engine' Engine."
+      "Kirakara App build failed for mode '$buildMode' with '$engineLabel' Engine."
 
     $bundle = Get-AppBundleDirectory -BuildMode $buildMode
     Assert-MatchingFile `
@@ -110,7 +133,11 @@ try {
       -ExpectedPath (Join-Path $icuDirectory 'icudtl.dat') `
       -ActualPath (Join-Path $bundle 'data\icudtl.dat') `
       -Label 'icudtl.dat'
-    Write-Host "Verified App bundle uses the selected '$Engine' Engine for '$buildMode'."
+    Assert-WindowsAppPerMonitorV2 `
+      -Lock $lock `
+      -Executable (Join-Path $bundle 'kirakara_app.exe') `
+      -WindowsSdkPath $WindowsSdkPath
+    Write-Host "Verified App bundle uses the selected '$engineLabel' Engine for '$buildMode'."
   }
 } finally {
   Pop-Location

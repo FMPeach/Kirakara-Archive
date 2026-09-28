@@ -6,6 +6,9 @@ param(
   [ValidateSet('official', 'local')]
   [string]$Engine = 'local',
 
+  [ValidateSet('stock', 'patched')]
+  [string]$LocalVariant = 'stock',
+
   [string]$WorkspaceRoot,
 
   [ValidateSet('debug', 'profile', 'release')]
@@ -44,7 +47,11 @@ if ($sdkEngineRevision -ne $lock.flutter.engineRevision) {
   throw 'Flutter SDK Engine revision does not match engine.lock.json.'
 }
 
-$build = Get-BuildLock -Lock $lock -Mode $Mode
+$buildVariant = if ($Engine -eq 'local') { $LocalVariant } else { 'stock' }
+$build = Get-BuildLock `
+  -Lock $lock `
+  -Mode $Mode `
+  -Variant $buildVariant
 $layout = $null
 $engineDirectory = $null
 if ($Engine -eq 'local') {
@@ -53,15 +60,25 @@ if ($Engine -eq 'local') {
   }
   $layout = Get-EngineWorkspaceLayout $WorkspaceRoot
   Assert-ExternalEngineWorkspace $layout
-  Assert-PinnedFlutterSource `
-    -Lock $lock `
-    -Layout $layout `
-    -RequireStockTree:($lock.patchset.patches.Count -eq 0)
+  if ($LocalVariant -eq 'stock') {
+    Assert-PinnedFlutterSource -Lock $lock -Layout $layout -RequireStockTree
+  } else {
+    Assert-AppliedPatchset -Lock $lock -Layout $layout
+    Assert-MatchingTextFile `
+      -ExpectedPath (Join-Path $layout.EngineSource `
+        'flutter\shell\platform\windows\kirakara_flutter_compositor_api.h') `
+      -ActualPath (Join-Path (Get-AppRepositoryRoot) `
+        'engine\include\kirakara_flutter_compositor_api.h') `
+      -Label 'Kirakara compositor ABI header'
+  }
   $engineDirectory = Join-Path $layout.EngineSource "out\$($build.localEngine)"
   Assert-LockedEngineArtifacts `
     -Build $build `
     -OutputDirectory $engineDirectory
 } else {
+  if ($LocalVariant -ne 'stock') {
+    throw '-LocalVariant patched applies only to -Engine local.'
+  }
   $officialDirectoryName = switch ($Mode) {
     'debug' { 'windows-x64' }
     'profile' { 'windows-x64-profile' }
@@ -98,8 +115,13 @@ Assert-MatchingFile `
 
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
   $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+  $engineLabel = if ($Engine -eq 'local') {
+    "$Engine-$LocalVariant"
+  } else {
+    $Engine
+  }
   $ReportPath = Join-Path (Get-AppRepositoryRoot) `
-    "build\diagnostics\engine\app-smoke-$Engine-$Mode-$stamp.json"
+    "build\diagnostics\engine\app-smoke-$engineLabel-$Mode-$stamp.json"
 }
 $absoluteReport = Resolve-UnresolvedPath $ReportPath
 if (Test-Path -LiteralPath $absoluteReport) {
@@ -200,9 +222,14 @@ $report = [ordered]@{
   generatedAt = (Get-Date).ToUniversalTime().ToString('o')
   startedAt = $startedAt.ToString('o')
   engine = $Engine
+  localVariant = if ($Engine -eq 'local') { $LocalVariant } else { $null }
   mode = $Mode
   engineRevision = $lock.flutter.engineRevision
-  patchsetRevision = $lock.patchset.revision
+  patchsetRevision = if ($buildVariant -eq 'patched') {
+    $lock.patchset.revision
+  } else {
+    'stock'
+  }
   executable = $executable
   executableSha256 = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
   flutterWindowsDllSha256 = (

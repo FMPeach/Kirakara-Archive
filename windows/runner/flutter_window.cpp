@@ -3,6 +3,7 @@
 #include <atomic>
 #include <optional>
 
+#include "dcomp_compositor_bridge.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "ime_bridge.h"
 #include "media_io_bridge.h"
@@ -34,12 +35,27 @@ bool FlutterWindow::OnCreate() {
 
   RECT frame = GetClientArea();
 
+  dcomp_compositor_bridge_ = std::make_unique<DcompCompositorBridge>();
+  std::string compositor_error;
+  if (!dcomp_compositor_bridge_->PrepareNextView(GetHandle(),
+                                                 &compositor_error)) {
+    ReportDcompCompositorStartupError(GetHandle(), compositor_error);
+    return false;
+  }
+
   // The size here must match the window dimensions to avoid unnecessary surface
   // creation / destruction in the startup path.
   flutter_controller_ = std::make_unique<flutter::FlutterViewController>(
       frame.right - frame.left, frame.bottom - frame.top, project_);
   // Ensure that basic setup of the controller was successful.
   if (!flutter_controller_->engine() || !flutter_controller_->view()) {
+    dcomp_compositor_bridge_->CancelPreparedView();
+    return false;
+  }
+  if (!dcomp_compositor_bridge_->Attach(flutter_controller_->engine(),
+                                        &compositor_error)) {
+    ReportDcompCompositorStartupError(GetHandle(), compositor_error);
+    flutter_controller_.reset();
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
@@ -90,10 +106,14 @@ void FlutterWindow::OnDestroy() {
   if (stage_texture_bridge_) {
     stage_texture_bridge_->BeginShutdown();
   }
+  if (dcomp_compositor_bridge_) {
+    dcomp_compositor_bridge_->Shutdown();
+  }
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
   stage_texture_bridge_ = nullptr;
+  dcomp_compositor_bridge_ = nullptr;
   flutter_present_trace_state_.reset();
 
   Win32Window::OnDestroy();
@@ -105,6 +125,21 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               LPARAM const lparam) noexcept {
   if (message == kArmFlutterPresentTraceMessage) {
     ArmFlutterPresentTrace();
+    return 0;
+  }
+  if (message == kKirakaraCompositorResizeForTestMessage) {
+    if (dcomp_compositor_bridge_) {
+      dcomp_compositor_bridge_->HandleTestResizeMessage(
+          static_cast<int32_t>(static_cast<intptr_t>(wparam)),
+          static_cast<int32_t>(static_cast<intptr_t>(lparam)));
+    }
+    return 0;
+  }
+  if (message == kKirakaraCompositorMoveToMonitorForTestMessage) {
+    if (dcomp_compositor_bridge_) {
+      dcomp_compositor_bridge_->HandleTestMoveToMonitorMessage(
+          static_cast<int32_t>(wparam));
+    }
     return 0;
   }
 

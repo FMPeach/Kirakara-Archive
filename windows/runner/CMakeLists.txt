@@ -19,6 +19,7 @@ set_target_properties(kirakara_zinnia PROPERTIES
 #
 # Any new source files that you add to the application should be added here.
 add_executable(${BINARY_NAME} WIN32
+  "dcomp_compositor_bridge.cpp"
   "flutter_window.cpp"
   "ime_bridge.cpp"
   "main.cpp"
@@ -56,7 +57,10 @@ target_link_libraries(${BINARY_NAME} PRIVATE "d3d11.lib" "dxgi.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "advapi32.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE "winhttp.lib")
 target_link_libraries(${BINARY_NAME} PRIVATE kirakara_zinnia)
-target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
+target_include_directories(${BINARY_NAME} PRIVATE
+  "${CMAKE_SOURCE_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../engine/include"
+)
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)

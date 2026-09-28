@@ -1,5 +1,6 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter_windows.h>
 #include <windows.h>
 
 #include <chrono>
@@ -21,6 +22,29 @@ constexpr wchar_t kLegacyCacheDirectoryPrefix[] = L"kirakara_cache_";
 constexpr wchar_t kSessionDirectoryPrefix[] = L"session_";
 constexpr wchar_t kSessionMarkerPrefix[] = L"kirakara_cache_session_";
 constexpr wchar_t kSessionMarkerSuffix[] = L".path";
+
+Win32Window::Size LogicalSizeForPhysicalWindow(
+    const Win32Window::Point& origin,
+    unsigned int physical_width,
+    unsigned int physical_height) {
+  const POINT target_point = {static_cast<LONG>(origin.x),
+                              static_cast<LONG>(origin.y)};
+  const HMONITOR monitor =
+      ::MonitorFromPoint(target_point, MONITOR_DEFAULTTONEAREST);
+  const UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+  if (dpi == 0) {
+    return Win32Window::Size(physical_width, physical_height);
+  }
+  const int logical_width =
+      ::MulDiv(static_cast<int>(physical_width), 96, static_cast<int>(dpi));
+  const int logical_height =
+      ::MulDiv(static_cast<int>(physical_height), 96, static_cast<int>(dpi));
+  if (logical_width <= 0 || logical_height <= 0) {
+    return Win32Window::Size(physical_width, physical_height);
+  }
+  return Win32Window::Size(static_cast<unsigned int>(logical_width),
+                           static_cast<unsigned int>(logical_height));
+}
 
 std::optional<std::filesystem::path> GetSystemTempDirectory() {
   std::wstring buffer(MAX_PATH + 1, L'\0');
@@ -319,7 +343,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   {
     FlutterWindow window(project);
     Win32Window::Point origin(10, 10);
-    Win32Window::Size size(1600, 900);
+    // The application historically opened in a 1600x900 physical footprint
+    // while DPI virtualization was enabled. Preserve that footprint after
+    // opting into Per-Monitor V2, while allowing Flutter and DComp to receive
+    // the real display DPI and render sharply.
+    const Win32Window::Size size =
+        LogicalSizeForPhysicalWindow(origin, 1600, 900);
     if (!window.Create(L"kirakara_app", origin, size)) {
       ::CoUninitialize();
       return EXIT_FAILURE;

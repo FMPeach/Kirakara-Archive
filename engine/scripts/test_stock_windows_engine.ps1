@@ -17,89 +17,13 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
-function Invoke-GTestProcess {
-  param(
-    [Parameter(Mandatory = $true)][string]$Executable,
-    [Parameter(Mandatory = $true)][string]$Name,
-    [Parameter(Mandatory = $true)][string]$Filter,
-    [Parameter(Mandatory = $true)][int]$ExpectedTestCount,
-    [Parameter(Mandatory = $true)][string]$LogDirectory,
-    [Parameter(Mandatory = $true)][int]$TimeoutSeconds
-  )
-
-  $stdoutPath = Join-Path $LogDirectory "$Name.stdout.txt"
-  $stderrPath = Join-Path $LogDirectory "$Name.stderr.txt"
-  $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-  $startInfo.FileName = $Executable
-  $startInfo.Arguments = "--gtest_color=no --gtest_filter=$Filter"
-  $startInfo.UseShellExecute = $false
-  $startInfo.CreateNoWindow = $true
-  $startInfo.RedirectStandardOutput = $true
-  $startInfo.RedirectStandardError = $true
-
-  $process = [System.Diagnostics.Process]::new()
-  $process.StartInfo = $startInfo
-  $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-  try {
-    if (-not $process.Start()) {
-      throw "Could not start Windows Engine tests: $Name"
-    }
-    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-    $stderrTask = $process.StandardError.ReadToEndAsync()
-    $completed = $process.WaitForExit($TimeoutSeconds * 1000)
-    if (-not $completed) {
-      $process.Kill()
-      $process.WaitForExit()
-    } else {
-      # Flush asynchronous stdout/stderr handlers before reading the tasks.
-      $process.WaitForExit()
-    }
-    $stdout = $stdoutTask.GetAwaiter().GetResult()
-    $stderr = $stderrTask.GetAwaiter().GetResult()
-    $exitCode = if ($completed) { $process.ExitCode } else { $null }
-  } finally {
-    $stopwatch.Stop()
-    $process.Dispose()
-  }
-
-  Set-Content -LiteralPath $stdoutPath -Value $stdout -Encoding utf8
-  Set-Content -LiteralPath $stderrPath -Value $stderr -Encoding utf8
-  $failedTests = @([regex]::Matches(
-      $stdout,
-      '(?m)^\[\s+FAILED\s+\]\s+([^\s]+)(?:\s+\(\d+ ms\))?\s*$'
-    ) | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
-  $countMatches = @([regex]::Matches(
-      $stdout,
-      '(?m)^\[==========\]\s+Running\s+(\d+)\s+tests?\s+from\s+'
-    ))
-  $testCount = if ($countMatches.Count -eq 1) {
-    [int]$countMatches[0].Groups[1].Value
-  } else {
-    $null
-  }
-
-  return [ordered]@{
-    name = $Name
-    filter = $Filter
-    timedOut = -not $completed
-    timeoutSeconds = $TimeoutSeconds
-    durationMilliseconds = [long]$stopwatch.ElapsedMilliseconds
-    exitCode = $exitCode
-    expectedTestCount = $ExpectedTestCount
-    testCount = $testCount
-    failedTests = $failedTests
-    stdout = $stdoutPath
-    stderr = $stderrPath
-  }
-}
-
 $lock = Get-EngineLock
 $layout = Get-EngineWorkspaceLayout $WorkspaceRoot
 Assert-ExternalEngineWorkspace $layout
 Assert-PinnedFlutterSource `
   -Lock $lock `
   -Layout $layout `
-  -RequireStockTree:($lock.patchset.patches.Count -eq 0)
+  -RequireStockTree
 
 $debugBuild = Get-BuildLock -Lock $lock -Mode 'debug'
 $debugOutput = Join-Path $layout.EngineSource "out\$($debugBuild.localEngine)"
@@ -214,7 +138,7 @@ $report = [ordered]@{
   generatedAt = (Get-Date).ToUniversalTime().ToString('o')
   engineRevision = Get-GitHead $layout.FlutterCheckout
   engineSourceTree = Get-GitTree $layout.FlutterCheckout
-  patchsetRevision = $lock.patchset.revision
+  patchsetRevision = 'stock'
   debugEngine = $debugBuild.localEngine
   testExecutable = $testExecutable
   testExecutableSha256 = (

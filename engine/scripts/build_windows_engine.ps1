@@ -6,6 +6,9 @@ param(
   [ValidateSet('debug', 'profile', 'release')]
   [string[]]$Mode = @('debug', 'profile', 'release'),
 
+  [ValidateSet('stock', 'patched')]
+  [string]$Variant = 'stock',
+
   [ValidateRange(0, 256)]
   [int]$Jobs = 0,
 
@@ -26,10 +29,11 @@ Assert-ExternalEngineWorkspace $layout
 Assert-WindowsSdkVersion -Lock $lock -WindowsSdkPath $WindowsSdkPath
 Assert-VisualStudioVersion -Lock $lock -VisualStudioPath $VisualStudioPath
 Assert-MsvcToolsetVersion -Lock $lock -VisualStudioPath $VisualStudioPath
-Assert-PinnedFlutterSource `
-  -Lock $lock `
-  -Layout $layout `
-  -RequireStockTree:($lock.patchset.patches.Count -eq 0)
+if ($Variant -eq 'stock') {
+  Assert-PinnedFlutterSource -Lock $lock -Layout $layout -RequireStockTree
+} else {
+  Assert-AppliedPatchset -Lock $lock -Layout $layout
+}
 
 Assert-PinnedDepotTools -Lock $lock -Layout $layout -RequireCleanTree
 
@@ -41,23 +45,56 @@ Set-EngineProcessEnvironment `
   -WindowsSdkPath $WindowsSdkPath
 
 $et = Join-Path $layout.EngineSource 'flutter\bin\et.bat'
-if (-not (Test-Path -LiteralPath $et -PathType Leaf)) {
+if ($Variant -eq 'stock' -and -not (
+    Test-Path -LiteralPath $et -PathType Leaf
+  )) {
   throw "Engine Tool is missing. Run fetch_engine.ps1 first: $et"
+}
+$gn = Join-Path $layout.EngineSource 'flutter\tools\gn.bat'
+$autoninja = Join-Path $layout.DepotTools 'autoninja.bat'
+if ($Variant -eq 'patched') {
+  foreach ($required in @($gn, $autoninja)) {
+    if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+      throw "Patched Engine build tool is missing: $required"
+    }
+  }
 }
 
 Push-Location $layout.EngineSource
 try {
   foreach ($buildMode in $Mode) {
-    $build = Get-BuildLock -Lock $lock -Mode $buildMode
-    $arguments = @($build.etArguments)
-    if ($Jobs -gt 0) {
-      $arguments += @('--concurrency', $Jobs.ToString())
+    $build = Get-BuildLock `
+      -Lock $lock `
+      -Mode $buildMode `
+      -Variant $Variant
+    if ($Variant -eq 'stock') {
+      $arguments = @($build.etArguments)
+      if ($Jobs -gt 0) {
+        $arguments += @('--concurrency', $Jobs.ToString())
+      }
+      Write-Host "Building stock Windows Engine mode '$buildMode' as '$($build.localEngine)'..."
+      Invoke-CheckedNative $et $arguments `
+        "Stock Engine build failed for mode '$buildMode'."
+      continue
     }
-    Write-Host "Building stock Windows Engine mode '$buildMode' as '$($build.localEngine)'..."
-    Invoke-CheckedNative $et $arguments "Engine build failed for mode '$buildMode'."
+
+    $gnArguments = @($build.gnArguments)
+    $gnArguments += "--target-dir=$($build.localEngine)"
+    Write-Host "Generating patched Windows Engine mode '$buildMode' as '$($build.localEngine)'..."
+    Invoke-CheckedNative $gn $gnArguments `
+      "Patched Engine GN generation failed for mode '$buildMode'."
+
+    $ninjaArguments = @('-C', "out\$($build.localEngine)")
+    if ($Jobs -gt 0) {
+      $ninjaArguments += @('-j', $Jobs.ToString())
+    }
+    $ninjaArguments += @($build.ninjaTargets)
+    Write-Host "Building patched Windows Engine mode '$buildMode'..."
+    Invoke-CheckedNative $autoninja $ninjaArguments `
+      "Patched Engine build failed for mode '$buildMode'."
   }
 } finally {
   Pop-Location
 }
 
-Write-Host 'Requested stock Engine builds completed.'
+Write-Host "Requested $Variant Engine builds completed."

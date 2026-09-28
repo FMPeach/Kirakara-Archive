@@ -1,7 +1,10 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [string]$WorkspaceRoot
+  [string]$WorkspaceRoot,
+
+  [ValidateSet('stock', 'patched')]
+  [string]$Variant = 'patched'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -10,12 +13,19 @@ $ErrorActionPreference = 'Stop'
 $lock = Get-EngineLock
 $layout = Get-EngineWorkspaceLayout $WorkspaceRoot
 Assert-ExternalEngineWorkspace $layout
-Assert-PinnedFlutterSource -Lock $lock -Layout $layout -RequireStockTree
 
 $patches = @($lock.patchset.patches)
 if ($patches.Count -eq 0) {
-  Write-Host 'Patchset is stock; no Engine behavior patches were applied.'
+  Assert-PinnedFlutterSource -Lock $lock -Layout $layout -RequireStockTree
+  Write-Host 'The lock has no Engine behavior patches; source is stock.'
   exit 0
+}
+
+if ($Variant -eq 'patched') {
+  Assert-PinnedFlutterSource -Lock $lock -Layout $layout -RequireStockTree
+} else {
+  Assert-AppliedPatchset -Lock $lock -Layout $layout
+  [array]::Reverse($patches)
 }
 
 $appRoot = Get-AppRepositoryRoot
@@ -28,14 +38,23 @@ foreach ($patch in $patches) {
   if ($actualHash -ne $patch.sha256) {
     throw "Patch hash mismatch for $($patch.path). Expected $($patch.sha256), got $actualHash."
   }
-  Invoke-CheckedNative git @(
-    '-C', $layout.FlutterCheckout, 'apply', '--check',
-    '--whitespace=error-all', $patchPath
-  ) "Patch preflight failed: $($patch.path)"
-  Invoke-CheckedNative git @(
-    '-C', $layout.FlutterCheckout, 'apply',
-    '--whitespace=error-all', $patchPath
-  ) "Patch application failed: $($patch.path)"
+  $direction = if ($Variant -eq 'stock') { @('--reverse') } else { @() }
+  $preflightArguments = @('-C', $layout.FlutterCheckout, 'apply')
+  $preflightArguments += $direction
+  $preflightArguments += @('--check', '--whitespace=error-all', $patchPath)
+  Invoke-CheckedNative git $preflightArguments `
+    "Patch $Variant preflight failed: $($patch.path)"
+  $applyArguments = @('-C', $layout.FlutterCheckout, 'apply')
+  $applyArguments += $direction
+  $applyArguments += @('--whitespace=error-all', $patchPath)
+  Invoke-CheckedNative git $applyArguments `
+    "Patch $Variant transition failed: $($patch.path)"
 }
 
-Write-Host "Applied patchset $($lock.patchset.revision) v$($lock.patchset.version)."
+if ($Variant -eq 'patched') {
+  Assert-AppliedPatchset -Lock $lock -Layout $layout
+  Write-Host "Applied patchset $($lock.patchset.revision) v$($lock.patchset.version)."
+} else {
+  Assert-PinnedFlutterSource -Lock $lock -Layout $layout -RequireStockTree
+  Write-Host 'Reversed the locked patchset; Engine source is stock.'
+}

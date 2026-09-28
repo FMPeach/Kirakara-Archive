@@ -5,10 +5,11 @@ Windows Flutter Engine. Engine source, `out/`, DLLs, import libraries, symbols
 and downloaded toolchains must remain in an external workspace or a versioned
 release artifact. They must not be committed to the App repository.
 
-Phase 1 is deliberately stock: the checkout is pinned to the Engine revision
-used by Flutter 3.44.4 and `patchset.patches` is empty. A successful Phase 1
-build therefore proves the local toolchain before any Kirakara behavior change
-is introduced.
+The root `builds` entries preserve the completely stock Phase 1 artifacts for
+Flutter 3.44.4. `patchset` separately locks the Phase 2 Kirakara source patch,
+its resulting Git tree, additional public export and custom debug artifacts.
+Switching variants never edits the installed Flutter SDK and never removes the
+other variant's `out/` directory.
 
 ## Pinned layout
 
@@ -22,7 +23,8 @@ E:\Kirakara-Flutter-Engine\
    └─ engine\src\out\
       ├─ host_debug\
       ├─ host_profile\
-      └─ host_release\
+      ├─ host_release\
+      └─ host_debug_kirakara_v2\
 ```
 
 No absolute host path is stored in `engine.lock.json`. The example uses E: only
@@ -61,24 +63,43 @@ itself through UAC and does not remove the newer toolset:
   -VisualStudioPath 'D:\Program Files\Microsoft Visual Studio\Community\2026'
 ```
 
-For Phase 1, applying patches is a no-op that also proves the source tree is
-clean:
+Start from the exact stock checkout, apply the locked patchset, then build the
+custom output under its own target directory:
 
 ```powershell
 .\engine\scripts\apply_patches.ps1 `
-  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine'
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -Variant patched
 
 .\engine\scripts\build_windows_engine.ps1 `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -Variant patched `
+  -Mode debug `
+  -VisualStudioPath 'D:\Program Files\Microsoft Visual Studio\Community\2026'
+```
+
+The transition refuses a patch hash mismatch, unexpected source edit, or tree
+that is neither exactly stock nor exactly the locked patchset. To rebuild a
+stock output, reverse only the known patch stack and select the stock variant:
+
+```powershell
+.\engine\scripts\apply_patches.ps1 `
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -Variant stock
+
+.\engine\scripts\build_windows_engine.ps1 `
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -Variant stock `
   -Mode debug,profile,release `
   -VisualStudioPath 'D:\Program Files\Microsoft Visual Studio\Community\2026'
 ```
 
-Builds use the upstream `windows/host_debug`, `windows/host_profile` and
-`windows/host_release` local configurations with RBE disabled. The script never
-copies products into this repository. It sets `VCToolsVersion` for the build
-process, and verification rejects a generated `toolchain.ninja` or PE linker
-version that does not use the locked 14.34 toolset.
+Reapply `-Variant patched` before continuing custom Engine work. Stock builds
+use the upstream `windows/host_debug`, `windows/host_profile` and
+`windows/host_release` configurations; the Phase 2 patch currently locks only
+`host_debug_kirakara_v2`. Both paths disable RBE and never copy Engine products
+into this repository. Verification rejects a generated `toolchain.ninja` or PE
+linker version that does not use the locked 14.34 toolset.
 
 This pinned Engine source requires Windows SDK `10.0.22621.0`; newer SDKs do
 not substitute for it because upstream's stock toolchain script explicitly
@@ -91,15 +112,25 @@ libraries and tools before invoking GN.
 .\engine\scripts\verify_engine_bundle.ps1 `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
-  -Mode debug,profile,release `
+  -Variant patched `
+  -Mode debug `
   -RequireLockedHashes
 
 # Local stock Engine
 .\engine\scripts\build_windows_app.ps1 `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
   -Engine local `
+  -LocalVariant stock `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
   -Mode profile
+
+# Local patched Engine
+.\engine\scripts\build_windows_app.ps1 `
+  -FlutterSdkRoot 'D:\Program Files\Flutter' `
+  -Engine local `
+  -LocalVariant patched `
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -Mode debug
 
 # Official cached Engine; no local-engine flags are passed.
 .\engine\scripts\build_windows_app.ps1 `
@@ -108,11 +139,14 @@ libraries and tools before invoking GN.
   -Mode profile
 ```
 
-The local and official modes use the same pinned Flutter SDK. This is the
-documented one-operation A/B switch. The verifier writes its report below the
-ignored `build/diagnostics/engine` directory. Once Phase 1 products have been
-generated, their sizes and SHA-256 values are copied into the lock and
-`-RequireLockedHashes` becomes the release gate.
+All modes use the same pinned Flutter SDK. `official`, `local/stock` and
+`local/patched` are explicit A/B selections; no DLL is patched or hooked after
+linking. Every App build also extracts resource `#1` from the final executable
+with the locked Windows SDK `mt.exe` and requires the embedded DPI awareness to
+be exactly `PerMonitorV2`, including official and local stock bundles. The
+verifier writes reports below the ignored
+`build/diagnostics/engine` directory. Locked sizes and SHA-256 values identify
+the exact accepted artifact set, and `-RequireLockedHashes` is the gate.
 
 The upstream stock Windows link is not bit-for-bit reproducible: PE link
 timestamps and CodeView/PDB identities change on a rebuild even when the
@@ -125,14 +159,17 @@ rebuild, capture every candidate value without modifying the lock:
 .\engine\scripts\verify_engine_bundle.ps1 `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
-  -Mode debug,profile,release `
+  -Variant patched `
+  -Mode debug `
   -ReportPath '.\build\diagnostics\engine\candidate-artifacts.json' `
   -CaptureArtifactHashes
 ```
 
-That diagnostic mode still enforces revisions, a clean stock tree, `args.gn`,
-MSVC selection, PE linker version and official/local exports. It reports every
-artifact difference, emits a warning and never edits `engine.lock.json`.
+That diagnostic mode still enforces revisions, the exact selected source tree,
+`args.gn`, MSVC selection, PE linker version and official/local exports. For a
+patched build, every official export must remain and only the additions named
+in the lock are allowed. It reports every artifact difference, emits a warning
+and never edits `engine.lock.json`.
 Relocking is a separate reviewed source change: inspect the candidate report,
 write only the accepted values into the lock, rerun with
 `-RequireLockedHashes`, and then run the unit and App A/B gates. A candidate is
@@ -146,6 +183,16 @@ The debug Engine also has a bounded, log-preserving unit-test gate:
 .\engine\scripts\test_stock_windows_engine.ps1 `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
   -Suite critical,compositor,adapter-isolated
+
+.\engine\scripts\test_patched_windows_engine.ps1 `
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine'
+
+# Optional full-process diagnostic with the same two Phase 1 order-dependent
+# adapter controls preserved in one report.
+.\engine\scripts\test_patched_windows_engine.ps1 `
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -Suite adapter-isolated,full `
+  -AllowKnownFullSuiteOrderFailures
 ```
 
 `critical` covers the delayed task runner and next-frame callback paths that
@@ -181,12 +228,59 @@ default and kills only the exact child process it launched.
 `-AllowForcedCleanup` is for explicitly documenting an already reproduced
 shutdown defect; the forced cleanup remains visible in the report.
 
+## Phase 2 synthetic DirectComposition probe
+
+The synthetic backend is opt-in. An unset backend, `stock`, or
+`external_texture` leaves the upstream render surface unchanged. The probe
+requires the exact patched source and locked custom DLL, then builds a separate
+Dart entry point and records counter gates:
+
+```powershell
+.\tool\windows_compositor\run_synthetic_compositor_probe.ps1 `
+  -FlutterSdkRoot 'D:\Program Files\Flutter' `
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -LocalEngine host_debug_kirakara_v2 `
+  -TimeoutSeconds 45
+```
+
+After a successful build, a repeat can use `-SkipBuild`. The target display
+must be awake and the window visible: Windows returns
+`STATUS_GRAPHICS_PRESENT_OCCLUDED` from the compositor clock when the display
+is off, and the probe deliberately reports that as a failed runtime gate rather
+than hiding it with a timer or busy loop. The probe also performs one bounded
+window contraction and restore, requiring two successful in-place swapchain
+resizes while the top-level HWND and single DComp visual tree remain unchanged.
+It also opens and closes the test overlay and independent Flutter page, proving
+that both preserve the HWND, surface size and visual tree while Stage continues
+to advance, then requires Flutter presents to return to quiescence. Each JSON
+report records the current window DPI plus every monitor's bounds, DPI and scale
+percentage, and the interactive footer displays the measured window scale. Use
+`-KeepOpen` for the visual Alpha, page, resize, native IME and mixed-DPI
+checklist in the Phase 2 report.
+
+The Runner manifest must remain `PerMonitorV2`; a DPI-unaware process reports
+virtualized monitor bounds and cannot validate this matrix. Startup converts the
+historical 1600x900 physical target into monitor-relative logical dimensions, so
+enabling real DPI does not enlarge the initial window while Flutter and DComp
+still receive the actual scale. The runtime report also checks the target HWND's
+awareness context directly; a manifest-only or 100%-only false positive fails.
+
+Use `-ExpectedScalePercent 100|125|150|175|200` to bind a run to the
+measured window DPI. Add `-RequireMixedDpi` for cross-monitor runs; it rejects
+single-monitor and same-scale multi-monitor environments. When multiple
+monitors are available, the harness automatically prefers a different-DPI
+target, moves the same HWND there and back, and checks DPI transitions, restored
+geometry, the single DComp tree and Stage progress. A single-monitor run records
+that sample as explicitly skipped instead of treating it as a pass.
+
 ## Safety rules
 
 - Never point `WorkspaceRoot` inside the App repository or at the installed
   Flutter SDK.
 - Never patch `D:\Program Files\Flutter` or a compiled DLL.
 - Keep stock and patched build configurations available together.
+- Switch source variants only with `apply_patches.ps1`; it refuses to reverse a
+  tree containing edits beyond the locked patchset.
 - A revision, patch hash or artifact hash mismatch is a hard error. Do not
   continue by silently accepting a different binary.
 - Proxy values are process-scoped inputs; they are not written to the lock or

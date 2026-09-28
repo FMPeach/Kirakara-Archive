@@ -8,6 +8,9 @@ param(
   [ValidateSet('debug', 'profile', 'release')]
   [string[]]$Mode = @('debug', 'profile', 'release'),
 
+  [ValidateSet('stock', 'patched')]
+  [string]$Variant = 'stock',
+
   [string]$ReportPath,
 
   [switch]$RequireLockedHashes,
@@ -66,10 +69,17 @@ function Get-CoffLinkerVersion {
 $lock = Get-EngineLock
 $layout = Get-EngineWorkspaceLayout $WorkspaceRoot
 Assert-ExternalEngineWorkspace $layout
-Assert-PinnedFlutterSource `
-  -Lock $lock `
-  -Layout $layout `
-  -RequireStockTree:($lock.patchset.patches.Count -eq 0)
+if ($Variant -eq 'stock') {
+  Assert-PinnedFlutterSource -Lock $lock -Layout $layout -RequireStockTree
+} else {
+  Assert-AppliedPatchset -Lock $lock -Layout $layout
+  Assert-MatchingTextFile `
+    -ExpectedPath (Join-Path $layout.EngineSource `
+      'flutter\shell\platform\windows\kirakara_flutter_compositor_api.h') `
+    -ActualPath (Join-Path (Get-AppRepositoryRoot) `
+      'engine\include\kirakara_flutter_compositor_api.h') `
+    -Label 'Kirakara compositor ABI header'
+}
 Assert-PinnedDepotTools -Lock $lock -Layout $layout -RequireCleanTree
 
 $flutterRoot = $null
@@ -99,7 +109,7 @@ if (-not [string]::IsNullOrWhiteSpace($FlutterSdkRoot)) {
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
   $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
   $ReportPath = Join-Path (Get-AppRepositoryRoot) `
-    "build\diagnostics\engine\stock-engine-$stamp.json"
+    "build\diagnostics\engine\$Variant-engine-$stamp.json"
 }
 $absoluteReport = Resolve-UnresolvedPath $ReportPath
 if (Test-Path -LiteralPath $absoluteReport) {
@@ -111,7 +121,10 @@ New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
 $modeReports = @()
 $artifactLockFailures = [System.Collections.Generic.List[string]]::new()
 foreach ($buildMode in $Mode) {
-  $build = Get-BuildLock -Lock $lock -Mode $buildMode
+  $build = Get-BuildLock `
+    -Lock $lock `
+    -Mode $buildMode `
+    -Variant $Variant
   $output = Join-Path $layout.EngineSource "out\$($build.localEngine)"
   $argsGn = Join-Path $output 'args.gn'
   $toolchainNinja = Join-Path $output 'toolchain.ninja'
@@ -243,10 +256,36 @@ foreach ($buildMode in $Mode) {
         -ToolPath $llvmReadObj -DllPath $officialDll)
     $localExports = @(Get-CoffExportNames `
         -ToolPath $llvmReadObj -DllPath $localDll)
-    $exportDifferences = @(Compare-Object $officialExports $localExports)
-    if ($exportDifferences.Count -ne 0) {
-      $summary = $exportDifferences | Select-Object -First 20 | Out-String
-      throw "Public export mismatch for '$buildMode':`n$summary"
+    $expectedAdditionalExports = if ($Variant -eq 'patched') {
+      @($lock.patchset.additionalExports | Sort-Object)
+    } else {
+      @()
+    }
+    $missingOfficialExports = @(
+      $officialExports | Where-Object { $localExports -notcontains $_ }
+    )
+    $additionalLocalExports = @(
+      $localExports | Where-Object { $officialExports -notcontains $_ }
+    )
+    $missingExpectedExports = @(
+      $expectedAdditionalExports |
+        Where-Object { $additionalLocalExports -notcontains $_ }
+    )
+    $unexpectedAdditionalExports = @(
+      $additionalLocalExports |
+        Where-Object { $expectedAdditionalExports -notcontains $_ }
+    )
+    if (
+      $missingOfficialExports.Count -ne 0 -or
+      $missingExpectedExports.Count -ne 0 -or
+      $unexpectedAdditionalExports.Count -ne 0
+    ) {
+      $summary = [ordered]@{
+        missingOfficialExports = $missingOfficialExports
+        missingExpectedExports = $missingExpectedExports
+        unexpectedAdditionalExports = $unexpectedAdditionalExports
+      } | ConvertTo-Json -Depth 3
+      throw "Public export mismatch for '$Variant/$buildMode':`n$summary"
     }
     $officialItem = Get-Item -LiteralPath $officialDll
     $officialComparison = [ordered]@{
@@ -257,7 +296,11 @@ foreach ($buildMode in $Mode) {
       ).Hash
       officialExportCount = $officialExports.Count
       localExportCount = $localExports.Count
-      exportDifferences = 0
+      expectedAdditionalExports = @($expectedAdditionalExports)
+      additionalLocalExports = $additionalLocalExports
+      missingOfficialExports = $missingOfficialExports
+      missingExpectedExports = $missingExpectedExports
+      unexpectedAdditionalExports = $unexpectedAdditionalExports
       officialLinkerVersion = $officialLinkerVersion
       localLinkerVersion = $localLinkerVersion
     }
@@ -276,15 +319,30 @@ foreach ($buildMode in $Mode) {
 $report = [ordered]@{
   schemaVersion = 2
   generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+  variant = $Variant
   flutterFrameworkRevision = $lock.flutter.frameworkRevision
   engineRevision = Get-GitHead $layout.FlutterCheckout
   engineSourceTree = Get-GitTree $layout.FlutterCheckout
-  engineSourceTreeClean = $true
+  engineSourceSnapshotTree = if ($Variant -eq 'stock') {
+    Get-GitTree $layout.FlutterCheckout
+  } else {
+    [string]$lock.patchset.sourceTree
+  }
+  engineSourceTreeClean = $Variant -eq 'stock'
+  engineSourceMatchesVariant = $true
   engineContentHash = $lock.flutter.engineContentHash
   depotToolsRevision = Get-GitHead $layout.DepotTools
   depotToolsTreeClean = $true
-  patchsetRevision = $lock.patchset.revision
-  patchsetVersion = $lock.patchset.version
+  patchsetRevision = if ($Variant -eq 'stock') {
+    'stock'
+  } else {
+    $lock.patchset.revision
+  }
+  patchsetVersion = if ($Variant -eq 'stock') {
+    0
+  } else {
+    $lock.patchset.version
+  }
   msvcToolsetVersion = $lock.hostBaseline.msvcToolsetVersion
   peLinkerVersion = $lock.hostBaseline.peLinkerVersion
   captureArtifactHashes = [bool]$CaptureArtifactHashes

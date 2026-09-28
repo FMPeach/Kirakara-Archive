@@ -41,9 +41,28 @@
   close 后 20 秒内优雅退出；受限烟测仅在显式精确 PID 清理时通过，生命周期问题
   留到后续阶段，不能表述为正常退出已通过。详见
   `docs/windows_compositor/phase1_stock_engine.md`。
-- 尚未引入任何 Kirakara Engine 行为补丁。下一步是 Phase 2，只用合成 D3D 动画
-  纹理验证单顶层 HWND 的双 Visual DirectComposition、透明 Flutter 上层以及
-  “下层更新不触发静止 Flutter 新帧”，不会先改真实 Show 管线。
+- Phase 2 实现与当前硬件门槛完成：已加入锁定的 `windows-dcomp-synthetic` v2 源码补丁、版本化 ABI、
+  单顶层 HWND 双 Visual DirectComposition、预乘 Alpha Flutter 上层、独立合成 D3D
+  Stage producer、自动计数门槛和人工检查 harness。定制 debug Engine 的源码树、
+  产物、官方导出兼容性与 31 项常规测试加 2 项 adapter 独立测试均已通过；stock
+  与 patched 源码/产物切换也已闭环验证。
+- 显示器点亮后连续两次自动探针均通过：两秒静止 UI 内 Stage `+120`、Flutter `+0`；
+  750 ms platform-thread stall 内 Stage `+45`、Flutter `+0`，证明下层更新不重泵
+  Flutter，且 Flutter 短暂卡顿不阻塞 Stage producer。屏幕关闭样本则明确返回
+  `STATUS_GRAPHICS_PRESENT_OCCLUDED`，探针按设计失败且未进入轮询。100% DPI 下的
+  Alpha 透明孔、圆角、半透明遮罩、独立页面、窗口缩放、焦点、Unicode 输入和原生
+  中文 IME 组合/候选/提交均已完成实机复测。125% 测试发现并修复 Runner 显式禁用
+  DPI awareness 的历史设置：现已恢复 Per-Monitor V2，同时保持约 `1600×900` 的原有
+  物理启动占用；120 DPI 自动门槛通过，用户初步未见阻断性视觉问题。150% / 144 DPI
+  完整自动门槛和留窗人工观察也已通过。用户明确决定不再用当前 1080p 单屏模拟
+  175%～200%，而是在功能完成后用真实高分屏复测；不同 DPI 多屏迁移也因当前只有一个
+  显示器而无法执行。这两项作为未验证的 Phase 7 实机兼容门槛保留，不表述为已通过，
+  但不再阻塞 Phase 2 原子提交。详见
+  `docs/windows_compositor/phase2_synthetic_dcomp.md`。真实 Show 管线仍未修改。
+- 首次人工拖动窗口发现旧 resize 路径会在重建 surface 时提交空 DComp root，造成白闪。
+  已改为保留同一 target/Visual tree 并原位 `ResizeBuffers`；修复后自动缩放/恢复门槛
+  通过，tree commit 全程保持 1；用户实机复测确认白闪和缩放后整窗 Stage 穿透均已
+  消失，Flutter 控件保持可见。
 
 ## 为什么要做这件事
 
@@ -369,11 +388,32 @@ release 启动/响应对照、三模式 ABI/哈希校验和 stock Engine 单测�
   窗口缩放和 100%～200% DPI。
 - 测量下层 Visual 更新时 Flutter raster/present 是否保持静止。
 
+进展（2026-09-28）：源码、构建、ABI、单测、自动探针和人工 harness 已就绪。显示器
+点亮后的自动探针稳定通过，静止 Flutter 和 750 ms platform-thread stall 期间 Stage
+都保持约 60 fps，Flutter Present 增量均为 0；屏幕关闭样本也准确命中
+`STATUS_GRAPHICS_PRESENT_OCCLUDED`。自动门槛现还覆盖遮罩与页面开关，验证它们不改变
+HWND、尺寸或 DComp tree，且显示期间 Stage 仍独立推进。100% DPI 下的 Alpha、圆角、
+遮罩、独立页面、有限动画停止、焦点/Unicode 输入、原生中文 IME 组合/候选/提交和
+连续缩放已经实机复测；空 DComp root 导致的白闪改为原位 `ResizeBuffers` 后，用户确认
+  白闪与控件消失均已修复。探针现会枚举所有显示器的实际 DPI；在多屏环境会优先选择
+  不同 DPI 的显示器自动移动过去再移回，并核对 DPI、HWND、尺寸、DComp tree 和 Stage
+  推进。单屏样本明确记录为 skipped；严格档位与 mixed-DPI 负向门槛已证明错误环境不会
+  被误报为通过。Runner 已恢复 Per-Monitor V2，125% 新进程准确报告 `120 DPI`，并在
+  保持原有物理窗口占用后通过完整自动门槛，用户初步反馈问题不大；150% / 144 DPI
+  的完整自动门槛和留窗人工观察也已通过。用户于 2026-09-28 明确决定停止在当前
+  1080p 单屏上模拟 175%～200%，待功能完成后用真实高分屏复测；混合 DPI 迁移也需要
+  第二台显示器。这些未验证项转入 Phase 7 实机兼容矩阵，不能据此宣称兼容性已经通过，
+  但不再阻塞 Phase 2 的实现提交。
+
 退出条件：
 
 - 下层动态 Visual 持续流畅，而静止 Flutter 不调度新帧。
 - 所有测试面板都可以覆盖在动态画面上方，不需要增加 HWND。
 - 未观察到窗口缩放、焦点、输入和 DPI 回归。
+
+完成结论（2026-09-28）：在当前可用的 100%、125% 和 150% 单屏环境，三项退出条件
+均已满足，Phase 2 可以原子提交。175%～200% 真正高分屏和不同 DPI 多屏迁移是用户
+明确接受的延后实机门槛，保留到 Phase 7，不得把“延后”写成“通过”。
 
 ### Phase 3：接入真实 Show Stage 纹理
 

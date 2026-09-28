@@ -9,6 +9,7 @@
 #include "win32_window.h"
 
 class StageTextureBridge;
+class DcompCompositorBridge;
 struct FlutterPresentTraceState;
 
 // A window that does nothing but host a Flutter view.
@@ -33,6 +34,7 @@ class FlutterWindow : public Win32Window {
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+  std::unique_ptr<DcompCompositorBridge> dcomp_compositor_bridge_;
   std::unique_ptr<StageTextureBridge> stage_texture_bridge_;
   std::shared_ptr<FlutterPresentTraceState> flutter_present_trace_state_;
 };
