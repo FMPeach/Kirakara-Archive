@@ -14,6 +14,7 @@
   "depotTools": {
     "repository": "https://chromium.googlesource.com/chromium/tools/depot_tools.git",
     "revision": "41c9bd890277c2f551499d171d215dfdf5dab97d",
+    "vpythonTomlNormalizedSha256": "BC2E51992788DFB16DE1C38EAD8B6B7D9903C73820A97E426B2890D26E8E7BAD",
     "archiveUrl": "https://storage.googleapis.com/chrome-infra/depot_tools.zip",
     "archiveSha256": "BB75C674B71280CA9A6C1F5AF5D0B89B2F8A0D5406C06B501792F1FF27DD0AC3"
   },

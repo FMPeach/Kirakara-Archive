@@ -205,6 +205,7 @@ $ephemeralInvalidation = $null
 $sdkSwitchInvalidation = $null
 $readyStampChecks = @()
 $toolReadyStampChecks = @()
+$vpythonBootstrapChecks = @()
 $logRetention = $null
 $checkoutRecovery = @()
 try {
@@ -354,7 +355,7 @@ try {
     if (-not $currentNinja.ready) {
       throw "Current Ninja ready stamp failed validation: $($currentNinja.reason)"
     }
-    $toolReadyStampChecks += [ordered]@{
+  $toolReadyStampChecks += [ordered]@{
       name = 'verified-ninja-ready-stamp'
       passed = $true
       reason = $currentNinja.reason
@@ -418,6 +419,60 @@ try {
       passed = $true
       reason = $hashResult.reason
     }
+  }
+
+  $modernVpythonRoot = Join-Path $scratch 'modern-vpython'
+  $modernVpythonCache = Join-Path $modernVpythonRoot 'cache'
+  $modernDepotTools = Join-Path $modernVpythonRoot 'depot_tools'
+  New-Item -ItemType Directory `
+    -Path (Join-Path $modernVpythonCache 'vpython\store'), $modernDepotTools `
+    -Force | Out-Null
+  $modernVpythonConfig = Join-Path $modernDepotTools 'vpython.toml'
+  [IO.File]::WriteAllText(
+    $modernVpythonConfig,
+    "requires-python = '>=3.11,<3.12'`r`n",
+    [Text.UTF8Encoding]::new($false))
+  $modernVpythonHash = & $bootstrapModule {
+    param($Text)
+    Get-KirakaraSha256Text -Text $Text
+  } "requires-python = '>=3.11,<3.12'`n"
+  $modernVpythonLock = $lock | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+  $modernVpythonLock.depotTools.vpythonTomlNormalizedSha256 = $modernVpythonHash
+  $modernVpythonLayout = [pscustomobject]@{
+    Cache = $modernVpythonCache
+    DepotTools = $modernDepotTools
+  }
+  $modernVpythonResult = & $bootstrapModule {
+    param($Layout, $Lock)
+    Repair-KirakaraVpythonVirtualenv -Layout $Layout -Lock $Lock
+  } $modernVpythonLayout $modernVpythonLock
+  Assert-Equal -Expected 'uv' -Actual $modernVpythonResult.backend `
+    -Label 'clean vpython backend'
+  Assert-Equal -Expected $false -Actual $modernVpythonResult.legacyPatched `
+    -Label 'clean vpython legacy patch state'
+  $vpythonBootstrapChecks += [ordered]@{
+    name = 'clean-cache-uses-locked-uv-backend'
+    passed = $true
+    configSha256 = $modernVpythonResult.configSha256
+  }
+
+  $modernVpythonLock.depotTools.vpythonTomlNormalizedSha256 = '0' * 64
+  $vpythonHashMessage = $null
+  try {
+    $null = & $bootstrapModule {
+      param($Layout, $Lock)
+      Repair-KirakaraVpythonVirtualenv -Layout $Layout -Lock $Lock
+    } $modernVpythonLayout $modernVpythonLock
+  } catch {
+    $vpythonHashMessage = $_.Exception.Message
+  }
+  if ($vpythonHashMessage -notmatch 'vpython\.toml hash mismatch') {
+    throw "Mismatched vpython.toml was not rejected: $vpythonHashMessage"
+  }
+  $vpythonBootstrapChecks += [ordered]@{
+    name = 'reject-unlocked-uv-config'
+    passed = $true
+    message = $vpythonHashMessage
   }
 
   $retentionRoot = Join-Path $scratch 'retention'
@@ -581,6 +636,7 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $absoluteReport) `
   sdkSwitchInvalidation = $sdkSwitchInvalidation
   readyStampChecks = @($readyStampChecks)
   toolReadyStampChecks = @($toolReadyStampChecks)
+  vpythonBootstrapChecks = @($vpythonBootstrapChecks)
   logRetention = $logRetention
   checkoutRecovery = @($checkoutRecovery)
   cleanupBoundaryPassed = $true

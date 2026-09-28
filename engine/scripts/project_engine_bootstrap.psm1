@@ -443,6 +443,9 @@ function Assert-KirakaraBootstrapPreflight {
   if ([string]$bootstrap.Value.workspace -ne '.kfe') {
     throw "Unsupported project bootstrap workspace: $($bootstrap.Value.workspace)"
   }
+  if ([string]$Lock.depotTools.vpythonTomlNormalizedSha256 -notmatch '^[0-9A-F]{64}$') {
+    throw 'depotTools.vpythonTomlNormalizedSha256 must be an uppercase SHA-256 value.'
+  }
   $gnProperty = $bootstrap.Value.PSObject.Properties['gn']
   if ($null -eq $gnProperty -or $gnProperty.Value.schemaVersion -ne 1) {
     throw 'engine.lock.json has no supported repository-local GN contract.'
@@ -685,14 +688,48 @@ function Repair-KirakaraVpythonVirtualenv {
       }
     }
   }
+  if ($candidates.Count -eq 0) {
+    # The pinned depot_tools revision uses its modern vpython.toml/uv backend.
+    # A clean cache therefore never materializes the legacy virtualenv 16.x
+    # package. Older repository caches may still contain it, in which case the
+    # compatibility patches below remain necessary and are applied in place.
+    $modernConfig = Join-Path $Layout.DepotTools 'vpython.toml'
+    if (-not (Test-Path -LiteralPath $modernConfig -PathType Leaf)) {
+      throw (
+        "Pinned depot_tools has neither its modern vpython.toml nor the legacy " +
+        "virtualenv $($contract.version) package: $($Layout.DepotTools)"
+      )
+    }
+    $configText = [IO.File]::ReadAllText($modernConfig)
+    $normalizedConfig = $configText.Replace("`r`n", "`n").Replace("`r", "`n")
+    $configHash = Get-KirakaraSha256Text -Text $normalizedConfig
+    if ($configHash -ne [string]$Lock.depotTools.vpythonTomlNormalizedSha256) {
+      throw (
+        'Pinned depot_tools vpython.toml hash mismatch. Expected ' +
+        "$($Lock.depotTools.vpythonTomlNormalizedSha256), got $configHash."
+      )
+    }
+    Write-Host (
+      '[Kirakara Engine] Verified the locked depot_tools uv-based vpython ' +
+      'environment; no legacy virtualenv patch is required.')
+    return [pscustomobject]@{
+      backend = 'uv'
+      legacyPatched = $false
+      configSha256 = $configHash
+    }
+  }
   if ($candidates.Count -ne 1) {
-    throw "Expected exactly one pinned vpython virtualenv $($contract.version) script, found $($candidates.Count) under $store."
+    throw "Expected at most one pinned vpython virtualenv $($contract.version) script, found $($candidates.Count) under $store."
   }
 
   $target = $candidates[0]
   $actualHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
   if ($actualHash -eq [string]$contract.patchedSha256) {
-    return
+    return [pscustomobject]@{
+      backend = 'legacy-virtualenv'
+      legacyPatched = $true
+      scriptSha256 = $actualHash
+    }
   }
   $patches = @($contract.patches)
   if ($patches.Count -eq 0 -or
@@ -757,6 +794,11 @@ function Repair-KirakaraVpythonVirtualenv {
         "$($patch.resultSha256), got $actualHash."
       )
     }
+  }
+  return [pscustomobject]@{
+    backend = 'legacy-virtualenv'
+    legacyPatched = $true
+    scriptSha256 = $actualHash
   }
 }
 
@@ -2627,7 +2669,7 @@ function Ensure-KirakaraProjectEngine {
       -VisualStudioPath $preflight.visualStudioPath `
       -WindowsSdkPath $preflight.windowsSdkPath `
       -ProxyUrl $ProxyUrl
-    Repair-KirakaraVpythonVirtualenv -Layout $Layout -Lock $Lock
+    $null = Repair-KirakaraVpythonVirtualenv -Layout $Layout -Lock $Lock
     Ensure-KirakaraPatchedGn `
       -Layout $Layout `
       -Lock $Lock `
