@@ -780,7 +780,8 @@ struct DcompCompositorBridge::Impl {
   bool ApplyStageActivityLocked(std::string *error) {
     const bool should_be_active =
         stage_requested_active.load(std::memory_order_acquire) &&
-        window_available.load(std::memory_order_acquire);
+        window_available.load(std::memory_order_acquire) &&
+        stage_geometry_visible.load(std::memory_order_acquire);
     const bool was_active = stage_active.load(std::memory_order_acquire);
     if (was_active == should_be_active) {
       return true;
@@ -873,7 +874,13 @@ struct DcompCompositorBridge::Impl {
           "The Engine rejected Stage geometry: " + ResultName(result) + ".";
       return false;
     }
-    return true;
+    std::scoped_lock lock(stage_source_mutex);
+    stage_geometry_visible.store(*visible, std::memory_order_release);
+    if (!stage_source || !show_api_available || !view ||
+        shutting_down.load(std::memory_order_acquire)) {
+      return true;
+    }
+    return ApplyStageActivityLocked(error);
   }
 
   EncodableValue StageDiagnosticsValue(std::string *error) const {
@@ -891,6 +898,9 @@ struct DcompCompositorBridge::Impl {
              stage_requested_active.load(std::memory_order_acquire))},
         {EncodableValue("windowAvailable"),
          EncodableValue(window_available.load(std::memory_order_acquire))},
+        {EncodableValue("geometryVisible"),
+         EncodableValue(
+             stage_geometry_visible.load(std::memory_order_acquire))},
         {EncodableValue("activityTransitionCount"),
          EncodableValue(static_cast<int64_t>(
              stage_activity_transition_count.load(std::memory_order_relaxed)))},
@@ -1404,6 +1414,7 @@ struct DcompCompositorBridge::Impl {
   std::atomic_bool stage_requested_active{};
   std::atomic_bool stage_active{};
   std::atomic_bool window_available{true};
+  std::atomic_bool stage_geometry_visible{true};
   std::atomic_bool shutting_down{};
   std::atomic_bool session_notifications_registered{};
   std::atomic_uint64_t stage_activity_transition_count{};

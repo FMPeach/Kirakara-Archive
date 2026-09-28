@@ -176,6 +176,66 @@ void main() {
           ),
         );
 
+        await _stageTextureChannel.invokeMethod<void>(
+          'setWindowAvailableForTest',
+          <String, Object?>{'available': false},
+        );
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 250)),
+        );
+        final hiddenBefore = await _readDiagnosticsCounters();
+        expect(hiddenBefore['requestedActive'], isTrue);
+        expect(hiddenBefore['active'], isFalse);
+        expect(hiddenBefore['windowAvailable'], isFalse);
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 750)),
+        );
+        final hiddenAfter = await _readDiagnosticsCounters();
+        final hiddenCallbacks = _counterDelta(
+          hiddenBefore,
+          hiddenAfter,
+          'textureCallbacks',
+        );
+        final hiddenPresents = _counterDelta(
+          hiddenBefore,
+          hiddenAfter,
+          'flutterPresents',
+        );
+        debugPrint(
+          '[stage-baseline] hidden 750ms: callbacks=$hiddenCallbacks, '
+          'presents=$hiddenPresents',
+        );
+        expect(hiddenCallbacks, lessThanOrEqualTo(1));
+        expect(hiddenPresents, lessThanOrEqualTo(2));
+
+        await _stageTextureChannel.invokeMethod<void>(
+          'setWindowAvailableForTest',
+          <String, Object?>{'available': true},
+        );
+        final visibleBefore = await _readDiagnosticsCounters();
+        expect(visibleBefore['active'], isTrue);
+        expect(visibleBefore['windowAvailable'], isTrue);
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 750)),
+        );
+        final visibleAfter = await _readDiagnosticsCounters();
+        final visibleCallbacks = _counterDelta(
+          visibleBefore,
+          visibleAfter,
+          'textureCallbacks',
+        );
+        final visibleAcquires = _counterDelta(
+          visibleBefore,
+          visibleAfter,
+          'advancedTextureAcquires',
+        );
+        debugPrint(
+          '[stage-baseline] visible again 750ms: callbacks=$visibleCallbacks, '
+          'advanced_acquires=$visibleAcquires',
+        );
+        expect(visibleCallbacks, greaterThanOrEqualTo(30));
+        expect(visibleAcquires, greaterThanOrEqualTo(20));
+
         await texture.setActive(false);
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 250)),

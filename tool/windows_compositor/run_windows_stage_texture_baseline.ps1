@@ -91,12 +91,17 @@ foreach ($entry in $fixtures.GetEnumerator()) {
 
 $diagnosticsVariable = 'KIRAKARA_COMPOSITOR_DIAGNOSTICS'
 $backendVariable = 'KIRAKARA_COMPOSITOR_BACKEND'
+$testModeVariable = 'KIRAKARA_COMPOSITOR_TEST_MODE'
 $previousDiagnostics = [Environment]::GetEnvironmentVariable(
   $diagnosticsVariable,
   [EnvironmentVariableTarget]::Process
 )
 $previousBackend = [Environment]::GetEnvironmentVariable(
   $backendVariable,
+  [EnvironmentVariableTarget]::Process
+)
+$previousTestMode = [Environment]::GetEnvironmentVariable(
+  $testModeVariable,
   [EnvironmentVariableTarget]::Process
 )
 $diagnosticsValue = if ($SkipCadenceGate) { '0' } else { '1' }
@@ -109,6 +114,11 @@ try {
   [Environment]::SetEnvironmentVariable(
     $backendVariable,
     'external_texture',
+    [EnvironmentVariableTarget]::Process
+  )
+  [Environment]::SetEnvironmentVariable(
+    $testModeVariable,
+    '1',
     [EnvironmentVariableTarget]::Process
   )
   Push-Location $appRoot
@@ -158,6 +168,11 @@ try {
   [Environment]::SetEnvironmentVariable(
     $backendVariable,
     $previousBackend,
+    [EnvironmentVariableTarget]::Process
+  )
+  [Environment]::SetEnvironmentVariable(
+    $testModeVariable,
+    $previousTestMode,
     [EnvironmentVariableTarget]::Process
   )
 }

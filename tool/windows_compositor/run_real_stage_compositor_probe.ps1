@@ -228,5 +228,9 @@ $report.replaySample | Format-List | Out-Host
 $report.naturalEofSample | Format-List | Out-Host
 $report.reloadAfterNaturalEofSample | Format-List | Out-Host
 $report.detachReattachSample | Format-List | Out-Host
-$report.lifecycle | Format-List | Out-Host
+$report.visibilitySample | Format-List | Out-Host
+$report.animationSample | Format-List | Out-Host
+if ($LifecycleProbe) {
+  $report.lifecycle | Format-List | Out-Host
+}
 $report.postInteractionStaticSample | Format-List | Out-Host

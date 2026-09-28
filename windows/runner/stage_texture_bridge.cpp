@@ -131,6 +131,13 @@ bool ReadBool(const flutter::EncodableValue* value,
   return fallback;
 }
 
+bool StageTextureTestModeEnabled() {
+  wchar_t value[2]{};
+  return ::GetEnvironmentVariableW(L"KIRAKARA_COMPOSITOR_TEST_MODE", value,
+                                   static_cast<DWORD>(std::size(value))) == 1 &&
+         value[0] == L'1';
+}
+
 }  // namespace
 
 struct StageTextureBridge::Impl {
@@ -227,7 +234,29 @@ struct StageTextureBridge::Impl {
                 {flutter::EncodableValue("acquireSequence"),
                  flutter::EncodableValue(
                      static_cast<std::int64_t>(counters.acquire_sequence))},
+                {flutter::EncodableValue("requestedActive"),
+                 flutter::EncodableValue(requested_active.load())},
+                {flutter::EncodableValue("active"),
+                 flutter::EncodableValue(active.load())},
+                {flutter::EncodableValue("windowAvailable"),
+                 flutter::EncodableValue(window_available.load())},
+                {flutter::EncodableValue("activityTransitionCount"),
+                 flutter::EncodableValue(static_cast<std::int64_t>(
+                     activity_transition_count.load()))},
             }));
+            return;
+          }
+          if (call.method_name() == "setWindowAvailableForTest") {
+            if (!StageTextureTestModeEnabled()) {
+              result->Error(
+                  "stage_texture_test_mode_disabled",
+                  "Set KIRAKARA_COMPOSITOR_TEST_MODE=1 to change test window "
+                  "availability.");
+              return;
+            }
+            HandleWindowAvailability(
+                ReadBool(call.arguments(), "available", false));
+            result->Success(flutter::EncodableValue(true));
             return;
           }
           result->NotImplemented();
@@ -277,6 +306,23 @@ struct StageTextureBridge::Impl {
     return SUCCEEDED(result) && stage_device;
   }
 
+  void ApplyActivityLocked(bool notify_if_already_active) {
+    const bool desired = source && !shutting_down.load() &&
+                         requested_active.load() && window_available.load();
+    const bool changed = active.exchange(desired) != desired;
+    if (source && changed) {
+      api.set_active(source, desired);
+      activity_transition_count.fetch_add(1);
+      stage_texture_trace::SetActive(desired, texture_id.load());
+    }
+    const auto registered_texture_id = texture_id.load();
+    if (desired && registered_texture_id >= 0 &&
+        (changed || notify_if_already_active)) {
+      FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
+          registrar, registered_texture_id);
+    }
+  }
+
   int64_t Attach(ShowHostHandle host) {
     if (!host || !registrar || shutting_down.load()) {
       stage_texture_trace::Attach(
@@ -292,15 +338,14 @@ struct StageTextureBridge::Impl {
     std::lock_guard lock(source_mutex);
     const auto existing_texture_id = texture_id.load();
     if (source && attached_host == host && existing_texture_id >= 0) {
-      api.set_active(source, true);
-      active.store(true);
-      FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
-          registrar, existing_texture_id);
+      requested_active.store(true);
+      ApplyActivityLocked(true);
       stage_texture_trace::Attach(
           reinterpret_cast<std::uint64_t>(host), existing_texture_id, true);
       return existing_texture_id;
     }
     if (source) {
+      requested_active.store(false);
       active.store(false);
       api.set_callback(source, nullptr, nullptr);
       api.set_active(source, false);
@@ -354,11 +399,9 @@ struct StageTextureBridge::Impl {
       texture_id.store(registered_texture_id);
     }
 
-    active.store(true);
-    api.set_active(source, true);
     api.set_callback(source, &FrameAvailable, this);
-    FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
-        registrar, registered_texture_id);
+    requested_active.store(true);
+    ApplyActivityLocked(true);
     stage_texture_trace::Attach(reinterpret_cast<std::uint64_t>(host),
                                 registered_texture_id, true);
     return registered_texture_id;
@@ -367,17 +410,18 @@ struct StageTextureBridge::Impl {
   void SetActive(bool value) {
     std::lock_guard lock(source_mutex);
     if (!source || shutting_down.load()) {
+      requested_active.store(false);
       active.store(false);
       return;
     }
-    active.store(value);
-    api.set_active(source, value);
-    const auto registered_texture_id = texture_id.load();
-    stage_texture_trace::SetActive(value, registered_texture_id);
-    if (value && registered_texture_id >= 0) {
-      FlutterDesktopTextureRegistrarMarkExternalTextureFrameAvailable(
-          registrar, registered_texture_id);
-    }
+    requested_active.store(value);
+    ApplyActivityLocked(true);
+  }
+
+  void HandleWindowAvailability(bool available) {
+    std::lock_guard lock(source_mutex);
+    window_available.store(available);
+    ApplyActivityLocked(false);
   }
 
   static void FrameAvailable(void* context,
@@ -439,6 +483,7 @@ struct StageTextureBridge::Impl {
     if (shutting_down.exchange(true)) {
       return;
     }
+    requested_active.store(false);
     active.store(false);
     std::lock_guard lock(source_mutex);
     if (source && api_available) {
@@ -456,6 +501,7 @@ struct StageTextureBridge::Impl {
   void DetachSource() {
     {
       std::lock_guard lock(source_mutex);
+      requested_active.store(false);
       active.store(false);
       if (source && api_available) {
         api.set_callback(source, nullptr, nullptr);
@@ -497,8 +543,11 @@ struct StageTextureBridge::Impl {
   ShowHostStageTextureSource source{};
   std::atomic_int64_t texture_id{-1};
   Microsoft::WRL::ComPtr<ID3D11Device> stage_device;
+  std::atomic_bool requested_active{};
   std::atomic_bool active{};
+  std::atomic_bool window_available{true};
   std::atomic_bool shutting_down{};
+  std::atomic_uint64_t activity_transition_count{};
   std::mutex source_mutex;
   std::mutex descriptor_mutex;
   FlutterDesktopGpuSurfaceDescriptor descriptor{};
@@ -516,5 +565,11 @@ StageTextureBridge::~StageTextureBridge() = default;
 void StageTextureBridge::BeginShutdown() {
   if (impl_) {
     impl_->BeginShutdown();
+  }
+}
+
+void StageTextureBridge::HandleWindowAvailabilityChanged(bool available) {
+  if (impl_) {
+    impl_->HandleWindowAvailability(available);
   }
 }

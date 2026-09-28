@@ -60,6 +60,7 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
   bool _geometryScheduled = false;
   bool _overlayVisible = false;
   bool _pageVisible = false;
+  bool _animatedOverlayVisible = false;
   bool _skipDisposeCleanup = false;
   String _fit = 'contain';
   String _status = '正在准备真实 Show Stage…';
@@ -84,7 +85,7 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
     return path;
   }
 
-  Future<void> _reportGeometry() async {
+  Future<void> _reportGeometry({bool visible = true}) async {
     final renderObject =
         _previewKey.currentContext?.findRenderObject() as RenderBox?;
     if (renderObject == null || !renderObject.hasSize) {
@@ -99,6 +100,7 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
         renderObject.size.width * scale,
         renderObject.size.height * scale,
       ),
+      visible: visible,
       fit: _fit,
     );
   }
@@ -246,6 +248,23 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
       await Future<void>.delayed(const Duration(milliseconds: 300));
       final pageAfter = await _readMap('getStageDiagnostics');
 
+      final visibilityBefore = await _readMap('getStageDiagnostics');
+      await _reportGeometry(visible: false);
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final visibilityHiddenSettled = await _readMap('getStageDiagnostics');
+      await Future<void>.delayed(const Duration(milliseconds: 750));
+      final visibilityHiddenAfter = await _readMap('getStageDiagnostics');
+      await _reportGeometry();
+      await Future<void>.delayed(const Duration(milliseconds: 750));
+      final visibilityRestored = await _readMap('getStageDiagnostics');
+
+      final animationBefore = await _readMap('getStageDiagnostics');
+      if (mounted) setState(() => _animatedOverlayVisible = true);
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      if (mounted) setState(() => _animatedOverlayVisible = false);
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      final animationAfter = await _readMap('getStageDiagnostics');
+
       final pauseBefore = await _readMap('getStageDiagnostics');
       final pauseRequestedPosition = show.position;
       show.pause();
@@ -255,9 +274,11 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
       await Future<void>.delayed(const Duration(milliseconds: 300));
       final pauseSettledPosition = show.position;
       final pauseSettledState = show.state;
+      final pauseSettled = await _readMap('getStageDiagnostics');
       await Future<void>.delayed(const Duration(milliseconds: 500));
       final pauseHeldPosition = show.position;
       final pauseHeldState = show.state;
+      final pauseHeld = await _readMap('getStageDiagnostics');
       show.play();
       await Future<void>.delayed(const Duration(milliseconds: 750));
       final resumePosition = show.position;
@@ -681,9 +702,54 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
                 15,
         'stageContinuedUnderOpaquePage':
             engineDelta(pageBefore, pageVisible, 'stagePresentCount') >= 15,
+        'hiddenGeometryStoppedPreviewWork':
+            visibilityHiddenSettled['requestedActive'] == true &&
+                visibilityHiddenSettled['active'] == false &&
+                visibilityHiddenSettled['geometryVisible'] == false &&
+                engineDelta(
+                      visibilityHiddenSettled,
+                      visibilityHiddenAfter,
+                      'stagePresentCount',
+                    ) <=
+                    1 &&
+                showDelta(
+                      visibilityHiddenSettled,
+                      visibilityHiddenAfter,
+                      'publishedFrames',
+                    ) <=
+                    1,
+        'visibleGeometryResumedPreview':
+            visibilityRestored['requestedActive'] == true &&
+                visibilityRestored['active'] == true &&
+                visibilityRestored['geometryVisible'] == true &&
+                engineDelta(
+                      visibilityHiddenAfter,
+                      visibilityRestored,
+                      'stagePresentCount',
+                    ) >=
+                    30,
+        'stageContinuedDuringFlutterAnimation': engineDelta(
+              animationBefore,
+              animationAfter,
+              'stagePresentCount',
+            ) >=
+            45,
+        'flutterAnimationActuallyPresented': engineDelta(
+              animationBefore,
+              animationAfter,
+              'flutterPresentCount',
+            ) >=
+            10,
         'pauseSettledAndHeld': pauseSettledState == _showStatePaused &&
             pauseHeldState == _showStatePaused &&
             (pauseHeldPosition - pauseSettledPosition).abs() <= 0.08,
+        'pausedStaticStageStoppedPresenting': engineDelta(
+                  pauseSettled,
+                  pauseHeld,
+                  'stagePresentCount',
+                ) <=
+                2 &&
+            showDelta(pauseSettled, pauseHeld, 'publishedFrames') <= 2,
         'resumeAdvancedClock': resumeState == _showStatePlaying &&
             resumePosition >= pauseHeldPosition + 0.35,
         'contentGenerationAdvanced':
@@ -777,13 +843,25 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
           'visible': pageVisible,
           'after': pageAfter,
         },
+        'visibilitySample': <String, Object?>{
+          'before': visibilityBefore,
+          'hiddenSettled': visibilityHiddenSettled,
+          'hiddenAfter': visibilityHiddenAfter,
+          'restored': visibilityRestored,
+        },
+        'animationSample': <String, Object?>{
+          'before': animationBefore,
+          'after': animationAfter,
+        },
         'pauseResumeSample': <String, Object?>{
           'before': pauseBefore,
           'requestedPositionSeconds': pauseRequestedPosition,
           'settledPositionSeconds': pauseSettledPosition,
           'settledState': pauseSettledState,
+          'settledDiagnostics': pauseSettled,
           'heldPositionSeconds': pauseHeldPosition,
           'heldState': pauseHeldState,
+          'heldDiagnostics': pauseHeld,
           'resumePositionSeconds': resumePosition,
           'resumeState': resumeState,
           'after': pauseAfter,
@@ -968,6 +1046,24 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
                   ),
                 ),
               ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: AnimatedOpacity(
+                  opacity: _animatedOverlayVisible ? 1 : 0,
+                  duration: const Duration(milliseconds: 600),
+                  curve: Curves.easeInOut,
+                  child: const ColoredBox(
+                    color: Color(0x9928507a),
+                    child: Center(
+                      child: Text(
+                        'Flutter 动画压力样本',
+                        style: TextStyle(fontSize: 30),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),

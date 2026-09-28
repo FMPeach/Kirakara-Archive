@@ -14,6 +14,7 @@ class StageTextureBridge {
   StageTextureBridge& operator=(const StageTextureBridge&) = delete;
 
   void BeginShutdown();
+  void HandleWindowAvailabilityChanged(bool available);
 
  private:
   struct Impl;

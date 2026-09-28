@@ -59,14 +59,14 @@ bool FlutterWindow::OnCreate() {
     flutter_controller_.reset();
     return false;
   }
+  session_notifications_registered_ =
+      ::WTSRegisterSessionNotification(GetHandle(),
+                                       NOTIFY_FOR_THIS_SESSION) != FALSE;
   if (dcomp_compositor_bridge_->enabled()) {
-    session_notifications_registered_ =
-        ::WTSRegisterSessionNotification(GetHandle(),
-                                         NOTIFY_FOR_THIS_SESSION) != FALSE;
     dcomp_compositor_bridge_->SetSessionNotificationsRegistered(
         session_notifications_registered_);
-    UpdateCompositorWindowAvailability();
   }
+  UpdateCompositorWindowAvailability();
   RegisterPlugins(flutter_controller_->engine());
   RegisterImeBridge(flutter_controller_->engine()->messenger());
   RegisterMediaIoBridge(flutter_controller_->engine()->messenger());
@@ -74,6 +74,7 @@ bool FlutterWindow::OnCreate() {
                        flutter_controller_->view()->GetNativeWindow());
   stage_texture_bridge_ = std::make_unique<StageTextureBridge>(
       flutter_controller_->engine());
+  UpdateCompositorWindowAvailability();
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   if (stage_texture_trace::FrameCountersEnabled()) {
@@ -215,15 +216,17 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
 }
 
 void FlutterWindow::UpdateCompositorWindowAvailability() {
-  if (!dcomp_compositor_bridge_ || !dcomp_compositor_bridge_->enabled()) {
-    return;
-  }
   const HWND window = GetHandle();
   const bool available = window && ::IsWindowVisible(window) &&
                          !compositor_window_minimized_ &&
                          !compositor_power_suspended_ &&
                          !compositor_session_locked_;
-  dcomp_compositor_bridge_->HandleWindowAvailabilityChanged(available);
+  if (dcomp_compositor_bridge_ && dcomp_compositor_bridge_->enabled()) {
+    dcomp_compositor_bridge_->HandleWindowAvailabilityChanged(available);
+  }
+  if (stage_texture_bridge_) {
+    stage_texture_bridge_->HandleWindowAvailabilityChanged(available);
+  }
 }
 
 void FlutterWindow::ArmFlutterPresentTrace() {

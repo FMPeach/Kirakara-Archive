@@ -88,6 +88,18 @@
   Phase 7 实机门槛，明确未宣告通过；session notification 注册状态已由运行时门槛
   确认。详见
   `docs/windows_compositor/phase4_lifecycle_recovery.md`。
+- Phase 5 的当前环境实现与自动门禁已完成：composed backend 现在以
+  `requestedActive && windowAvailable && geometryVisible` 决定实际预览 activity，
+  external texture 回退也使用相同的事件驱动窗口 lifecycle，不增加轮询或 timer。
+  geometry 隐藏 750 ms 内 Show/Stage 均 `+0`，恢复均 `+42`；暂停稳定 500 ms 为
+  `+0/+0`；Flutter 1.4 秒淡入淡出期间 Stage `+84`、Flutter Present `+99`；前后两次
+  静止样本仍为 Stage `+120`、Flutter `+0`。官方与定制 debug Engine 的 external
+  texture 窗口隐藏 A/B 均为 `0 callback / 0 acquire` 并能恢复、重建。Show 既有
+  30/20/15 fps 可选预览 cadence 与静态 frame scheduler 聚焦测试通过，且不改变物理
+  Stage/Cast。锁定的上游 Windows compositor 没有 dirty-rect Present 接口，因此没有
+  伪称局部 damage 已实现；本阶段的可证收益是 Stage-only 更新不产生 Flutter frame。
+  Iris Xe 长时间热测试、真实遮挡、物理双屏/Cast 和不同 GPU 保留 Phase 7。详见
+  `docs/windows_compositor/phase5_vfr_damage_thermal.md`。
 
 ## 为什么要做这件事
 
@@ -500,11 +512,30 @@ Engine 的 external texture A/B 均通过。标题门槛验证标题 KRL 真实�
 - 只有在新拓扑稳定后，才引入可选预览分辨率和 VFR 策略。
 - 在 Iris Xe 1130G7 上重新执行降频和长期热负载测试。
 
+进展（2026-09-28）：Runner 已用事件驱动状态机统一 composed/external texture 的
+窗口可用性；composed 另将 geometry visibility 纳入实际 Stage activity。真实 Show
+报告在 geometry 隐藏和暂停稳定窗口内均记录 Show publish/Stage Present `+0`，恢复
+后继续 latest frame；1.4 秒 Flutter 动画中 Stage `+84`、Flutter `+99`，最终静止
+两秒回到 Stage `+120`、Flutter `+0`。官方与定制 debug Engine 的 external texture
+隐藏/恢复和 Show rebuild A/B 均通过。Show 已有的静态 frame scheduler、物理 Stage
+活跃时 30 fps 预览 publication，以及压力下 20/15 fps 的缓降/慢恢复策略通过聚焦
+CTest；这些策略只影响可选预览 consumer，不反压物理 Stage 或 Cast。
+
+Damage 边界经锁定上游源码确认：当前 Windows `Compositor::Present` 不接收 dirty
+rectangle，OpenGL present 路径会整帧 blit + swap。没有为宣称局部 damage 而引入额外
+高风险补丁；Flutter 自身真正产生帧时保留上游行为，Stage-only 路径则完全不调度
+Flutter。Iris Xe 1130G7 长时间热负载、真实遮挡、物理双屏/Cast、Intel/AMD 和
+Windows 10 仍需 Phase 7 实机，不能由 RTX 4060 Ti 自动报告外推。
+
 退出条件：
 
 - 静止主控 UI 不存在由 Stage 驱动的 Flutter 帧泵。
 - Flutter 短暂动画或卡顿时，Stage 节奏保持独立。
 - 超负载时丢弃过期预览帧，不能阻塞播放、物理 Stage 或 Cast。
+
+完成结论（2026-09-28）：当前单屏 Windows 11 / RTX 4060 Ti 环境的三项退出条件均
+已有自动计数证据，且 Phase 4 生命周期回归未退化。热限制与跨硬件兼容性作为明确的
+Phase 7 实机门禁保留，不阻塞 Phase 5 原子提交。
 
 ### Phase 6：剪贴板可靠性与交互体验
 
