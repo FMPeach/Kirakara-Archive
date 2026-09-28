@@ -12,6 +12,29 @@ function Get-KirakaraProjectLayout {
   return $layout
 }
 
+function Get-KirakaraEngineToolchainEnvironmentSnapshot {
+  $snapshot = [ordered]@{}
+  foreach ($name in @(
+      'GYP_MSVS_OVERRIDE_PATH',
+      'VCToolsVersion',
+      'WINDOWSSDKDIR'
+    )) {
+    $snapshot[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+  }
+  return $snapshot
+}
+
+function Restore-KirakaraEngineToolchainEnvironment {
+  param([Parameter(Mandatory = $true)]$Snapshot)
+
+  foreach ($name in $Snapshot.Keys) {
+    [Environment]::SetEnvironmentVariable(
+      [string]$name,
+      $Snapshot[$name],
+      'Process')
+  }
+}
+
 function Resolve-KirakaraCanonicalDirectoryPath {
   param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -2646,6 +2669,12 @@ function Ensure-KirakaraProjectEngine {
     return
   }
 
+  # Engine builds pin an older MSVC toolset than the current Flutter Windows
+  # App generator may select. The build scripts intentionally set these
+  # process variables while compiling the Engine, but they must not leak into
+  # the subsequent `flutter run/build`: on VS 2026, VCToolsVersion=14.34 with
+  # the default v145 App project fails during CMake's compiler probe.
+  $toolchainEnvironment = Get-KirakaraEngineToolchainEnvironmentSnapshot
   $handle = Enter-KirakaraBootstrapLock -Layout $Layout
   try {
     $fingerprint = Get-KirakaraBootstrapFingerprint -Lock $Lock -Mode $Mode
@@ -2729,7 +2758,12 @@ function Ensure-KirakaraProjectEngine {
     Remove-KirakaraExpiredLogs -Layout $Layout -Lock $Lock
     Write-Host "[Kirakara Engine] $Mode Engine is verified and ready."
   } finally {
-    Exit-KirakaraBootstrapLock -Handle $handle
+    try {
+      Restore-KirakaraEngineToolchainEnvironment `
+        -Snapshot $toolchainEnvironment
+    } finally {
+      Exit-KirakaraBootstrapLock -Handle $handle
+    }
   }
 }
 

@@ -156,6 +156,60 @@ if (($repositoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -
   throw 'Repository reparse point was not resolved for mutex identity.'
 }
 
+$toolchainEnvironmentNames = @(
+  'GYP_MSVS_OVERRIDE_PATH',
+  'VCToolsVersion',
+  'WINDOWSSDKDIR'
+)
+$originalToolchainEnvironment = [ordered]@{}
+foreach ($name in $toolchainEnvironmentNames) {
+  $originalToolchainEnvironment[$name] =
+    [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+try {
+  [Environment]::SetEnvironmentVariable(
+    'GYP_MSVS_OVERRIDE_PATH', 'original-gyp', 'Process')
+  [Environment]::SetEnvironmentVariable(
+    'VCToolsVersion', $null, 'Process')
+  [Environment]::SetEnvironmentVariable(
+    'WINDOWSSDKDIR', 'original-sdk', 'Process')
+  $toolchainEnvironmentSnapshot = & $bootstrapModule {
+    Get-KirakaraEngineToolchainEnvironmentSnapshot
+  }
+  foreach ($name in $toolchainEnvironmentNames) {
+    [Environment]::SetEnvironmentVariable(
+      $name, "leaked-$name", 'Process')
+  }
+  & $bootstrapModule {
+    param($Snapshot)
+    Restore-KirakaraEngineToolchainEnvironment -Snapshot $Snapshot
+  } $toolchainEnvironmentSnapshot
+  Assert-Equal -Expected 'original-gyp' `
+    -Actual ([Environment]::GetEnvironmentVariable(
+        'GYP_MSVS_OVERRIDE_PATH', 'Process')) `
+    -Label 'restored GYP_MSVS_OVERRIDE_PATH'
+  $restoredVcToolsVersion = [Environment]::GetEnvironmentVariable(
+    'VCToolsVersion', 'Process')
+  if (-not [string]::IsNullOrEmpty($restoredVcToolsVersion)) {
+    throw "restored VCToolsVersion mismatch. Got '$restoredVcToolsVersion'."
+  }
+  Assert-Equal -Expected 'original-sdk' `
+    -Actual ([Environment]::GetEnvironmentVariable(
+        'WINDOWSSDKDIR', 'Process')) `
+    -Label 'restored WINDOWSSDKDIR'
+} finally {
+  foreach ($name in $toolchainEnvironmentNames) {
+    [Environment]::SetEnvironmentVariable(
+      $name, $originalToolchainEnvironment[$name], 'Process')
+  }
+}
+$toolchainEnvironmentRestore = [ordered]@{
+  names = @($toolchainEnvironmentNames)
+  preservesExistingValues = $true
+  removesPreviouslyAbsentValues = $true
+  passed = $true
+}
+
 $wrapperFirstLine = Get-Content -LiteralPath (Join-Path $repository 'flutterw.ps1') |
   Select-Object -First 1
 Assert-Equal -Expected '#Requires -Version 7.0' -Actual $wrapperFirstLine `
@@ -697,6 +751,7 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $absoluteReport) `
   rejectionCases = @($failureReports)
   fingerprints = $fingerprints
   toolFingerprints = $toolFingerprints
+  toolchainEnvironmentRestore = $toolchainEnvironmentRestore
   ephemeralInvalidation = $ephemeralInvalidation
   sdkSwitchInvalidation = $sdkSwitchInvalidation
   readyStampChecks = @($readyStampChecks)
