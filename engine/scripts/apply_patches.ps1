@@ -14,7 +14,13 @@ $lock = Get-EngineLock
 $layout = Get-EngineWorkspaceLayout $WorkspaceRoot
 Assert-ExternalEngineWorkspace $layout
 
-$patches = @($lock.patchset.patches)
+$patchsetPatches = @($lock.patchset.patches)
+$bootstrapPatches = if ($layout.Kind -eq 'repository-local') {
+  @($lock.projectBootstrap.engineSourcePatches)
+} else {
+  @()
+}
+$patches = @($patchsetPatches) + @($bootstrapPatches)
 if ($patches.Count -eq 0) {
   Assert-PinnedFlutterSource -Lock $lock -Layout $layout -RequireStockTree
   Write-Host 'The lock has no Engine behavior patches; source is stock.'
@@ -22,7 +28,20 @@ if ($patches.Count -eq 0) {
 }
 
 if ($Variant -eq 'patched') {
-  Assert-PinnedFlutterSource -Lock $lock -Layout $layout -RequireStockTree
+  try {
+    Assert-PinnedFlutterSource -Lock $lock -Layout $layout -RequireStockTree
+  } catch {
+    if ($layout.Kind -ne 'repository-local' -or
+        $bootstrapPatches.Count -eq 0) {
+      throw
+    }
+    Assert-AppliedPatchset `
+      -Lock $lock `
+      -Layout $layout `
+      -ExcludeRepositoryBootstrap
+    $patches = @($bootstrapPatches)
+    Write-Host 'The compositor patchset is already applied; adding the locked repository-local bootstrap patch.'
+  }
 } else {
   Assert-AppliedPatchset -Lock $lock -Layout $layout
   [array]::Reverse($patches)

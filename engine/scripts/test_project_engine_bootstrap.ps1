@@ -1,0 +1,449 @@
+[CmdletBinding()]
+param([string]$ReportPath)
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+$repository = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+$modulePath = Join-Path $PSScriptRoot 'project_engine_bootstrap.psm1'
+Import-Module $modulePath -Force
+$bootstrapModule = Get-Module | Where-Object {
+  $_.Path -and [IO.Path]::GetFullPath($_.Path).Equals(
+    [IO.Path]::GetFullPath($modulePath),
+    [StringComparison]::OrdinalIgnoreCase)
+} | Select-Object -First 1
+if ($null -eq $bootstrapModule) {
+  throw "Could not locate imported bootstrap module: $modulePath"
+}
+. (Join-Path $PSScriptRoot 'common.ps1')
+
+function Assert-Equal {
+  param(
+    [Parameter(Mandatory = $true)][AllowNull()]$Expected,
+    [Parameter(Mandatory = $true)][AllowNull()]$Actual,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
+  if ($Expected -cne $Actual) {
+    throw "$Label mismatch. Expected '$Expected', got '$Actual'."
+  }
+}
+
+$cases = @(
+  [ordered]@{
+    name = 'pub-get-prepares-debug'
+    arguments = @('pub', 'get')
+    needsEngine = $true
+    injectEngine = $false
+    mode = 'debug'
+  },
+  [ordered]@{
+    name = 'windows-run-defaults-debug'
+    arguments = @('run', '-d', 'windows')
+    needsEngine = $true
+    injectEngine = $true
+    mode = 'debug'
+  },
+  [ordered]@{
+    name = 'windows-run-profile'
+    arguments = @('run', '--profile', '--device-id=windows')
+    needsEngine = $true
+    injectEngine = $true
+    mode = 'profile'
+  },
+  [ordered]@{
+    name = 'windows-build-defaults-release'
+    arguments = @('build', 'windows')
+    needsEngine = $true
+    injectEngine = $true
+    mode = 'release'
+  },
+  [ordered]@{
+    name = 'windows-build-explicit-debug'
+    arguments = @('build', 'windows', '--debug')
+    needsEngine = $true
+    injectEngine = $true
+    mode = 'debug'
+  },
+  [ordered]@{
+    name = 'explicit-chrome-run-stays-official'
+    arguments = @('run', '-d=chrome')
+    needsEngine = $false
+    injectEngine = $false
+    mode = $null
+  },
+  [ordered]@{
+    name = 'android-build-stays-official'
+    arguments = @('build', 'apk', '--release')
+    needsEngine = $false
+    injectEngine = $false
+    mode = $null
+  }
+)
+
+$caseReports = foreach ($case in $cases) {
+  $plan = Get-KirakaraFlutterInvocationPlan -Arguments $case.arguments
+  Assert-Equal -Expected $case.needsEngine -Actual $plan.needsEngine `
+    -Label "$($case.name) needsEngine"
+  Assert-Equal -Expected $case.injectEngine -Actual $plan.injectEngine `
+    -Label "$($case.name) injectEngine"
+  Assert-Equal -Expected $case.mode -Actual $plan.mode `
+    -Label "$($case.name) mode"
+  [ordered]@{
+    name = $case.name
+    passed = $true
+    plan = $plan
+  }
+}
+
+$failureCases = @(
+  [ordered]@{
+    name = 'conflicting-modes'
+    arguments = @('build', 'windows', '--debug', '--release')
+    pattern = 'Conflicting Flutter build modes'
+  },
+  [ordered]@{
+    name = 'manual-local-engine-is-rejected'
+    arguments = @('run', '-d', 'windows', '--local-engine=wrong')
+    pattern = 'flutterw owns local Engine selection'
+  },
+  [ordered]@{
+    name = 'missing-device-value'
+    arguments = @('run', '-d')
+    pattern = 'requires a device id'
+  }
+)
+
+$failureReports = foreach ($case in $failureCases) {
+  $message = $null
+  try {
+    $null = Get-KirakaraFlutterInvocationPlan -Arguments $case.arguments
+  } catch {
+    $message = $_.Exception.Message
+  }
+  if ([string]::IsNullOrWhiteSpace($message) -or $message -notmatch $case.pattern) {
+    throw "$($case.name) did not fail with the expected message. Actual: $message"
+  }
+  [ordered]@{
+    name = $case.name
+    passed = $true
+    message = $message
+  }
+}
+
+$layout = Get-KirakaraProjectLayout
+$expectedWorkspace = [IO.Path]::GetFullPath((Join-Path $repository '.kfe'))
+Assert-Equal -Expected $expectedWorkspace -Actual $layout.Root `
+  -Label 'repository-local workspace'
+Assert-Equal -Expected 'repository-local' -Actual $layout.Kind `
+  -Label 'repository-local layout kind'
+Assert-Equal -Expected (Join-Path $expectedWorkspace 'out') `
+  -Actual (Join-Path $layout.OutputRoot 'out') `
+  -Label 'repository-local output root'
+$canonicalRepository = & $bootstrapModule {
+  param($Path)
+  Resolve-KirakaraCanonicalDirectoryPath -Path $Path
+} $repository
+$canonicalAgain = & $bootstrapModule {
+  param($Path)
+  Resolve-KirakaraCanonicalDirectoryPath -Path $Path
+} $canonicalRepository
+Assert-Equal -Expected $canonicalRepository -Actual $canonicalAgain `
+  -Label 'canonical repository path idempotence'
+$repositoryItem = Get-Item -LiteralPath $repository -Force
+if (($repositoryItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -and
+    $canonicalRepository.Equals(
+      $repository, [StringComparison]::OrdinalIgnoreCase)) {
+  throw 'Repository reparse point was not resolved for mutex identity.'
+}
+
+$wrapperFirstLine = Get-Content -LiteralPath (Join-Path $repository 'flutterw.ps1') |
+  Select-Object -First 1
+Assert-Equal -Expected '#Requires -Version 7.0' -Actual $wrapperFirstLine `
+  -Label 'PowerShell wrapper version requirement'
+$cmdWrapper = Get-Content -Raw -LiteralPath (Join-Path $repository 'flutterw.cmd')
+if ($cmdWrapper -match '(?im)^\s*powershell\.exe\b') {
+  throw 'flutterw.cmd must not fall back to unsupported Windows PowerShell.'
+}
+
+$lock = Get-Content -Raw -LiteralPath (Join-Path $repository `
+  'engine\engine.lock.json') | ConvertFrom-Json
+$fingerprints = @{}
+foreach ($mode in 'debug', 'profile', 'release') {
+  $first = Get-KirakaraBootstrapFingerprint -Lock $lock -Mode $mode
+  $second = Get-KirakaraBootstrapFingerprint -Lock $lock -Mode $mode
+  Assert-Equal -Expected $first.value -Actual $second.value `
+    -Label "$mode fingerprint stability"
+  $fingerprints[$mode] = $first.value
+}
+if (@($fingerprints.Values | Sort-Object -Unique).Count -ne 3) {
+  throw 'Build-mode fingerprints must be distinct.'
+}
+
+$ignore = Get-Content -LiteralPath (Join-Path $repository '.gitignore')
+if ($ignore -notcontains '.kfe/') {
+  throw '.gitignore does not exclude the repository-local Engine workspace.'
+}
+
+$scratchParent = Join-Path $repository 'build\diagnostics\engine'
+$scratch = Join-Path $scratchParent (
+  "project-bootstrap-test-$([Guid]::NewGuid().ToString('N'))")
+$ephemeralInvalidation = $null
+$readyStampChecks = @()
+$logRetention = $null
+$checkoutRecovery = @()
+try {
+  $expectedOutput = Join-Path $scratch 'engine-output'
+  $testApp = Join-Path $scratch 'app'
+  $testEphemeral = Join-Path $testApp 'windows\flutter\ephemeral'
+  New-Item -ItemType Directory -Path $expectedOutput, $testEphemeral `
+    -Force | Out-Null
+  $expectedDll = Join-Path $expectedOutput 'flutter_windows.dll'
+  $actualDll = Join-Path $testEphemeral 'flutter_windows.dll'
+  Set-Content -LiteralPath $expectedDll -Value 'A' -NoNewline
+  Set-Content -LiteralPath $actualDll -Value 'A' -NoNewline
+  Invalidate-StaleFlutterEphemeralEngine `
+    -EngineOutputDirectory $expectedOutput `
+    -AppRoot $testApp
+  if (-not (Test-Path -LiteralPath $actualDll -PathType Leaf)) {
+    throw 'Matching Flutter ephemeral Engine output was invalidated.'
+  }
+  Set-Content -LiteralPath $expectedDll -Value 'B' -NoNewline
+  Invalidate-StaleFlutterEphemeralEngine `
+    -EngineOutputDirectory $expectedOutput `
+    -AppRoot $testApp
+  if (Test-Path -LiteralPath $actualDll -PathType Leaf) {
+    throw 'Stale Flutter ephemeral Engine output was not invalidated.'
+  }
+  $ephemeralInvalidation = [ordered]@{
+    matchingOutputPreserved = $true
+    staleOutputInvalidated = $true
+  }
+
+  $readyPath = Join-Path $layout.State 'debug-ready.json'
+  if (Test-Path -LiteralPath $readyPath -PathType Leaf) {
+    $originalStamp = Get-Content -Raw -LiteralPath $readyPath | ConvertFrom-Json
+    $testLayout = $layout | Select-Object *
+    $testLayout.State = Join-Path $scratch 'state'
+    New-Item -ItemType Directory -Path $testLayout.State -Force | Out-Null
+    $testReadyPath = Join-Path $testLayout.State 'debug-ready.json'
+
+    $missing = & $bootstrapModule {
+      param($Layout, $Lock, $Fingerprint)
+      Test-KirakaraReadyStamp `
+        -Layout $Layout -Lock $Lock -Mode debug -Fingerprint $Fingerprint
+    } $testLayout $lock ([string]$originalStamp.fingerprint)
+    if ($missing.ready -or $missing.reason -ne 'ready stamp is missing') {
+      throw "Missing ready stamp was accepted: $($missing.reason)"
+    }
+    $readyStampChecks += [ordered]@{
+      name = 'missing-ready-stamp'
+      passed = $true
+      reason = $missing.reason
+    }
+
+    $emptyArtifacts = $originalStamp | ConvertTo-Json -Depth 12 |
+      ConvertFrom-Json
+    $emptyArtifacts.artifacts = @()
+    $emptyArtifacts | ConvertTo-Json -Depth 12 | Set-Content `
+      -LiteralPath $testReadyPath -Encoding utf8
+    $emptyResult = & $bootstrapModule {
+      param($Layout, $Lock, $Fingerprint)
+      Test-KirakaraReadyStamp `
+        -Layout $Layout -Lock $Lock -Mode debug -Fingerprint $Fingerprint
+    } $testLayout $lock ([string]$originalStamp.fingerprint)
+    if ($emptyResult.ready -or
+        $emptyResult.reason -notmatch 'artifact set') {
+      throw "Corrupt ready-stamp artifact set was accepted: $($emptyResult.reason)"
+    }
+    $readyStampChecks += [ordered]@{
+      name = 'corrupt-artifact-set'
+      passed = $true
+      reason = $emptyResult.reason
+    }
+
+    $badArgs = $originalStamp | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+    $badArgs.argsGnSha256 = '0' * 64
+    $badArgs | ConvertTo-Json -Depth 12 | Set-Content `
+      -LiteralPath $testReadyPath -Encoding utf8
+    $argsResult = & $bootstrapModule {
+      param($Layout, $Lock, $Fingerprint)
+      Test-KirakaraReadyStamp `
+        -Layout $Layout -Lock $Lock -Mode debug -Fingerprint $Fingerprint
+    } $testLayout $lock ([string]$originalStamp.fingerprint)
+    if ($argsResult.ready -or
+        $argsResult.reason -notmatch 'GN arguments') {
+      throw "Corrupt ready-stamp GN hash was accepted: $($argsResult.reason)"
+    }
+    $readyStampChecks += [ordered]@{
+      name = 'corrupt-gn-hash'
+      passed = $true
+      reason = $argsResult.reason
+    }
+  }
+
+  $retentionRoot = Join-Path $scratch 'retention'
+  $retentionLayout = $layout | Select-Object *
+  $retentionLayout.Root = $retentionRoot
+  $retentionLayout.Logs = Join-Path $retentionRoot 'logs'
+  $retentionLayout.State = Join-Path $retentionRoot 'state'
+  New-Item -ItemType Directory `
+    -Path $retentionLayout.Logs, $retentionLayout.State `
+    -Force | Out-Null
+  foreach ($index in 0..4) {
+    $logPath = Join-Path $retentionLayout.Logs "log-$index.json"
+    Set-Content -LiteralPath $logPath -Value "{`"index`":$index}" `
+      -Encoding utf8
+    (Get-Item -LiteralPath $logPath).LastWriteTimeUtc =
+      [DateTime]::UtcNow.AddMinutes($index)
+  }
+  [ordered]@{
+    verificationReport = 'logs/log-0.json'
+    abiReport = 'logs/log-0.json'
+  } | ConvertTo-Json | Set-Content `
+    -LiteralPath (Join-Path $retentionLayout.State 'debug-ready.json') `
+    -Encoding utf8
+  $retentionLock = $lock | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+  $retentionLock.projectBootstrap.maxLogFiles = 3
+  & $bootstrapModule {
+    param($Layout, $Lock)
+    Remove-KirakaraExpiredLogs -Layout $Layout -Lock $Lock
+  } $retentionLayout $retentionLock
+  $retainedNames = @(Get-ChildItem -LiteralPath $retentionLayout.Logs -File |
+      Sort-Object Name | ForEach-Object Name)
+  foreach ($expectedName in 'log-0.json', 'log-3.json', 'log-4.json') {
+    if ($retainedNames -notcontains $expectedName) {
+      throw "Log retention removed expected file: $expectedName"
+    }
+  }
+  if ($retainedNames.Count -ne 3) {
+    throw "Log retention kept $($retainedNames.Count) files instead of 3."
+  }
+  $logRetention = [ordered]@{
+    limit = 3
+    retained = $retainedNames
+    protectedReadyStampReportPreserved = $true
+  }
+
+  $partialCheckout = Join-Path $scratch 'partial-checkout'
+  New-Item -ItemType Directory -Path $partialCheckout -Force | Out-Null
+  Set-Content -LiteralPath (Join-Path $partialCheckout 'partial.data') `
+    -Value 'interrupted' -NoNewline
+  $partialResult = Repair-InterruptedManagedGitCheckout `
+    -Path $partialCheckout `
+    -ManagedRoot $scratch `
+    -Repository 'https://invalid.example/repository.git' `
+    -Revision ('0' * 40) `
+    -Label 'test partial'
+  Assert-Equal -Expected 'removed-incomplete' -Actual $partialResult `
+    -Label 'partial checkout repair result'
+  if (Test-Path -LiteralPath $partialCheckout) {
+    throw 'Interrupted checkout without Git metadata was not removed.'
+  }
+  $checkoutRecovery += [ordered]@{
+    name = 'remove-incomplete-managed-directory'
+    passed = $true
+  }
+
+  $origin = Join-Path $scratch 'origin'
+  Invoke-CheckedNative git @('init', '--initial-branch=main', $origin) `
+    'Could not create bootstrap recovery test repository.' | Out-Null
+  Invoke-CheckedNative git @('-C', $origin, 'config', 'user.name', 'Kirakara Test') |
+    Out-Null
+  Invoke-CheckedNative git @('-C', $origin, 'config', 'user.email', 'test@invalid') |
+    Out-Null
+  $tracked = Join-Path $origin 'tracked.txt'
+  Set-Content -LiteralPath $tracked -Value 'first' -NoNewline
+  Invoke-CheckedNative git @('-C', $origin, 'add', 'tracked.txt') | Out-Null
+  Invoke-CheckedNative git @('-C', $origin, 'commit', '-m', 'first') | Out-Null
+  $firstRevision = Get-GitHead $origin
+  Set-Content -LiteralPath $tracked -Value 'second' -NoNewline
+  Invoke-CheckedNative git @('-C', $origin, 'commit', '-am', 'second') | Out-Null
+  $secondRevision = Get-GitHead $origin
+  $managedCheckout = Join-Path $scratch 'managed-checkout'
+  Invoke-CheckedNative git @('clone', $origin, $managedCheckout) | Out-Null
+  $resumeResult = Repair-InterruptedManagedGitCheckout `
+    -Path $managedCheckout `
+    -ManagedRoot $scratch `
+    -Repository $origin `
+    -Revision $firstRevision `
+    -Label 'test managed'
+  Assert-Equal -Expected 'resumed' -Actual $resumeResult `
+    -Label 'clean checkout resume result'
+  Assert-Equal -Expected $firstRevision -Actual (Get-GitHead $managedCheckout) `
+    -Label 'resumed checkout revision'
+  $checkoutRecovery += [ordered]@{
+    name = 'resume-clean-checkout-at-locked-revision'
+    passed = $true
+  }
+
+  Set-Content -LiteralPath (Join-Path $managedCheckout 'tracked.txt') `
+    -Value 'local change' -NoNewline
+  $dirtyMessage = $null
+  try {
+    $null = Repair-InterruptedManagedGitCheckout `
+      -Path $managedCheckout `
+      -ManagedRoot $scratch `
+      -Repository $origin `
+      -Revision $secondRevision `
+      -Label 'test managed'
+  } catch {
+    $dirtyMessage = $_.Exception.Message
+  }
+  if ($dirtyMessage -notmatch 'tracked changes') {
+    throw "Dirty managed checkout was not refused: $dirtyMessage"
+  }
+  $checkoutRecovery += [ordered]@{
+    name = 'refuse-tracked-changes'
+    passed = $true
+  }
+
+  $unsafeLayout = Get-EngineWorkspaceLayout (Join-Path $repository '.kfe-other')
+  $unsafeMessage = $null
+  try {
+    Assert-ExternalEngineWorkspace $unsafeLayout
+  } catch {
+    $unsafeMessage = $_.Exception.Message
+  }
+  if ($unsafeMessage -notmatch 'outside the App repository') {
+    throw "Unsafe in-repository workspace was not rejected: $unsafeMessage"
+  }
+} finally {
+  if (Test-Path -LiteralPath $scratch) {
+    if (-not (Test-PathWithin $scratch $scratchParent)) {
+      throw "Refusing to remove unexpected bootstrap test scratch path: $scratch"
+    }
+    Remove-Item -LiteralPath $scratch -Recurse -Force
+  }
+}
+
+if ([string]::IsNullOrWhiteSpace($ReportPath)) {
+  $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+  $ReportPath = Join-Path $repository `
+    "build\diagnostics\engine\project-bootstrap-tests-$stamp.json"
+}
+$absoluteReport = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
+  $ReportPath)
+if (Test-Path -LiteralPath $absoluteReport) {
+  throw "ReportPath already exists: $absoluteReport"
+}
+New-Item -ItemType Directory -Path (Split-Path -Parent $absoluteReport) `
+  -Force | Out-Null
+[ordered]@{
+  schemaVersion = 1
+  generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+  workspace = $layout.Root
+  canonicalRepository = $canonicalRepository
+  powershell7Required = $true
+  invocationCases = @($caseReports)
+  rejectionCases = @($failureReports)
+  fingerprints = $fingerprints
+  ephemeralInvalidation = $ephemeralInvalidation
+  readyStampChecks = @($readyStampChecks)
+  logRetention = $logRetention
+  checkoutRecovery = @($checkoutRecovery)
+  cleanupBoundaryPassed = $true
+  passed = $true
+} | ConvertTo-Json -Depth 8 | Set-Content `
+  -LiteralPath $absoluteReport `
+  -Encoding utf8
+Write-Host "Project Engine bootstrap tests passed. Report: $absoluteReport"

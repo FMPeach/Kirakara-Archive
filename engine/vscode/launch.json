@@ -1,0 +1,28 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Kirakara Windows debug (flutterw)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}\\flutterw.ps1\" run -d windows"
+        },
+        {
+            "name": "Kirakara Windows profile (flutterw)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}\\flutterw.ps1\" run -d windows --profile"
+        },
+        {
+            "name": "Kirakara Windows release (flutterw)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}\\flutterw.ps1\" run -d windows --release"
+        },
+        {
+            "name": "Attach Dart debugger to flutterw",
+            "type": "dart",
+            "request": "attach"
+        }
+    ]
+}

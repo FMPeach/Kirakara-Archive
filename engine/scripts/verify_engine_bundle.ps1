@@ -125,7 +125,9 @@ foreach ($buildMode in $Mode) {
     -Lock $lock `
     -Mode $buildMode `
     -Variant $Variant
-  $output = Join-Path $layout.EngineSource "out\$($build.localEngine)"
+  $output = Get-EngineOutputDirectory `
+    -Layout $layout `
+    -LocalEngine $build.localEngine
   $argsGn = Join-Path $output 'args.gn'
   $toolchainNinja = Join-Path $output 'toolchain.ninja'
   if (-not (Test-Path -LiteralPath $argsGn -PathType Leaf)) {
@@ -135,8 +137,12 @@ foreach ($buildMode in $Mode) {
     throw "GN toolchain is missing for mode '$buildMode': $toolchainNinja"
   }
   $toolchainText = Get-Content -Raw -LiteralPath $toolchainNinja
+  # GN emits forward slashes when the output directory is outside the Engine
+  # source tree. Normalize separators before checking the pinned MSVC path so
+  # the repository-local layout is held to the same toolset gate.
+  $normalizedToolchainText = $toolchainText.Replace('/', '\')
   $msvcMarker = "\VC\Tools\MSVC\$($lock.hostBaseline.msvcToolsetVersion)\"
-  if ($toolchainText.IndexOf(
+  if ($normalizedToolchainText.IndexOf(
       $msvcMarker,
       [System.StringComparison]::OrdinalIgnoreCase
     ) -lt 0) {
@@ -325,6 +331,8 @@ $report = [ordered]@{
   engineSourceTree = Get-GitTree $layout.FlutterCheckout
   engineSourceSnapshotTree = if ($Variant -eq 'stock') {
     Get-GitTree $layout.FlutterCheckout
+  } elseif ($layout.Kind -eq 'repository-local') {
+    [string]$lock.projectBootstrap.engineSourceTree
   } else {
     [string]$lock.patchset.sourceTree
   }

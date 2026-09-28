@@ -9,7 +9,9 @@ param(
   [ValidateSet('debug', 'profile', 'release')]
   [string[]]$Mode = @('debug', 'profile', 'release'),
 
-  [string]$ReportPath
+  [string]$ReportPath,
+
+  [switch]$AllowUnlockedArtifacts
 )
 
 $ErrorActionPreference = 'Stop'
@@ -197,8 +199,16 @@ function Invoke-AbiExportProbe {
 $results = @()
 foreach ($buildMode in $Mode) {
   $build = Get-BuildLock -Lock $lock -Mode $buildMode -Variant patched
-  $patchedDirectory = Join-Path $layout.EngineSource "out\$($build.localEngine)"
-  Assert-LockedEngineArtifacts -Build $build -OutputDirectory $patchedDirectory
+  $patchedDirectory = Get-EngineOutputDirectory `
+    -Layout $layout `
+    -LocalEngine $build.localEngine
+  if (-not $AllowUnlockedArtifacts) {
+    Assert-LockedEngineArtifacts -Build $build -OutputDirectory $patchedDirectory
+  } elseif (-not (Test-Path -LiteralPath (
+      Join-Path $patchedDirectory 'flutter_windows.dll'
+    ) -PathType Leaf)) {
+    throw "Patched Engine DLL is missing: $patchedDirectory"
+  }
   $officialDirectory = Get-OfficialEngineDirectory -BuildMode $buildMode
 
   $results += [ordered]@{

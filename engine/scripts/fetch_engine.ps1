@@ -29,6 +29,21 @@ Set-EngineProcessEnvironment `
   -MsvcToolsetVersion $lock.hostBaseline.msvcToolsetVersion `
   -WindowsSdkPath $WindowsSdkPath
 
+if ($layout.Kind -eq 'repository-local') {
+  $null = Repair-InterruptedManagedGitCheckout `
+    -Path $layout.DepotTools `
+    -ManagedRoot $layout.Root `
+    -Repository ([string]$lock.depotTools.repository) `
+    -Revision ([string]$lock.depotTools.revision) `
+    -Label 'depot_tools'
+  $null = Repair-InterruptedManagedGitCheckout `
+    -Path $layout.FlutterCheckout `
+    -ManagedRoot $layout.Root `
+    -Repository ([string]$lock.flutter.repository) `
+    -Revision ([string]$lock.flutter.engineRevision) `
+    -Label 'Flutter Engine source'
+}
+
 if (-not (Test-Path -LiteralPath $layout.DepotTools)) {
   if (-not [string]::IsNullOrWhiteSpace($DepotToolsArchivePath)) {
     $archive = Resolve-UnresolvedPath $DepotToolsArchivePath

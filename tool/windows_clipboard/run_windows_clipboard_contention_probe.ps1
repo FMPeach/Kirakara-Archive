@@ -26,8 +26,19 @@ $build = Get-BuildLock -Lock $lock -Mode debug -Variant patched
 if ($LocalEngine -ne $build.localEngine) {
   throw "Clipboard Engine mismatch. Expected '$($build.localEngine)', got '$LocalEngine'."
 }
-$engineOutput = Join-Path $layout.EngineSource "out\$LocalEngine"
-Assert-LockedEngineArtifacts -Build $build -OutputDirectory $engineOutput
+$engineOutput = Get-EngineOutputDirectory `
+  -Layout $layout `
+  -LocalEngine $LocalEngine
+Assert-UsableEngineArtifacts `
+  -Layout $layout `
+  -Lock $lock `
+  -Build $build `
+  -Mode debug `
+  -Variant patched `
+  -OutputDirectory $engineOutput
+Invalidate-StaleFlutterEphemeralEngine `
+  -EngineOutputDirectory $engineOutput `
+  -AppRoot $repositoryRoot
 
 Write-Warning (
   'This probe temporarily replaces the Windows clipboard and restores only ' +
@@ -40,7 +51,7 @@ try {
     -d windows `
     "--local-engine=$LocalEngine" `
     "--local-engine-host=$LocalEngine" `
-    "--local-engine-src-path=$($layout.EngineSource)" `
+    "--local-engine-src-path=$($layout.OutputRoot)" `
     --dart-define=KIRAKARA_ALLOW_CLIPBOARD_MUTATION=true `
     --dart-define=KIRAKARA_EXPECT_CLIPBOARD_RETRY=true
   if ($LASTEXITCODE -ne 0) {

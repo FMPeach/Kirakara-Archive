@@ -118,11 +118,14 @@
   removal、1130G7 热态、第二位协作者复现、生产签名身份和项目级发布许可证仍未完成，
   因此 Phase 7 及总计划不能宣称全部完成。详见
   `docs/windows_compositor/phase7_compatibility_release.md`。
-- Phase 8 已加入计划但尚未实施：把现有可复现的 Engine 补丁/构建链收敛为 App
-  仓库自己的自举入口。首次执行仓库入口下的 `pub get`、`run` 或 Windows `build`
-  时，自动在仓库内准备并按需构建对应模式的定制 `flutter_windows.dll`；后续命中完整
-  指纹时直接复用。该阶段不修改已安装 Flutter SDK、用户或系统 PATH、注册表、全局
-  Git 配置及其他仓库，也不把 Engine 源码、缓存或产物写入仓库外的持久目录。
+- Phase 8 在当前主机可可靠执行的实现与自动门禁已完成：根目录 `flutterw.ps1` /
+  `flutterw.cmd` 会在被忽略的 `.kfe/` 内准备锁定源码、补丁、三模式输出、缓存、日志、
+  互斥锁和 ready stamp，并自动注入 local-Engine 参数。debug/profile/release Engine、
+  ABI、App build、GUI 正常退出、并发等待、二次廉价复用、代理中断续跑、普通
+  `flutterw clean` 边界和进程/用户/系统环境隔离均通过；没有修改官方 SDK、全局 Git、
+  PATH 或注册表。真正独立的三种首次入口 clean-clone 排列及第二位协作者复现尚未完成，
+  因此 Phase 8 和总计划仍不能宣称全部完成。详见
+  `docs/windows_compositor/phase8_repository_bootstrap.md`。
 
 ## 为什么要做这件事
 

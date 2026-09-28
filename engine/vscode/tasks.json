@@ -1,0 +1,58 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Kirakara: pub get (project Engine)",
+            "type": "process",
+            "command": "${workspaceFolder}\\flutterw.cmd",
+            "args": ["pub", "get"],
+            "problemMatcher": []
+        },
+        {
+            "label": "Kirakara: run Windows debug (project Engine)",
+            "type": "process",
+            "command": "${workspaceFolder}\\flutterw.cmd",
+            "args": ["run", "-d", "windows"],
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "Kirakara: build Windows debug (project Engine)",
+            "type": "process",
+            "command": "${workspaceFolder}\\flutterw.cmd",
+            "args": ["build", "windows", "--debug"],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Kirakara: build Windows profile (project Engine)",
+            "type": "process",
+            "command": "${workspaceFolder}\\flutterw.cmd",
+            "args": ["build", "windows", "--profile"],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Kirakara: build Windows release (project Engine)",
+            "type": "process",
+            "command": "${workspaceFolder}\\flutterw.cmd",
+            "args": ["build", "windows"],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Kirakara Engine: status",
+            "type": "process",
+            "command": "${workspaceFolder}\\flutterw.cmd",
+            "args": ["engine", "status"],
+            "problemMatcher": []
+        },
+        {
+            "label": "Kirakara Engine: doctor",
+            "type": "process",
+            "command": "${workspaceFolder}\\flutterw.cmd",
+            "args": ["engine", "doctor"],
+            "problemMatcher": []
+        }
+    ]
+}

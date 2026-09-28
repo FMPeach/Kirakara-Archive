@@ -92,22 +92,29 @@ try {
       -Mode $buildMode `
       -Variant $buildVariant
     $engineDirectory = if ($Engine -eq 'local') {
-      Join-Path $layout.EngineSource "out\$($build.localEngine)"
+      Get-EngineOutputDirectory -Layout $layout -LocalEngine $build.localEngine
     } else {
       Get-OfficialEngineDirectory -BuildMode $buildMode
     }
     if ($Engine -eq 'local') {
-      Assert-LockedEngineArtifacts `
+      Assert-UsableEngineArtifacts `
+        -Layout $layout `
+        -Lock $lock `
         -Build $build `
+        -Mode $buildMode `
+        -Variant $LocalVariant `
         -OutputDirectory $engineDirectory
     }
 
     $arguments = @('build', 'windows', "--$buildMode")
     if ($Engine -eq 'local') {
+      Invalidate-StaleFlutterEphemeralEngine `
+        -EngineOutputDirectory $engineDirectory `
+        -AppRoot (Get-AppRepositoryRoot)
       $arguments += @(
         "--local-engine=$($build.localEngine)",
         "--local-engine-host=$($build.localEngineHost)",
-        "--local-engine-src-path=$($layout.EngineSource)"
+        "--local-engine-src-path=$($layout.OutputRoot)"
       )
     }
     $engineLabel = if ($Engine -eq 'local') {

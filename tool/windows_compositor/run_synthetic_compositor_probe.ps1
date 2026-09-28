@@ -60,7 +60,9 @@ if ($sdkEngineRevision -ne $lock.flutter.engineRevision) {
 }
 
 $engineSource = $layout.EngineSource
-$engineOutput = Join-Path $engineSource "out\$LocalEngine"
+$engineOutput = Get-EngineOutputDirectory `
+  -Layout $layout `
+  -LocalEngine $LocalEngine
 $engineDll = Join-Path $engineOutput 'flutter_windows.dll'
 $engineHeader = Join-Path $engineOutput 'flutter_export.h'
 foreach ($required in @($flutter, $engineDll, $engineHeader)) {
@@ -68,8 +70,12 @@ foreach ($required in @($flutter, $engineDll, $engineHeader)) {
     throw "Required synthetic compositor input is missing: $required"
   }
 }
-Assert-LockedEngineArtifacts `
+Assert-UsableEngineArtifacts `
+  -Layout $layout `
+  -Lock $lock `
   -Build $build `
+  -Mode debug `
+  -Variant patched `
   -OutputDirectory $engineOutput
 
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
@@ -83,13 +89,16 @@ if (Test-Path -LiteralPath $absoluteReport) {
 }
 
 if (-not $SkipBuild) {
+  Invalidate-StaleFlutterEphemeralEngine `
+    -EngineOutputDirectory $engineOutput `
+    -AppRoot $repositoryRoot
   Push-Location $repositoryRoot
   try {
     & $flutter build windows --debug `
       --target lib/windows_compositor_synthetic_main.dart `
       "--local-engine=$LocalEngine" `
       "--local-engine-host=$LocalEngine" `
-      "--local-engine-src-path=$engineSource"
+      "--local-engine-src-path=$($layout.OutputRoot)"
     if ($LASTEXITCODE -ne 0) {
       throw "Synthetic compositor App build failed (exit $LASTEXITCODE)."
     }

@@ -39,9 +39,15 @@ $debugBuild = Get-BuildLock `
   -Lock $lock `
   -Mode debug `
   -Variant patched
-$debugOutput = Join-Path $layout.EngineSource "out\$($debugBuild.localEngine)"
-Assert-LockedEngineArtifacts `
+$debugOutput = Get-EngineOutputDirectory `
+  -Layout $layout `
+  -LocalEngine $debugBuild.localEngine
+Assert-UsableEngineArtifacts `
+  -Layout $layout `
+  -Lock $lock `
   -Build $debugBuild `
+  -Mode debug `
+  -Variant patched `
   -OutputDirectory $debugOutput
 $testExecutable = Join-Path $debugOutput 'flutter_windows_unittests.exe'
 if (-not (Test-Path -LiteralPath $testExecutable -PathType Leaf)) {

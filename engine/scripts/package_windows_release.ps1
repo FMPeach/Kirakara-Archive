@@ -129,7 +129,9 @@ Assert-MatchingTextFile `
   -Label 'Kirakara compositor ABI header'
 
 $build = Get-BuildLock -Lock $lock -Mode release -Variant patched
-$engineDirectory = Join-Path $layout.EngineSource "out\$($build.localEngine)"
+$engineDirectory = Get-EngineOutputDirectory `
+  -Layout $layout `
+  -LocalEngine $build.localEngine
 Assert-LockedEngineArtifacts -Build $build -OutputDirectory $engineDirectory
 
 $bundle = Join-Path $repository 'build\windows\x64\runner\Release'

@@ -1,9 +1,11 @@
 # Kirakara Windows Flutter Engine
 
-This directory contains only the reproducibility contract for the custom
-Windows Flutter Engine. Engine source, `out/`, DLLs, import libraries, symbols
-and downloaded toolchains must remain in an external workspace or a versioned
-release artifact. They must not be committed to the App repository.
+This directory contains the reproducibility contract for the custom Windows
+Flutter Engine. The normal App workflow is repository-local: source, `out/`,
+DLLs, symbols and downloaded toolchains live below the ignored `.kfe/`
+directory and must never be committed or added to a source package. Phase 7
+release artifacts can instead be produced from the preserved external-workspace
+flow later in this document.
 
 The root `builds` entries preserve the completely stock Phase 1 artifacts for
 Flutter 3.44.4. `patchset` separately locks the ordered Phase 2/3 compositor and
@@ -12,7 +14,107 @@ and custom debug/profile/release artifacts.
 Switching variants never edits the installed Flutter SDK and never removes the
 other variant's `out/` directory.
 
-## Pinned layout
+## App developer workflow
+
+From the repository root, use the checked-in wrapper instead of a bare
+`flutter` command for Windows work:
+
+```powershell
+.\flutterw pub get
+.\flutterw run -d windows
+.\flutterw run -d windows --profile
+.\flutterw build windows
+```
+
+Any of these commands can be the first command after cloning. `pub get` and a
+default Windows run prepare debug; an explicit profile run prepares profile;
+and a Windows build without a mode prepares release. Modes are lazy and are
+not built until requested. The wrapper selects the locked Flutter SDK, prepares
+and validates the required Engine, injects the three local-Engine arguments,
+then invokes the original Flutter command. `flutterw.cmd` provides the same
+entry for `cmd.exe` and IDE tasks.
+
+The wrapper requires Git, PowerShell 7 (`pwsh`; Windows PowerShell 5 is
+explicitly rejected), the Visual Studio/MSVC/ATL
+identity and Windows SDK pinned in `engine.lock.json`. Reserve at least 64 GiB
+of free space before the initial bootstrap. Download and compilation time
+depends heavily on the network, CPU and storage and can range from tens of
+minutes to several hours; the scripts display actual child-process progress
+and do not invent an ETA.
+
+If a matching ordinary Flutter SDK is already on `PATH`, it is validated and
+used read-only. Otherwise the unmodified locked SDK is cloned into `.kfe/sdk`.
+The installed SDK is never patched, and custom DLLs are never copied into its
+cache. A proxy is opt-in and process-scoped:
+
+```powershell
+$env:KIRAKARA_ENGINE_PROXY = 'http://127.0.0.1:7890'
+.\flutterw pub get
+Remove-Item Env:\KIRAKARA_ENGINE_PROXY
+```
+
+All Kirakara-specific state is contained in this ignored layout:
+
+```text
+.kfe/
+├─ sdk/          # fallback, unmodified locked Flutter SDK
+├─ depot_tools/  # locked revision
+├─ engine/       # locked source, gclient and CIPD content
+├─ out/          # lazy debug/profile/release outputs
+├─ pub-cache/    # project-only Dart packages
+├─ cache/        # project-only CIPD/vpython/depot_tools caches
+├─ tmp/          # child-process TEMP/TMP
+├─ logs/         # verification and ABI reports
+├─ locks/        # cross-process bootstrap ownership
+└─ state/        # mode-specific fingerprints and ready stamps
+```
+
+The second invocation reuses a mode only after rechecking its fingerprint,
+source tree, toolchain, GN arguments, exports, ABI and artifacts. Offline reuse
+therefore works only when the matching ready stamp and every referenced source,
+cache and output file are already present. A partial download, failed build or
+missing stamp is never passed to Flutter.
+
+Interrupted managed Git checkouts are resumed only when their origin matches
+the lock and they have no tracked edits. A clone that stopped before creating
+Git metadata is removed only at its exact managed `.kfe` path and fetched
+again. Wrong origins and tracked changes fail explicitly. Old `.kfe/logs`
+files are bounded by the lock while reports referenced by current ready stamps
+remain protected.
+
+Use these maintenance commands when needed:
+
+```powershell
+.\flutterw engine status
+.\flutterw engine doctor
+.\flutterw engine prepare debug
+.\flutterw engine clean debug
+.\flutterw engine purge
+```
+
+`engine clean` deletes only the selected `.kfe/out` mode and its ready stamp;
+`engine purge` deletes only this repository's `.kfe/`. Both share the bootstrap
+lock. Ordinary `flutterw clean` remains Flutter's App clean and preserves the
+Engine workspace. Do not manually delete `.kfe/` while a wrapper process is
+running.
+
+The checked-in `engine/vscode` task and launch examples call `flutterw` as the
+same state-machine entry. The repository ignores local `.vscode/` preferences,
+so merge the examples into that directory as described by their README. The
+launch entries run Flutter in a terminal so the wrapper stays authoritative;
+use the separate Dart attach entry when an IDE debugger is needed.
+
+A bare global `flutter` command is intentionally not intercepted. Flutter has
+no per-project pre-command hook covering `pub get`, `run` and `build`, and a
+PATH alias would leak Kirakara's Engine into neighboring repositories. Bare
+Flutter remains appropriate for non-Windows comparison work, while Kirakara
+Windows commands must use `flutterw`.
+
+## External Engine developer and release workflow
+
+The lower-level Phase 1-7 scripts remain available for Engine development,
+stock/custom A/B comparison and reproducible release-candidate packaging. They
+use an explicitly supplied external workspace:
 
 The scripts use this external layout, with the root supplied at runtime:
 
@@ -24,10 +126,10 @@ E:\Kirakara-Flutter-Engine\
    └─ engine\src\out\
       ├─ host_debug\
       ├─ host_profile\
-       ├─ host_release\
-       ├─ host_debug_kirakara_v4\
-       ├─ host_profile_kirakara_v4\
-       └─ host_release_kirakara_v4\
+      ├─ host_release\
+      ├─ host_debug_kirakara_v4\
+      ├─ host_profile_kirakara_v4\
+      └─ host_release_kirakara_v4\
 ```
 
 No absolute host path is stored in `engine.lock.json`. The example uses E: only
@@ -40,7 +142,7 @@ administrator requirement for some `gclient` setups; elevate only if the
 command reports the corresponding permission failure.
 
 ```powershell
-Set-Location 'D:\Kirakara-App-ascii'
+Set-Location 'D:\path\to\Kirakara-App'
 .\engine\scripts\fetch_engine.ps1 `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
   -VisualStudioPath 'D:\Program Files\Microsoft Visual Studio\Community\2026'

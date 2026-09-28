@@ -74,15 +74,23 @@ if ($Engine -eq 'local') {
     -Lock $lock `
     -Mode $Mode `
     -Variant $LocalVariant
-  $selectedEngineDirectory = Join-Path `
-    $layout.EngineSource "out\$($build.localEngine)"
-  Assert-LockedEngineArtifacts `
+  $selectedEngineDirectory = Get-EngineOutputDirectory `
+    -Layout $layout `
+    -LocalEngine $build.localEngine
+  Assert-UsableEngineArtifacts `
+    -Layout $layout `
+    -Lock $lock `
     -Build $build `
+    -Mode $Mode `
+    -Variant $LocalVariant `
     -OutputDirectory $selectedEngineDirectory
+  Invalidate-StaleFlutterEphemeralEngine `
+    -EngineOutputDirectory $selectedEngineDirectory `
+    -AppRoot $appRoot
   $arguments += @(
     "--local-engine=$($build.localEngine)",
     "--local-engine-host=$($build.localEngineHost)",
-    "--local-engine-src-path=$($layout.EngineSource)"
+    "--local-engine-src-path=$($layout.OutputRoot)"
   )
 }
 foreach ($entry in $fixtures.GetEnumerator()) {

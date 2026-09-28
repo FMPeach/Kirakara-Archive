@@ -7,6 +7,7 @@ coverage/
 media/library/
 dist/
 .workbuddy/
+.kfe/
 
 # SQLite local index
 kirakara_index.db

@@ -46,12 +46,126 @@ function Get-EngineWorkspaceLayout {
   param([Parameter(Mandatory = $true)][string]$WorkspaceRoot)
 
   $root = Resolve-UnresolvedPath $WorkspaceRoot
+  $appRoot = Get-AppRepositoryRoot
+  $repositoryLocalRoot = Join-Path $appRoot '.kfe'
+  $repositoryLocal = [IO.Path]::GetFullPath($root).TrimEnd('\', '/').Equals(
+    [IO.Path]::GetFullPath($repositoryLocalRoot).TrimEnd('\', '/'),
+    [StringComparison]::OrdinalIgnoreCase)
+  if ($repositoryLocal) {
+    return [pscustomobject]@{
+      Kind = 'repository-local'
+      Root = $root
+      FlutterCheckout = Join-Path $root 'engine'
+      EngineSource = Join-Path $root 'engine\engine\src'
+      DepotTools = Join-Path $root 'depot_tools'
+      OutputRoot = $root
+      FlutterSdk = Join-Path $root 'sdk'
+      PubCache = Join-Path $root 'pub-cache'
+      Cache = Join-Path $root 'cache'
+      Temp = Join-Path $root 'tmp'
+      Logs = Join-Path $root 'logs'
+      Locks = Join-Path $root 'locks'
+      State = Join-Path $root 'state'
+    }
+  }
   return [pscustomobject]@{
+    Kind = 'external'
     Root = $root
     FlutterCheckout = Join-Path $root 'flutter'
     EngineSource = Join-Path $root 'flutter\engine\src'
     DepotTools = Join-Path $root 'depot_tools'
+    OutputRoot = Join-Path $root 'flutter\engine\src'
+    FlutterSdk = $null
+    PubCache = $null
+    Cache = $null
+    Temp = $null
+    Logs = $null
+    Locks = $null
+    State = $null
   }
+}
+
+function Get-EngineOutputDirectory {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)][string]$LocalEngine
+  )
+
+  return Join-Path $Layout.OutputRoot "out\$LocalEngine"
+}
+
+function Invalidate-StaleFlutterEphemeralEngine {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][string]$EngineOutputDirectory,
+    [string]$AppRoot = (Get-AppRepositoryRoot)
+  )
+
+  $expectedDirectory = Resolve-UnresolvedPath $EngineOutputDirectory
+  $expectedDll = Join-Path $expectedDirectory 'flutter_windows.dll'
+  if (-not (Test-Path -LiteralPath $expectedDll -PathType Leaf)) {
+    throw "Selected Engine is missing flutter_windows.dll: $expectedDll"
+  }
+
+  $repository = Resolve-UnresolvedPath $AppRoot
+  $ephemeralDirectory = Join-Path $repository 'windows\flutter\ephemeral'
+  $ephemeralDll = Join-Path $ephemeralDirectory 'flutter_windows.dll'
+  if (-not (Test-Path -LiteralPath $ephemeralDll -PathType Leaf)) {
+    return
+  }
+
+  $comparisons = @(
+    [pscustomobject]@{ path = 'flutter_windows.dll'; hash = $true },
+    [pscustomobject]@{ path = 'flutter_windows.dll.lib'; hash = $true },
+    [pscustomobject]@{ path = 'flutter_windows.dll.pdb'; hash = $false },
+    [pscustomobject]@{ path = 'icudtl.dat'; hash = $true },
+    [pscustomobject]@{ path = 'flutter_export.h'; hash = $true },
+    [pscustomobject]@{ path = 'flutter_windows.h'; hash = $true },
+    [pscustomobject]@{ path = 'flutter_messenger.h'; hash = $true },
+    [pscustomobject]@{ path = 'flutter_plugin_registrar.h'; hash = $true },
+    [pscustomobject]@{ path = 'flutter_texture_registrar.h'; hash = $true }
+  )
+  $reason = $null
+  foreach ($comparison in $comparisons) {
+    $expected = Join-Path $expectedDirectory $comparison.path
+    if (-not (Test-Path -LiteralPath $expected -PathType Leaf)) {
+      continue
+    }
+    $actual = Join-Path $ephemeralDirectory $comparison.path
+    if (-not (Test-Path -LiteralPath $actual -PathType Leaf)) {
+      $reason = "$($comparison.path) is missing"
+      break
+    }
+    $expectedItem = Get-Item -LiteralPath $expected
+    $actualItem = Get-Item -LiteralPath $actual
+    if ($expectedItem.Length -ne $actualItem.Length) {
+      $reason = "$($comparison.path) size differs"
+      break
+    }
+    if ($comparison.hash) {
+      $expectedHash = (Get-FileHash -LiteralPath $expected -Algorithm SHA256).Hash
+      $actualHash = (Get-FileHash -LiteralPath $actual -Algorithm SHA256).Hash
+      if ($expectedHash -ne $actualHash) {
+        $reason = "$($comparison.path) content differs"
+        break
+      }
+    }
+  }
+  if ([string]::IsNullOrWhiteSpace($reason)) {
+    return
+  }
+
+  $expectedEphemeral = [IO.Path]::GetFullPath(
+    (Join-Path $repository 'windows\flutter\ephemeral\flutter_windows.dll'))
+  $actualEphemeral = [IO.Path]::GetFullPath($ephemeralDll)
+  if (-not $actualEphemeral.Equals(
+      $expectedEphemeral, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to invalidate unexpected Flutter output: $actualEphemeral"
+  }
+  Write-Host (
+    '[Kirakara Engine] Invalidating stale Flutter Engine assembly output: ' +
+    "$reason.")
+  Remove-Item -LiteralPath $actualEphemeral -Force
 }
 
 function Test-PathWithin {
@@ -78,6 +192,15 @@ function Assert-ExternalEngineWorkspace {
   param([Parameter(Mandatory = $true)][pscustomobject]$Layout)
 
   $appRoot = Get-AppRepositoryRoot
+  if ($Layout.Kind -eq 'repository-local') {
+    $expectedRoot = Join-Path $appRoot '.kfe'
+    if (-not [IO.Path]::GetFullPath($Layout.Root).TrimEnd('\', '/').Equals(
+        [IO.Path]::GetFullPath($expectedRoot).TrimEnd('\', '/'),
+        [StringComparison]::OrdinalIgnoreCase)) {
+      throw "Repository-local Engine workspace must be exactly $expectedRoot"
+    }
+    return
+  }
   if (Test-PathWithin $Layout.Root $appRoot) {
     throw "Engine workspace must be outside the App repository: $($Layout.Root)"
   }
@@ -128,6 +251,79 @@ function Get-TrackedGitChanges {
     throw "Cannot read Git status: $Repository"
   }
   return @($status | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Repair-InterruptedManagedGitCheckout {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$ManagedRoot,
+    [Parameter(Mandatory = $true)][string]$Repository,
+    [Parameter(Mandatory = $true)][string]$Revision,
+    [Parameter(Mandatory = $true)][string]$Label
+  )
+
+  $target = [IO.Path]::GetFullPath((Resolve-UnresolvedPath $Path))
+  $root = [IO.Path]::GetFullPath((Resolve-UnresolvedPath $ManagedRoot))
+  if (-not (Test-PathWithin $target $root) -or $target.TrimEnd('\', '/').Equals(
+      $root.TrimEnd('\', '/'), [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to repair $Label outside the managed workspace: $target"
+  }
+  if (-not (Test-Path -LiteralPath $target -PathType Container)) {
+    return 'missing'
+  }
+
+  $gitDirectory = Join-Path $target '.git'
+  if (-not (Test-Path -LiteralPath $gitDirectory)) {
+    Write-Warning (
+      "Removing interrupted $Label checkout without Git metadata: $target")
+    Remove-Item -LiteralPath $target -Recurse -Force
+    return 'removed-incomplete'
+  }
+
+  $originOutput = @(& git -C $target remote get-url origin 2>$null)
+  if ($LASTEXITCODE -ne 0 -or $originOutput.Count -ne 1) {
+    throw "Cannot validate the interrupted $Label checkout origin: $target"
+  }
+  $origin = ([string]$originOutput[0]).Trim().TrimEnd('/')
+  $expectedOrigin = $Repository.Trim().TrimEnd('/')
+  if (-not $origin.Equals(
+      $expectedOrigin, [StringComparison]::OrdinalIgnoreCase)) {
+    throw (
+      "$Label checkout origin mismatch. Expected '$Repository', got " +
+      "'$origin'. Refusing automatic recovery.")
+  }
+
+  $headOutput = @(& git -C $target rev-parse --verify HEAD 2>$null)
+  $head = if ($LASTEXITCODE -eq 0 -and $headOutput.Count -ge 1) {
+    ([string]$headOutput[0]).Trim()
+  } else { $null }
+  if ($head -eq $Revision) {
+    return 'ready'
+  }
+
+  $changes = @(Get-TrackedGitChanges $target)
+  if ($changes.Count -ne 0) {
+    throw (
+      "$Label checkout has tracked changes and cannot be resumed safely:`n" +
+      ($changes -join [Environment]::NewLine))
+  }
+
+  Write-Host (
+    "Resuming interrupted $Label checkout at locked revision $Revision...")
+  Invoke-CheckedNative git @(
+    '-C', $target, 'fetch', '--depth=1', 'origin', $Revision
+  ) "Could not fetch the locked $Label revision while resuming."
+  Invoke-CheckedNative git @(
+    '-C', $target, 'checkout', '--detach', $Revision
+  ) "Could not check out the locked $Label revision while resuming."
+  $repairedHead = Get-GitHead $target
+  if ($repairedHead -ne $Revision) {
+    throw (
+      "$Label resume completed at the wrong revision. Expected $Revision, " +
+      "got $repairedHead.")
+  }
+  return 'resumed'
 }
 
 function Assert-PinnedFlutterBootstrap {
@@ -231,10 +427,15 @@ function Remove-TemporaryGitIndex {
 function Get-PatchsetExpectedTree {
   param(
     [Parameter(Mandatory = $true)]$Lock,
-    [Parameter(Mandatory = $true)][string]$Repository
+    [Parameter(Mandatory = $true)][string]$Repository,
+    [AllowNull()][object[]]$Patches
   )
 
-  $patches = @($Lock.patchset.patches)
+  $patches = if ($null -eq $Patches) {
+    @($Lock.patchset.patches)
+  } else {
+    @($Patches)
+  }
   if ($patches.Count -eq 0) {
     throw 'The patched Engine variant has no locked patches.'
   }
@@ -316,19 +517,44 @@ function Get-WorkingTreeSnapshot {
 function Assert-AppliedPatchset {
   param(
     [Parameter(Mandatory = $true)]$Lock,
-    [Parameter(Mandatory = $true)][pscustomobject]$Layout
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [switch]$ExcludeRepositoryBootstrap
   )
 
   Assert-PinnedFlutterSource -Lock $Lock -Layout $Layout
-  $expectedTree = Get-PatchsetExpectedTree `
+  $patchsetPatches = @($Lock.patchset.patches)
+  $patchsetTree = Get-PatchsetExpectedTree `
     -Lock $Lock `
-    -Repository $Layout.FlutterCheckout
+    -Repository $Layout.FlutterCheckout `
+    -Patches $patchsetPatches
   $lockedTree = [string]$Lock.patchset.sourceTree
   if (
     -not [string]::IsNullOrWhiteSpace($lockedTree) -and
-    $expectedTree -ne $lockedTree
+    $patchsetTree -ne $lockedTree
   ) {
-    throw "Locked patchset tree mismatch. Expected $lockedTree, patches produce $expectedTree."
+    throw "Locked patchset tree mismatch. Expected $lockedTree, patches produce $patchsetTree."
+  }
+
+  $expectedTree = $patchsetTree
+  if ($Layout.Kind -eq 'repository-local' -and
+      -not $ExcludeRepositoryBootstrap) {
+    $bootstrapPatches = @($Lock.projectBootstrap.engineSourcePatches)
+    if ($bootstrapPatches.Count -eq 0) {
+      throw 'Repository-local Engine layout has no locked bootstrap source patches.'
+    }
+    $allPatches = @($patchsetPatches) + @($bootstrapPatches)
+    $expectedTree = Get-PatchsetExpectedTree `
+      -Lock $Lock `
+      -Repository $Layout.FlutterCheckout `
+      -Patches $allPatches
+    $bootstrapTree = [string]$Lock.projectBootstrap.engineSourceTree
+    if ([string]::IsNullOrWhiteSpace($bootstrapTree) -or
+        $expectedTree -ne $bootstrapTree) {
+      throw (
+        'Locked repository-local Engine tree mismatch. Expected ' +
+        "$bootstrapTree, patches produce $expectedTree."
+      )
+    }
   }
   $workingTree = Get-WorkingTreeSnapshot -Repository $Layout.FlutterCheckout
   if ($workingTree -ne $expectedTree) {
@@ -365,6 +591,38 @@ function Assert-LockedEngineArtifacts {
     if ($actualHash -ne $lockedHash) {
       throw "Engine artifact hash mismatch for $($Build.mode)/$($artifact.path). Expected $lockedHash, got $actualHash."
     }
+  }
+}
+
+function Assert-UsableEngineArtifacts {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)]$Lock,
+    [Parameter(Mandatory = $true)]$Build,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('debug', 'profile', 'release')]
+    [string]$Mode,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('stock', 'patched')]
+    [string]$Variant,
+    [Parameter(Mandatory = $true)][string]$OutputDirectory
+  )
+
+  if ($Layout.Kind -ne 'repository-local') {
+    Assert-LockedEngineArtifacts `
+      -Build $Build `
+      -OutputDirectory $OutputDirectory
+    return
+  }
+  if ($Variant -ne 'patched') {
+    throw 'The repository-local workspace contains only the patched Engine variant.'
+  }
+  Import-Module (Join-Path $PSScriptRoot 'project_engine_bootstrap.psm1') -Force
+  $ready = Assert-KirakaraProjectEngineReady -Mode $Mode
+  if (-not ([IO.Path]::GetFullPath($ready.output).Equals(
+        [IO.Path]::GetFullPath($OutputDirectory),
+        [StringComparison]::OrdinalIgnoreCase))) {
+    throw "Repository-local ready output mismatch for '$Mode'."
   }
 }
 
@@ -496,6 +754,40 @@ function Set-EngineProcessEnvironment {
   $env:DEPOT_TOOLS_UPDATE = '0'
   $env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
   $env:Path = "$($Layout.DepotTools);$env:Path"
+  if ($Layout.Kind -eq 'repository-local') {
+    foreach ($directory in @(
+        $Layout.PubCache,
+        $Layout.Cache,
+        $Layout.Temp,
+        $Layout.Logs,
+        $Layout.Locks,
+        $Layout.State
+      )) {
+      New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+    $env:PUB_CACHE = $Layout.PubCache
+    $env:CIPD_CACHE_DIR = Join-Path $Layout.Cache 'cipd'
+    $env:VPYTHON_VIRTUALENV_ROOT = Join-Path $Layout.Cache 'vpython'
+    $env:DEPOT_TOOLS_CACHE_DIR = Join-Path $Layout.Cache 'depot_tools'
+    $env:TEMP = $Layout.Temp
+    $env:TMP = $Layout.Temp
+    $env:FLUTTER_SKIP_UPDATE_CHECK = 'true'
+    $env:FLUTTER_SUPPRESS_ANALYTICS = 'true'
+    $env:DART_SUPPRESS_ANALYTICS = 'true'
+    # The repository may live below a non-ASCII Windows path. Older virtualenv
+    # code in the pinned vpython toolchain otherwise decodes child output as
+    # UTF-8 while pip emits the active OEM code page, corrupting the path and
+    # failing before GN generation.
+    $env:PYTHONUTF8 = '1'
+    $env:PYTHONIOENCODING = 'utf-8'
+    foreach ($directory in @(
+        $env:CIPD_CACHE_DIR,
+        $env:VPYTHON_VIRTUALENV_ROOT,
+        $env:DEPOT_TOOLS_CACHE_DIR
+      )) {
+      New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+  }
   if (-not [string]::IsNullOrWhiteSpace($ProxyUrl)) {
     $env:HTTP_PROXY = $ProxyUrl
     $env:HTTPS_PROXY = $ProxyUrl

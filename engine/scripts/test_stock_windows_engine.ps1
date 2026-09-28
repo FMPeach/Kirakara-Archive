@@ -26,7 +26,9 @@ Assert-PinnedFlutterSource `
   -RequireStockTree
 
 $debugBuild = Get-BuildLock -Lock $lock -Mode 'debug'
-$debugOutput = Join-Path $layout.EngineSource "out\$($debugBuild.localEngine)"
+$debugOutput = Get-EngineOutputDirectory `
+  -Layout $layout `
+  -LocalEngine $debugBuild.localEngine
 Assert-LockedEngineArtifacts -Build $debugBuild -OutputDirectory $debugOutput
 $testExecutable = Join-Path $debugOutput 'flutter_windows_unittests.exe'
 if (-not (Test-Path -LiteralPath $testExecutable -PathType Leaf)) {

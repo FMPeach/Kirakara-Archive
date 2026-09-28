@@ -73,9 +73,15 @@ if ($Engine -eq 'local') {
         'engine\include\kirakara_flutter_compositor_api.h') `
       -Label 'Kirakara compositor ABI header'
   }
-  $engineDirectory = Join-Path $layout.EngineSource "out\$($build.localEngine)"
-  Assert-LockedEngineArtifacts `
+  $engineDirectory = Get-EngineOutputDirectory `
+    -Layout $layout `
+    -LocalEngine $build.localEngine
+  Assert-UsableEngineArtifacts `
+    -Layout $layout `
+    -Lock $lock `
     -Build $build `
+    -Mode $Mode `
+    -Variant $LocalVariant `
     -OutputDirectory $engineDirectory
 } else {
   if ($LocalVariant -ne 'stock') {
