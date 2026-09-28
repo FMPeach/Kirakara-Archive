@@ -206,9 +206,74 @@ $sdkSwitchInvalidation = $null
 $readyStampChecks = @()
 $toolReadyStampChecks = @()
 $vpythonBootstrapChecks = @()
+$wrapperArgumentChecks = @()
 $logRetention = $null
 $checkoutRecovery = @()
 try {
+  $wrapperProbe = Join-Path $scratch 'wrapper-arguments'
+  $wrapperProbeScripts = Join-Path $wrapperProbe 'engine\scripts'
+  New-Item -ItemType Directory -Path $wrapperProbeScripts -Force | Out-Null
+  Copy-Item -LiteralPath (Join-Path $repository 'flutterw.ps1') `
+    -Destination (Join-Path $wrapperProbe 'flutterw.ps1')
+  Copy-Item -LiteralPath (Join-Path $repository 'flutterw.cmd') `
+    -Destination (Join-Path $wrapperProbe 'flutterw.cmd')
+  $fakeBootstrapModule = @'
+function Invoke-KirakaraFlutter {
+  param([string[]]$Arguments)
+  [IO.File]::WriteAllLines(
+    $env:KIRAKARA_WRAPPER_ARGUMENT_REPORT,
+    $Arguments,
+    [Text.UTF8Encoding]::new($false))
+  return 0
+}
+function Invoke-KirakaraEngineCommand {
+  param([string[]]$Arguments)
+  return 0
+}
+Export-ModuleMember -Function Invoke-KirakaraFlutter, Invoke-KirakaraEngineCommand
+'@
+  [IO.File]::WriteAllText(
+    (Join-Path $wrapperProbeScripts 'project_engine_bootstrap.psm1'),
+    $fakeBootstrapModule,
+    [Text.UTF8Encoding]::new($false))
+  $argumentReport = Join-Path $wrapperProbe 'arguments.txt'
+  $priorArgumentReport = [Environment]::GetEnvironmentVariable(
+    'KIRAKARA_WRAPPER_ARGUMENT_REPORT', 'Process')
+  try {
+    $env:KIRAKARA_WRAPPER_ARGUMENT_REPORT = $argumentReport
+    & pwsh -NoLogo -NoProfile -File (Join-Path $wrapperProbe 'flutterw.ps1') `
+      run -d windows
+    if ($LASTEXITCODE -ne 0) {
+      throw "flutterw.ps1 argument probe failed: $LASTEXITCODE"
+    }
+    $ps1Arguments = @(Get-Content -LiteralPath $argumentReport)
+    Assert-Equal -Expected 'run|-d|windows' `
+      -Actual ($ps1Arguments -join '|') `
+      -Label 'flutterw.ps1 argument forwarding'
+    $wrapperArgumentChecks += [ordered]@{
+      entryPoint = 'flutterw.ps1'
+      arguments = $ps1Arguments
+      passed = $true
+    }
+
+    & cmd.exe /d /c (Join-Path $wrapperProbe 'flutterw.cmd') run -d windows
+    if ($LASTEXITCODE -ne 0) {
+      throw "flutterw.cmd argument probe failed: $LASTEXITCODE"
+    }
+    $cmdArguments = @(Get-Content -LiteralPath $argumentReport)
+    Assert-Equal -Expected 'run|-d|windows' `
+      -Actual ($cmdArguments -join '|') `
+      -Label 'flutterw.cmd argument forwarding'
+    $wrapperArgumentChecks += [ordered]@{
+      entryPoint = 'flutterw.cmd'
+      arguments = $cmdArguments
+      passed = $true
+    }
+  } finally {
+    [Environment]::SetEnvironmentVariable(
+      'KIRAKARA_WRAPPER_ARGUMENT_REPORT', $priorArgumentReport, 'Process')
+  }
+
   $expectedOutput = Join-Path $scratch 'engine-output'
   $testApp = Join-Path $scratch 'app'
   $testEphemeral = Join-Path $testApp 'windows\flutter\ephemeral'
@@ -637,6 +702,7 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $absoluteReport) `
   readyStampChecks = @($readyStampChecks)
   toolReadyStampChecks = @($toolReadyStampChecks)
   vpythonBootstrapChecks = @($vpythonBootstrapChecks)
+  wrapperArgumentChecks = @($wrapperArgumentChecks)
   logRetention = $logRetention
   checkoutRecovery = @($checkoutRecovery)
   cleanupBoundaryPassed = $true

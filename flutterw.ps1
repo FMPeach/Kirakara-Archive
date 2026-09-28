@@ -1,14 +1,12 @@
 #Requires -Version 7.0
 
-[CmdletBinding(PositionalBinding = $false)]
-param(
-  [Parameter(ValueFromRemainingArguments = $true)]
-  [AllowEmptyCollection()]
-  [string[]]$FlutterArguments = @()
-)
-
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+# Do not turn this entry point into an advanced script. PowerShell common
+# parameter abbreviation would otherwise consume Flutter flags such as `-d`
+# as the script's `-Debug` switch before they reach the routing layer.
+[string[]]$FlutterArguments = @($args | ForEach-Object { [string]$_ })
 
 $processEnvironment = [Collections.Generic.Dictionary[string, string]]::new(
   [StringComparer]::OrdinalIgnoreCase)
