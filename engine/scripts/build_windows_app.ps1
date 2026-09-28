@@ -85,6 +85,9 @@ function Get-AppBundleDirectory {
 
 Push-Location (Get-AppRepositoryRoot)
 try {
+  Invalidate-StaleFlutterWindowsBuildForSdk `
+    -FlutterSdkRoot $flutterRoot `
+    -AppRoot (Get-AppRepositoryRoot) | Out-Null
   foreach ($buildMode in $Mode) {
     $buildVariant = if ($Engine -eq 'local') { $LocalVariant } else { 'stock' }
     $build = Get-BuildLock `

@@ -36,6 +36,9 @@ Assert-UsableEngineArtifacts `
   -Mode debug `
   -Variant patched `
   -OutputDirectory $engineOutput
+Invalidate-StaleFlutterWindowsBuildForSdk `
+  -FlutterSdkRoot $flutterRoot `
+  -AppRoot $repositoryRoot | Out-Null
 Invalidate-StaleFlutterEphemeralEngine `
   -EngineOutputDirectory $engineOutput `
   -AppRoot $repositoryRoot

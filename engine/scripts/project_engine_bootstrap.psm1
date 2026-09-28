@@ -443,6 +443,105 @@ function Assert-KirakaraBootstrapPreflight {
   if ([string]$bootstrap.Value.workspace -ne '.kfe') {
     throw "Unsupported project bootstrap workspace: $($bootstrap.Value.workspace)"
   }
+  $gnProperty = $bootstrap.Value.PSObject.Properties['gn']
+  if ($null -eq $gnProperty -or $gnProperty.Value.schemaVersion -ne 1) {
+    throw 'engine.lock.json has no supported repository-local GN contract.'
+  }
+  $gn = $gnProperty.Value
+  foreach ($property in @(
+      'repository',
+      'revision',
+      'officialBinarySha256'
+    )) {
+    if ([string]::IsNullOrWhiteSpace([string]$gn.$property)) {
+      throw "projectBootstrap.gn.$property must not be empty."
+    }
+  }
+  foreach ($property in @(
+      'officialBinarySha256'
+    )) {
+    if ([string]$gn.$property -notmatch '^[0-9A-F]{64}$') {
+      throw "projectBootstrap.gn.$property is not an uppercase SHA-256 value."
+    }
+  }
+  $sourceFiles = @($gn.sourceFiles)
+  if ($sourceFiles.Count -eq 0) {
+    throw 'projectBootstrap.gn.sourceFiles must not be empty.'
+  }
+  $sourcePaths = [Collections.Generic.HashSet[string]]::new(
+    [StringComparer]::Ordinal)
+  foreach ($sourceFile in $sourceFiles) {
+    if ([string]::IsNullOrWhiteSpace([string]$sourceFile.path) -or
+        [string]$sourceFile.sourceSha256 -notmatch '^[0-9A-F]{64}$' -or
+        [string]$sourceFile.patchedSha256 -notmatch '^[0-9A-F]{64}$') {
+      throw 'projectBootstrap.gn.sourceFiles contains an incomplete entry.'
+    }
+    if (-not $sourcePaths.Add(([string]$sourceFile.path).Replace('\', '/'))) {
+      throw "projectBootstrap.gn.sourceFiles contains a duplicate path: $($sourceFile.path)"
+    }
+  }
+  if ($null -eq $gn.PSObject.Properties['patch'] -or
+      [string]::IsNullOrWhiteSpace([string]$gn.patch.path) -or
+      [string]$gn.patch.sha256 -notmatch '^[0-9A-F]{64}$') {
+    throw 'projectBootstrap.gn.patch is incomplete.'
+  }
+  if (@($gn.compilerFlags).Count -eq 0 -or
+      @($gn.ninjaTargets).Count -eq 0 -or
+      [int]$gn.unitTestCount -lt 1) {
+    throw 'projectBootstrap.gn build and unit-test contract is incomplete.'
+  }
+  $ninjaProperty = $bootstrap.Value.PSObject.Properties['ninja']
+  if ($null -eq $ninjaProperty -or $ninjaProperty.Value.schemaVersion -ne 1) {
+    throw 'engine.lock.json has no supported repository-local Ninja contract.'
+  }
+  $ninja = $ninjaProperty.Value
+  foreach ($property in @(
+      'repository',
+      'revision',
+      'sourceTree',
+      'upstreamVersion',
+      'cipdPackage',
+      'cipdVersion',
+      'cipdInstance',
+      'officialBinarySha256'
+    )) {
+    if ([string]::IsNullOrWhiteSpace([string]$ninja.$property)) {
+      throw "projectBootstrap.ninja.$property must not be empty."
+    }
+  }
+  if ([string]$ninja.revision -notmatch '^[0-9a-f]{40}$' -or
+      [string]$ninja.sourceTree -notmatch '^[0-9a-f]{40}$' -or
+      [string]$ninja.officialBinarySha256 -notmatch '^[0-9A-F]{64}$') {
+    throw 'projectBootstrap.ninja revision, source tree, or binary hash is malformed.'
+  }
+  $ninjaSourceFiles = @($ninja.sourceFiles)
+  if ($ninjaSourceFiles.Count -eq 0) {
+    throw 'projectBootstrap.ninja.sourceFiles must not be empty.'
+  }
+  $ninjaSourcePaths = [Collections.Generic.HashSet[string]]::new(
+    [StringComparer]::Ordinal)
+  foreach ($sourceFile in $ninjaSourceFiles) {
+    if ([string]::IsNullOrWhiteSpace([string]$sourceFile.path) -or
+        [string]$sourceFile.sourceSha256 -notmatch '^[0-9A-F]{64}$' -or
+        [string]$sourceFile.patchedSha256 -notmatch '^[0-9A-F]{64}$') {
+      throw 'projectBootstrap.ninja.sourceFiles contains an incomplete entry.'
+    }
+    if (-not $ninjaSourcePaths.Add(
+        ([string]$sourceFile.path).Replace('\', '/'))) {
+      throw "projectBootstrap.ninja.sourceFiles contains a duplicate path: $($sourceFile.path)"
+    }
+  }
+  if ($null -eq $ninja.PSObject.Properties['patch'] -or
+      [string]::IsNullOrWhiteSpace([string]$ninja.patch.path) -or
+      [string]$ninja.patch.sha256 -notmatch '^[0-9A-F]{64}$') {
+    throw 'projectBootstrap.ninja.patch is incomplete.'
+  }
+  if (@($ninja.compilerFlags).Count -eq 0 -or
+      @($ninja.configureArguments).Count -eq 0 -or
+      @($ninja.ninjaTargets).Count -eq 0 -or
+      [int]$ninja.unitTestCount -lt 1) {
+    throw 'projectBootstrap.ninja build and unit-test contract is incomplete.'
+  }
   $rootPath = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Layout.Root))
   $drive = [IO.DriveInfo]::new($rootPath)
   $minimum = [long]$bootstrap.Value.minimumFreeSpaceBytes
@@ -507,9 +606,26 @@ function Get-KirakaraBootstrapFingerprint {
       $relativeFiles.Add([string]$patch.path)
     }
   }
-  $bootstrapPatch = [string]$Lock.projectBootstrap.vpythonVirtualenv.patch
-  if (-not $relativeFiles.Contains($bootstrapPatch)) {
-    $relativeFiles.Add($bootstrapPatch)
+  foreach ($dependency in @($Lock.projectBootstrap.engineDependencyPatches)) {
+    foreach ($patch in @($dependency.patches)) {
+      if (-not $relativeFiles.Contains([string]$patch.path)) {
+        $relativeFiles.Add([string]$patch.path)
+      }
+    }
+  }
+  foreach ($patch in @($Lock.projectBootstrap.vpythonVirtualenv.patches)) {
+    $bootstrapPatch = [string]$patch.path
+    if (-not $relativeFiles.Contains($bootstrapPatch)) {
+      $relativeFiles.Add($bootstrapPatch)
+    }
+  }
+  $gnPatch = [string]$Lock.projectBootstrap.gn.patch.path
+  if (-not $relativeFiles.Contains($gnPatch)) {
+    $relativeFiles.Add($gnPatch)
+  }
+  $ninjaPatch = [string]$Lock.projectBootstrap.ninja.patch.path
+  if (-not $relativeFiles.Contains($ninjaPatch)) {
+    $relativeFiles.Add($ninjaPatch)
   }
   $fileHashes = [ordered]@{}
   foreach ($relative in @($relativeFiles | Sort-Object)) {
@@ -578,22 +694,31 @@ function Repair-KirakaraVpythonVirtualenv {
   if ($actualHash -eq [string]$contract.patchedSha256) {
     return
   }
+  $patches = @($contract.patches)
+  if ($patches.Count -eq 0 -or
+      [string]$patches[-1].resultSha256 -ne [string]$contract.patchedSha256) {
+    throw 'Pinned vpython compatibility patch chain is incomplete.'
+  }
+  $startIndex = 0
   if ($actualHash -ne [string]$contract.sourceSha256) {
-    throw (
-      "Pinned vpython virtualenv source hash mismatch. Expected " +
-      "$($contract.sourceSha256) or already-patched $($contract.patchedSha256), " +
-      "got ${actualHash}: $target"
-    )
+    $matchedIndex = -1
+    for ($index = 0; $index -lt $patches.Count; $index++) {
+      if ($actualHash -eq [string]$patches[$index].resultSha256) {
+        $matchedIndex = $index
+        break
+      }
+    }
+    if ($matchedIndex -lt 0) {
+      $accepted = @([string]$contract.sourceSha256) + @(
+        $patches | ForEach-Object { [string]$_.resultSha256 })
+      throw (
+        'Pinned vpython virtualenv source hash mismatch. Expected one of ' +
+        "$($accepted -join ', '), got ${actualHash}: $target"
+      )
+    }
+    $startIndex = $matchedIndex + 1
   }
 
-  $patchPath = Join-Path $script:RepositoryRoot ([string]$contract.patch)
-  if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
-    throw "Pinned vpython compatibility patch is missing: $patchPath"
-  }
-  $patchHash = (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash
-  if ($patchHash -ne [string]$contract.patchSha256) {
-    throw "Pinned vpython compatibility patch hash mismatch. Expected $($contract.patchSha256), got $patchHash."
-  }
   $targetDirectory = Split-Path -Parent $target
   $relativeDirectory = [IO.Path]::GetRelativePath(
     $script:RepositoryRoot, $targetDirectory).Replace('\', '/')
@@ -601,22 +726,1495 @@ function Repair-KirakaraVpythonVirtualenv {
       [IO.Path]::IsPathRooted($relativeDirectory)) {
     throw "Refusing to patch vpython outside the App repository: $target"
   }
-  Write-Host (
-    '[Kirakara Engine] Applying the locked Windows code-page fix to the ' +
-    'project-local vpython virtualenv...'
-  )
-  Invoke-CheckedNative git @(
-    '-C', $script:RepositoryRoot,
-    'apply', '--check', "--directory=$relativeDirectory", $patchPath
-  ) 'vpython compatibility patch preflight failed.' | Out-Host
-  Invoke-CheckedNative git @(
-    '-C', $script:RepositoryRoot,
-    'apply', "--directory=$relativeDirectory", $patchPath
-  ) 'Could not apply the vpython compatibility patch.' | Out-Host
-  $patchedHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
-  if ($patchedHash -ne [string]$contract.patchedSha256) {
-    throw "Patched vpython virtualenv hash mismatch. Expected $($contract.patchedSha256), got $patchedHash."
+  for ($index = $startIndex; $index -lt $patches.Count; $index++) {
+    $patch = $patches[$index]
+    $patchPath = Join-Path $script:RepositoryRoot ([string]$patch.path)
+    if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
+      throw "Pinned vpython compatibility patch is missing: $patchPath"
+    }
+    $patchHash = (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash
+    if ($patchHash -ne [string]$patch.sha256) {
+      throw (
+        'Pinned vpython compatibility patch hash mismatch. Expected ' +
+        "$($patch.sha256), got $patchHash."
+      )
+    }
+    Write-Host (
+      '[Kirakara Engine] Applying locked vpython compatibility patch ' +
+      "$($index + 1)/$($patches.Count)...")
+    Invoke-CheckedNative git @(
+      '-C', $script:RepositoryRoot,
+      'apply', '--check', "--directory=$relativeDirectory", $patchPath
+    ) 'vpython compatibility patch preflight failed.' | Out-Host
+    Invoke-CheckedNative git @(
+      '-C', $script:RepositoryRoot,
+      'apply', "--directory=$relativeDirectory", $patchPath
+    ) 'Could not apply the vpython compatibility patch.' | Out-Host
+    $actualHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+    if ($actualHash -ne [string]$patch.resultSha256) {
+      throw (
+        'Patched vpython virtualenv hash mismatch. Expected ' +
+        "$($patch.resultSha256), got $actualHash."
+      )
+    }
   }
+}
+
+function Get-KirakaraGnPaths {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)][string]$Fingerprint
+  )
+
+  $root = Join-Path $Layout.Cache 'gn'
+  return [pscustomobject]@{
+    root = $root
+    source = Join-Path $root 'source'
+    output = Join-Path $root "out\$($Fingerprint.Substring(0, 16))"
+    readyStamp = Join-Path $Layout.State 'gn-ready.json'
+  }
+}
+
+function Get-KirakaraGnFingerprint {
+  param([Parameter(Mandatory = $true)]$Lock)
+
+  $contract = $Lock.projectBootstrap.gn
+  $patchPath = Join-Path $script:RepositoryRoot ([string]$contract.patch.path)
+  if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
+    throw "Pinned GN compatibility patch is missing: $patchPath"
+  }
+  $patchHash = (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash
+  if ($patchHash -ne [string]$contract.patch.sha256) {
+    throw (
+      'Pinned GN compatibility patch hash mismatch. Expected ' +
+      "$($contract.patch.sha256), got $patchHash.")
+  }
+  $modulePath = Join-Path $PSScriptRoot 'project_engine_bootstrap.psm1'
+  $moduleHash = (Get-FileHash -LiteralPath $modulePath -Algorithm SHA256).Hash
+  $inputs = [ordered]@{
+    schemaVersion = 1
+    contract = $contract
+    depotToolsRevision = [string]$Lock.depotTools.revision
+    visualStudioVersion = [string]$Lock.hostBaseline.visualStudioVersion
+    msvcToolsetVersion = [string]$Lock.hostBaseline.msvcToolsetVersion
+    msvcCompilerVersion = [string]$Lock.hostBaseline.msvcCompilerVersion
+    windowsSdkVersion = [string]$Lock.hostBaseline.engineBuildWindowsSdkVersion
+    bootstrapModuleSha256 = $moduleHash
+  }
+  $canonical = $inputs | ConvertTo-Json -Depth 12 -Compress
+  return [pscustomobject]@{
+    value = Get-KirakaraSha256Text -Text $canonical
+    inputs = $inputs
+  }
+}
+
+function Assert-KirakaraPatchedGnSource {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)]$Contract
+  )
+
+  if (-not (Test-Path -LiteralPath (Join-Path $Source '.git'))) {
+    throw "Pinned GN source checkout is missing: $Source"
+  }
+  $head = Get-GitHead $Source
+  if ($head -ne [string]$Contract.revision) {
+    throw "Pinned GN revision mismatch. Expected $($Contract.revision), got $head."
+  }
+  $originOutput = @(& git -C $Source remote get-url origin 2>$null)
+  if ($LASTEXITCODE -ne 0 -or $originOutput.Count -ne 1) {
+    throw "Cannot validate pinned GN origin: $Source"
+  }
+  $origin = ([string]$originOutput[0]).Trim().TrimEnd('/')
+  $expectedOrigin = ([string]$Contract.repository).Trim().TrimEnd('/')
+  if (-not $origin.Equals(
+      $expectedOrigin, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Pinned GN origin mismatch. Expected '$expectedOrigin', got '$origin'."
+  }
+  $autoCrlfOutput = @(& git -C $Source config --local --get core.autocrlf)
+  if ($LASTEXITCODE -ne 0 -or $autoCrlfOutput.Count -ne 1 -or
+      ([string]$autoCrlfOutput[0]).Trim() -cne 'false') {
+    throw 'Pinned GN checkout must set local core.autocrlf=false before checkout.'
+  }
+
+  $sourceFiles = [System.Collections.Generic.List[string]]::new()
+  $expectedChangedFiles = @($Contract.sourceFiles | ForEach-Object {
+      ([string]$_.path).Replace('\', '/')
+    } | Sort-Object)
+  foreach ($entry in @($Contract.sourceFiles)) {
+    $sourceFile = [IO.Path]::GetFullPath(
+      (Join-Path $Source ([string]$entry.path)))
+    if (-not (Test-PathWithin $sourceFile $Source) -or
+        -not (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
+      throw "Pinned GN source file is missing or escapes its checkout: $sourceFile"
+    }
+    $actualHash = (Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash
+    if ($actualHash -ne [string]$entry.patchedSha256) {
+      throw (
+        "Patched GN source hash mismatch for $($entry.path). Expected " +
+        "$($entry.patchedSha256), got $actualHash.")
+    }
+    $sourceFiles.Add($sourceFile)
+  }
+  $changes = @(Get-TrackedGitChanges $Source)
+  $changedFiles = @(& git -C $Source diff --name-only HEAD --)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Cannot enumerate pinned GN changes: $Source"
+  }
+  $changedFiles = @($changedFiles | ForEach-Object {
+      ([string]$_).Trim().Replace('\', '/')
+    } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      Sort-Object)
+  $stagedFiles = @(& git -C $Source diff --cached --name-only HEAD --)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Cannot enumerate staged pinned GN changes: $Source"
+  }
+  $stagedFiles = @($stagedFiles | Where-Object {
+      -not [string]::IsNullOrWhiteSpace([string]$_)
+    })
+  if ($changes.Count -ne $expectedChangedFiles.Count -or
+      $changedFiles.Count -ne $expectedChangedFiles.Count -or
+      @(Compare-Object $expectedChangedFiles $changedFiles -CaseSensitive).Count -ne 0 -or
+      $stagedFiles.Count -ne 0) {
+    throw (
+      'Pinned GN checkout must contain exactly the one locked, unstaged ' +
+      "source patch. Found:`n$($changes -join [Environment]::NewLine)")
+  }
+  & git -C $Source diff --check | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Pinned GN compatibility patch failed git diff --check.'
+  }
+  return @($sourceFiles)
+}
+
+function Initialize-KirakaraPatchedGnSource {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Paths,
+    [Parameter(Mandatory = $true)]$Contract
+  )
+
+  New-Item -ItemType Directory -Path $Paths.root -Force | Out-Null
+  if (Test-Path -LiteralPath (Join-Path $Paths.source '.git')) {
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'config', 'core.autocrlf', 'false'
+    ) 'Could not lock the GN checkout line-ending policy.' | Out-Null
+  }
+  $null = Repair-InterruptedManagedGitCheckout `
+    -Path $Paths.source `
+    -ManagedRoot $Paths.root `
+    -Repository ([string]$Contract.repository) `
+    -Revision ([string]$Contract.revision) `
+    -Label 'project GN source'
+  if (-not (Test-Path -LiteralPath $Paths.source -PathType Container)) {
+    Write-Host '[Kirakara Engine] Cloning the locked GN source into .kfe/cache/gn...'
+    Invoke-CheckedNative git @(
+      'clone', '--filter=blob:none', '--no-checkout',
+      [string]$Contract.repository, $Paths.source
+    ) 'Could not clone the locked GN source.' | Out-Host
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'config', 'core.autocrlf', 'false'
+    ) 'Could not lock the GN checkout line-ending policy.' | Out-Null
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'fetch', 'origin',
+      [string]$Contract.revision
+    ) 'Could not fetch the locked GN revision.' | Out-Host
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'checkout', '--detach',
+      [string]$Contract.revision
+    ) 'Could not check out the locked GN revision.' | Out-Host
+  }
+  $shallowOutput = @(& git -C $Paths.source rev-parse --is-shallow-repository)
+  if ($LASTEXITCODE -ne 0 -or $shallowOutput.Count -ne 1) {
+    throw "Cannot determine whether the pinned GN checkout is shallow: $($Paths.source)"
+  }
+  if (([string]$shallowOutput[0]).Trim() -eq 'true') {
+    Write-Host '[Kirakara Engine] Completing filtered GN commit history for version generation...'
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'fetch', '--unshallow', '--filter=blob:none', 'origin'
+    ) 'Could not complete the pinned GN commit history.' | Out-Host
+  }
+
+  $patchPath = Join-Path $script:RepositoryRoot ([string]$Contract.patch.path)
+  $patchHash = (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash
+  if ($patchHash -ne [string]$Contract.patch.sha256) {
+    throw (
+      'Pinned GN compatibility patch hash mismatch. Expected ' +
+      "$($Contract.patch.sha256), got $patchHash.")
+  }
+  $states = [System.Collections.Generic.List[string]]::new()
+  foreach ($entry in @($Contract.sourceFiles)) {
+    $sourceFile = [IO.Path]::GetFullPath(
+      (Join-Path $Paths.source ([string]$entry.path)))
+    if (-not (Test-PathWithin $sourceFile $Paths.source) -or
+        -not (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
+      throw "Pinned GN source file is missing or escapes its checkout: $sourceFile"
+    }
+    $actualHash = (Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash
+    if ($actualHash -eq [string]$entry.sourceSha256) {
+      $states.Add('stock')
+    } elseif ($actualHash -eq [string]$entry.patchedSha256) {
+      $states.Add('patched')
+    } else {
+      throw (
+        "Pinned GN source file $($entry.path) is neither stock nor the " +
+        "exact locked patch. Expected $($entry.sourceSha256) or " +
+        "$($entry.patchedSha256), got $actualHash.")
+    }
+  }
+  $sourceStates = @($states | Sort-Object -Unique)
+  if ($sourceStates.Count -ne 1) {
+    throw "Pinned GN source files contain a mixed patch state: $($sourceStates -join ', ')."
+  }
+  if ($sourceStates[0] -eq 'stock') {
+    $changes = @(Get-TrackedGitChanges $Paths.source)
+    if ($changes.Count -ne 0) {
+      throw (
+        'Pinned GN source has unrelated tracked changes and will not be ' +
+        "overwritten:`n$($changes -join [Environment]::NewLine)")
+    }
+    Write-Host '[Kirakara Engine] Applying the locked GN Unicode-output patch...'
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'apply', '--check', $patchPath
+    ) 'GN Unicode-output patch preflight failed.' | Out-Host
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'apply', $patchPath
+    ) 'Could not apply the GN Unicode-output patch.' | Out-Host
+  }
+  $null = Assert-KirakaraPatchedGnSource `
+    -Source $Paths.source `
+    -Contract $Contract
+}
+
+function Invoke-KirakaraLoggedProcess {
+  param(
+    [Parameter(Mandatory = $true)][string]$FilePath,
+    [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Arguments,
+    [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+    [Parameter(Mandatory = $true)][string]$StdoutPath,
+    [Parameter(Mandatory = $true)][string]$StderrPath,
+    [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+    [hashtable]$Environment = @{}
+  )
+
+  $startInfo = [Diagnostics.ProcessStartInfo]::new()
+  $startInfo.FileName = $FilePath
+  foreach ($argument in $Arguments) {
+    $startInfo.ArgumentList.Add($argument)
+  }
+  $startInfo.WorkingDirectory = $WorkingDirectory
+  $startInfo.UseShellExecute = $false
+  $startInfo.CreateNoWindow = $true
+  $startInfo.RedirectStandardOutput = $true
+  $startInfo.RedirectStandardError = $true
+  foreach ($entry in $Environment.GetEnumerator()) {
+    $startInfo.Environment[[string]$entry.Key] = [string]$entry.Value
+  }
+  $process = [Diagnostics.Process]::new()
+  $process.StartInfo = $startInfo
+  $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+  try {
+    if (-not $process.Start()) {
+      throw "Could not start process: $FilePath"
+    }
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+    if (-not $completed) {
+      $process.Kill($true)
+    }
+    $process.WaitForExit()
+    $stdout = $stdoutTask.GetAwaiter().GetResult()
+    $stderr = $stderrTask.GetAwaiter().GetResult()
+    $exitCode = if ($completed) { $process.ExitCode } else { $null }
+  } finally {
+    $stopwatch.Stop()
+    $process.Dispose()
+  }
+  $utf8 = [Text.UTF8Encoding]::new($false)
+  [IO.File]::WriteAllText($StdoutPath, $stdout, $utf8)
+  [IO.File]::WriteAllText($StderrPath, $stderr, $utf8)
+  return [pscustomobject]@{
+    completed = $completed
+    exitCode = $exitCode
+    durationMilliseconds = [long]$stopwatch.ElapsedMilliseconds
+    stdout = $stdout
+    stderr = $stderr
+  }
+}
+
+function Get-KirakaraProcessFailureTail {
+  param([AllowEmptyString()][string]$Stdout, [AllowEmptyString()][string]$Stderr)
+
+  return @(
+    (($Stdout + [Environment]::NewLine + $Stderr) -split '\r?\n') |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      Select-Object -Last 40
+  ) -join [Environment]::NewLine
+}
+
+function Test-KirakaraGnReadyStamp {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)]$Lock,
+    [Parameter(Mandatory = $true)]$Fingerprint,
+    [Parameter(Mandatory = $true)][pscustomobject]$Paths
+  )
+
+  if (-not (Test-Path -LiteralPath $Paths.readyStamp -PathType Leaf)) {
+    return [pscustomobject]@{ ready = $false; reason = 'GN ready stamp is missing' }
+  }
+  try {
+    $stamp = Get-Content -Raw -LiteralPath $Paths.readyStamp | ConvertFrom-Json
+    if ($stamp.schemaVersion -ne 1) {
+      throw "unsupported GN ready stamp schema $($stamp.schemaVersion)"
+    }
+    if ([string]$stamp.fingerprint -ne [string]$Fingerprint.value) {
+      throw 'GN bootstrap fingerprint changed'
+    }
+    if ([int]$stamp.unitTestCount -ne
+        [int]$Lock.projectBootstrap.gn.unitTestCount) {
+      throw 'GN unit-test count changed'
+    }
+    $null = Assert-KirakaraPatchedGnSource `
+      -Source $Paths.source `
+      -Contract $Lock.projectBootstrap.gn
+    $binary = [IO.Path]::GetFullPath(
+      (Join-Path $Layout.Root ([string]$stamp.binaryPath)))
+    if (-not (Test-PathWithin $binary $Paths.root) -or
+        -not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+      throw "GN binary is missing or escapes its managed cache: $binary"
+    }
+    $item = Get-Item -LiteralPath $binary
+    if ([long]$item.Length -ne [long]$stamp.binarySize) {
+      throw 'GN binary size changed'
+    }
+    $hash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+    if ($hash -ne [string]$stamp.binarySha256) {
+      throw 'GN binary hash changed'
+    }
+    foreach ($property in 'buildStdout', 'buildStderr', 'testStdout', 'testStderr') {
+      $log = [IO.Path]::GetFullPath(
+        (Join-Path $Layout.Root ([string]$stamp.$property)))
+      if (-not (Test-PathWithin $log $Layout.Logs) -or
+          -not (Test-Path -LiteralPath $log -PathType Leaf)) {
+        throw "GN ready-stamp log is missing or outside .kfe/logs: $property"
+      }
+    }
+    return [pscustomobject]@{
+      ready = $true
+      reason = 'all GN ready-stamp gates passed'
+      binary = $binary
+      binarySha256 = $hash
+      stamp = $stamp
+    }
+  } catch {
+    return [pscustomobject]@{ ready = $false; reason = $_.Exception.Message }
+  }
+}
+
+function Write-KirakaraGnReadyStamp {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)][pscustomobject]$Paths,
+    [Parameter(Mandatory = $true)]$Fingerprint,
+    [Parameter(Mandatory = $true)][string]$Binary,
+    [Parameter(Mandatory = $true)][int]$UnitTestCount,
+    [Parameter(Mandatory = $true)]$BuildResult,
+    [Parameter(Mandatory = $true)]$TestResult,
+    [Parameter(Mandatory = $true)][hashtable]$Logs
+  )
+
+  $binaryItem = Get-Item -LiteralPath $Binary
+  $stamp = [ordered]@{
+    schemaVersion = 1
+    generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    fingerprint = $Fingerprint.value
+    fingerprintInputs = $Fingerprint.inputs
+    binaryPath = [IO.Path]::GetRelativePath(
+      $Layout.Root, $Binary).Replace('\', '/')
+    binarySize = [long]$binaryItem.Length
+    binarySha256 = (Get-FileHash -LiteralPath $Binary -Algorithm SHA256).Hash
+    unitTestCount = $UnitTestCount
+    buildDurationMilliseconds = [long]$BuildResult.durationMilliseconds
+    testDurationMilliseconds = [long]$TestResult.durationMilliseconds
+    buildStdout = [IO.Path]::GetRelativePath(
+      $Layout.Root, $Logs.buildStdout).Replace('\', '/')
+    buildStderr = [IO.Path]::GetRelativePath(
+      $Layout.Root, $Logs.buildStderr).Replace('\', '/')
+    testStdout = [IO.Path]::GetRelativePath(
+      $Layout.Root, $Logs.testStdout).Replace('\', '/')
+    testStderr = [IO.Path]::GetRelativePath(
+      $Layout.Root, $Logs.testStderr).Replace('\', '/')
+  }
+  New-Item -ItemType Directory -Path $Layout.State -Force | Out-Null
+  $temporary = Join-Path $Layout.State (
+    ".gn-ready-$([Guid]::NewGuid().ToString('N')).tmp")
+  try {
+    $stamp | ConvertTo-Json -Depth 14 | Set-Content `
+      -LiteralPath $temporary `
+      -Encoding utf8
+    Move-Item -LiteralPath $temporary -Destination $Paths.readyStamp -Force
+  } finally {
+    if (Test-Path -LiteralPath $temporary -PathType Leaf) {
+      Remove-Item -LiteralPath $temporary -Force
+    }
+  }
+}
+
+function Build-KirakaraPatchedGn {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)]$Lock,
+    [Parameter(Mandatory = $true)][pscustomobject]$Paths,
+    [Parameter(Mandatory = $true)]$Fingerprint,
+    [Parameter(Mandatory = $true)][string]$VisualStudioPath
+  )
+
+  $contract = $Lock.projectBootstrap.gn
+  $null = Assert-KirakaraPatchedGnSource `
+    -Source $Paths.source `
+    -Contract $contract
+  if (Test-Path -LiteralPath $Paths.output) {
+    $output = [IO.Path]::GetFullPath($Paths.output)
+    if (-not (Test-PathWithin $output $Paths.root) -or
+        $output.TrimEnd('\').Equals(
+          ([IO.Path]::GetFullPath($Paths.root)).TrimEnd('\'),
+          [StringComparison]::OrdinalIgnoreCase)) {
+      throw "Refusing to replace an unexpected GN output directory: $output"
+    }
+    Remove-Item -LiteralPath $output -Recurse -Force
+  }
+  New-Item -ItemType Directory -Path $Paths.output -Force | Out-Null
+  New-Item -ItemType Directory -Path $Layout.Logs -Force | Out-Null
+  $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+  $nonce = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+  $logs = @{
+    buildStdout = Join-Path $Layout.Logs "gn-build-$stamp-$nonce.stdout.log"
+    buildStderr = Join-Path $Layout.Logs "gn-build-$stamp-$nonce.stderr.log"
+    testStdout = Join-Path $Layout.Logs "gn-test-$stamp-$nonce.stdout.log"
+    testStderr = Join-Path $Layout.Logs "gn-test-$stamp-$nonce.stderr.log"
+  }
+
+  $vcvars = Join-Path $VisualStudioPath 'VC\Auxiliary\Build\vcvarsall.bat'
+  $python = Join-Path $Layout.DepotTools 'python-bin\python3.bat'
+  $ninja = Join-Path $Layout.DepotTools 'ninja.bat'
+  foreach ($tool in @($vcvars, $python, $ninja)) {
+    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+      throw "GN build tool is missing: $tool"
+    }
+    if ($tool.Contains('"')) {
+      throw "GN build tool path contains an unsupported quote: $tool"
+    }
+  }
+  $toolsetParts = ([string]$Lock.hostBaseline.msvcToolsetVersion).Split('.')
+  if ($toolsetParts.Count -lt 2) {
+    throw 'Pinned MSVC toolset version cannot be converted for vcvarsall.'
+  }
+  $vcvarsToolset = "$($toolsetParts[0]).$($toolsetParts[1])"
+  $compilerFlags = @($contract.compilerFlags) -join ' '
+  $targets = @($contract.ninjaTargets)
+  if (@($targets | Where-Object { [string]$_ -notmatch '^[A-Za-z0-9_.-]+$' }).Count -ne 0) {
+    throw 'Pinned GN Ninja target contains unsupported command characters.'
+  }
+  New-Item -ItemType Directory -Path $Layout.Temp -Force | Out-Null
+  $commandFile = Join-Path $Layout.Temp "gn-build-$nonce.cmd"
+  $commandLines = @(
+    '@echo off',
+    'setlocal',
+    'set "VSCMD_SKIP_SENDTELEMETRY=1"',
+    'call "%KFE_GN_VCVARS%" amd64 %KFE_GN_SDK% -vcvars_ver=%KFE_GN_TOOLSET% >nul',
+    'if errorlevel 1 exit /b %errorlevel%',
+    'set "CL=%KFE_GN_COMPILER_FLAGS%"',
+    'call "%KFE_GN_PYTHON%" "%KFE_GN_SOURCE%\build\gen.py" --out-path="%KFE_GN_OUTPUT%"',
+    'if errorlevel 1 exit /b %errorlevel%',
+    'call "%KFE_GN_NINJA%" -C "%KFE_GN_OUTPUT%" %KFE_GN_TARGETS%',
+    'exit /b %errorlevel%'
+  ) -join "`r`n"
+  [IO.File]::WriteAllText(
+    $commandFile, $commandLines, [Text.Encoding]::ASCII)
+  $buildEnvironment = @{
+    KFE_GN_VCVARS = $vcvars
+    KFE_GN_SDK = [string]$Lock.hostBaseline.engineBuildWindowsSdkVersion
+    KFE_GN_TOOLSET = $vcvarsToolset
+    KFE_GN_COMPILER_FLAGS = $compilerFlags
+    KFE_GN_PYTHON = $python
+    KFE_GN_SOURCE = $Paths.source
+    KFE_GN_OUTPUT = $Paths.output
+    KFE_GN_NINJA = $ninja
+    KFE_GN_TARGETS = $targets -join ' '
+  }
+  Write-Host '[Kirakara Engine] Building the locked GN Unicode-output tool...'
+  try {
+    $buildResult = Invoke-KirakaraLoggedProcess `
+      -FilePath $env:ComSpec `
+      -Arguments @('/d', '/c', 'call', $commandFile) `
+      -WorkingDirectory $Paths.source `
+      -StdoutPath $logs.buildStdout `
+      -StderrPath $logs.buildStderr `
+      -TimeoutSeconds 3600 `
+      -Environment $buildEnvironment
+  } finally {
+    if (Test-Path -LiteralPath $commandFile -PathType Leaf) {
+      Remove-Item -LiteralPath $commandFile -Force
+    }
+  }
+  if (-not $buildResult.completed -or $buildResult.exitCode -ne 0) {
+    $tail = Get-KirakaraProcessFailureTail `
+      -Stdout $buildResult.stdout `
+      -Stderr $buildResult.stderr
+    throw "Locked GN build failed. Logs: $($logs.buildStdout), $($logs.buildStderr)`n$tail"
+  }
+
+  $binary = Join-Path $Paths.output 'gn.exe'
+  $tests = Join-Path $Paths.output 'gn_unittests.exe'
+  foreach ($artifact in @($binary, $tests)) {
+    if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+      throw "Locked GN build did not produce: $artifact"
+    }
+  }
+  # GN's format tests locate golden files relative to the parent of the test
+  # executable, while two upstream utility tests still use narrow temporary
+  # file APIs. Stage only their immutable fixtures under .kfe and give the
+  # test process a disposable ASCII TEMP directory; the GN binary itself is
+  # still built and exercised from the real Unicode repository path.
+  $formatSource = Join-Path $Paths.source 'src\gn\format_test_data'
+  $formatStage = Join-Path (
+    (Split-Path -Parent $Paths.output)) 'src\gn\format_test_data'
+  if (-not (Test-PathWithin $formatStage $Paths.root)) {
+    throw "Refusing to stage GN test data outside its managed cache: $formatStage"
+  }
+  if (Test-Path -LiteralPath $formatStage) {
+    Remove-Item -LiteralPath $formatStage -Recurse -Force
+  }
+  New-Item -ItemType Directory -Path (Split-Path -Parent $formatStage) `
+    -Force | Out-Null
+  Copy-Item -LiteralPath $formatSource -Destination $formatStage -Recurse
+
+  $driveRoot = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($Layout.Root))
+  $testScratchName = "kfe-gn-test-$([Guid]::NewGuid().ToString('N'))"
+  $testScratch = [IO.Path]::GetFullPath((Join-Path $driveRoot $testScratchName))
+  if ($testScratch -match '[^\x00-\x7F]' -or
+      -not ([IO.Path]::GetDirectoryName($testScratch)).TrimEnd('\').Equals(
+        $driveRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) -or
+      (Split-Path -Leaf $testScratch) -cne $testScratchName -or
+      (Test-Path -LiteralPath $testScratch)) {
+    throw "Cannot allocate the exact disposable ASCII GN test root: $testScratch"
+  }
+  $testTemp = Join-Path $testScratch 'temp'
+  New-Item -ItemType Directory -Path $testTemp -Force | Out-Null
+  Write-Host (
+    '[Kirakara Engine] Running all ' +
+    "$($contract.unitTestCount) locked GN unit tests...")
+  try {
+    $testResult = Invoke-KirakaraLoggedProcess `
+      -FilePath $tests `
+      -Arguments @() `
+      -WorkingDirectory $Paths.source `
+      -StdoutPath $logs.testStdout `
+      -StderrPath $logs.testStderr `
+      -TimeoutSeconds 1800 `
+      -Environment @{ TEMP = $testTemp; TMP = $testTemp }
+  } finally {
+    $resolvedScratch = [IO.Path]::GetFullPath($testScratch)
+    if (-not ([IO.Path]::GetDirectoryName($resolvedScratch)).TrimEnd('\').Equals(
+        $driveRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) -or
+        (Split-Path -Leaf $resolvedScratch) -cne $testScratchName) {
+      throw "Refusing to remove an unexpected GN test root: $resolvedScratch"
+    }
+    if (Test-Path -LiteralPath $resolvedScratch) {
+      Remove-Item -LiteralPath $resolvedScratch -Recurse -Force
+    }
+  }
+  $testMatches = @([regex]::Matches(
+      $testResult.stdout,
+      '(?m)^\[(\d+)/(\d+)\]\s'))
+  $totals = @($testMatches | ForEach-Object {
+      [int]$_.Groups[2].Value
+    } | Sort-Object -Unique)
+  $completedTests = if ($testMatches.Count -eq 0) {
+    0
+  } else {
+    [int](($testMatches | ForEach-Object {
+          [int]$_.Groups[1].Value
+        } | Measure-Object -Maximum).Maximum)
+  }
+  if (-not $testResult.completed -or
+      $testResult.exitCode -ne 0 -or
+      $totals.Count -ne 1 -or
+      $totals[0] -ne [int]$contract.unitTestCount -or
+      $completedTests -ne [int]$contract.unitTestCount -or
+      $testResult.stdout -notmatch '(?m)^PASSED\s*$') {
+    $tail = Get-KirakaraProcessFailureTail `
+      -Stdout $testResult.stdout `
+      -Stderr $testResult.stderr
+    throw "Locked GN unit tests failed or were incomplete. Logs: $($logs.testStdout), $($logs.testStderr)`n$tail"
+  }
+  Write-KirakaraGnReadyStamp `
+    -Layout $Layout `
+    -Paths $Paths `
+    -Fingerprint $Fingerprint `
+    -Binary $binary `
+    -UnitTestCount $completedTests `
+    -BuildResult $buildResult `
+    -TestResult $testResult `
+    -Logs $logs
+}
+
+function Get-KirakaraPriorGnHash {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)][pscustomobject]$Paths
+  )
+
+  if (-not (Test-Path -LiteralPath $Paths.readyStamp -PathType Leaf)) {
+    return $null
+  }
+  try {
+    $stamp = Get-Content -Raw -LiteralPath $Paths.readyStamp | ConvertFrom-Json
+    if ($stamp.schemaVersion -ne 1 -or
+        [string]$stamp.binarySha256 -notmatch '^[0-9A-F]{64}$') {
+      return $null
+    }
+    $binary = [IO.Path]::GetFullPath(
+      (Join-Path $Layout.Root ([string]$stamp.binaryPath)))
+    if (-not (Test-PathWithin $binary $Paths.root) -or
+        -not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+      return $null
+    }
+    $hash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+    if ($hash -eq [string]$stamp.binarySha256) {
+      return $hash
+    }
+  } catch {
+    return $null
+  }
+  return $null
+}
+
+function Install-KirakaraPatchedGn {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)]$Contract,
+    [Parameter(Mandatory = $true)][string]$Binary,
+    [AllowNull()][string]$PriorBinarySha256
+  )
+
+  $target = Join-Path $Layout.EngineSource 'flutter\third_party\gn\gn.exe'
+  if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+    throw "Engine dependency checkout is missing the official GN binary: $target"
+  }
+  $customHash = (Get-FileHash -LiteralPath $Binary -Algorithm SHA256).Hash
+  $targetHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+  if ($targetHash -eq $customHash) {
+    return $customHash
+  }
+  $accepted = @(
+    [string]$Contract.officialBinarySha256,
+    $customHash,
+    $PriorBinarySha256
+  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+    Sort-Object -Unique
+  if ($targetHash -notin $accepted) {
+    throw (
+      'Refusing to replace an unknown Engine GN binary. Expected the locked ' +
+      "official or previously verified local hash, got ${targetHash}: $target")
+  }
+  $targetItem = Get-Item -LiteralPath $target -Force
+  $wasReadOnly = $targetItem.IsReadOnly
+  try {
+    if ($wasReadOnly) {
+      $targetItem.IsReadOnly = $false
+    }
+    Copy-Item -LiteralPath $Binary -Destination $target -Force
+  } finally {
+    if ($wasReadOnly -and (Test-Path -LiteralPath $target -PathType Leaf)) {
+      (Get-Item -LiteralPath $target -Force).IsReadOnly = $true
+    }
+  }
+  $installedHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+  if ($installedHash -ne $customHash) {
+    throw "Installed GN hash mismatch. Expected $customHash, got $installedHash."
+  }
+  return $installedHash
+}
+
+function Ensure-KirakaraPatchedGn {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)]$Lock,
+    [Parameter(Mandatory = $true)][string]$VisualStudioPath
+  )
+
+  $fingerprint = Get-KirakaraGnFingerprint -Lock $Lock
+  $paths = Get-KirakaraGnPaths `
+    -Layout $Layout `
+    -Fingerprint $fingerprint.value
+  $priorHash = Get-KirakaraPriorGnHash -Layout $Layout -Paths $paths
+  $ready = Test-KirakaraGnReadyStamp `
+    -Layout $Layout `
+    -Lock $Lock `
+    -Fingerprint $fingerprint `
+    -Paths $paths
+  if (-not $ready.ready) {
+    Write-Host "[Kirakara Engine] GN cache is not reusable: $($ready.reason)"
+    Initialize-KirakaraPatchedGnSource `
+      -Paths $paths `
+      -Contract $Lock.projectBootstrap.gn
+    Build-KirakaraPatchedGn `
+      -Layout $Layout `
+      -Lock $Lock `
+      -Paths $paths `
+      -Fingerprint $fingerprint `
+      -VisualStudioPath $VisualStudioPath
+    $ready = Test-KirakaraGnReadyStamp `
+      -Layout $Layout `
+      -Lock $Lock `
+      -Fingerprint $fingerprint `
+      -Paths $paths
+    if (-not $ready.ready) {
+      throw "New GN ready stamp failed its own reuse gate: $($ready.reason)"
+    }
+  } else {
+    Write-Host (
+      '[Kirakara Engine] Reusing the verified GN Unicode-output tool ' +
+      "($($fingerprint.value.Substring(0, 12))).")
+  }
+  $installedHash = Install-KirakaraPatchedGn `
+    -Layout $Layout `
+    -Contract $Lock.projectBootstrap.gn `
+    -Binary $ready.binary `
+    -PriorBinarySha256 $priorHash
+  Write-Host "[Kirakara Engine] Verified repository-local GN: $($installedHash.Substring(0, 12))."
+}
+
+function Get-KirakaraNinjaPaths {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)][string]$Fingerprint
+  )
+
+  $root = Join-Path $Layout.Cache 'ninja'
+  return [pscustomobject]@{
+    root = $root
+    source = Join-Path $root 'source'
+    output = Join-Path $root "out\$($Fingerprint.Substring(0, 16))"
+    readyStamp = Join-Path $Layout.State 'ninja-ready.json'
+  }
+}
+
+function Get-KirakaraNinjaFingerprint {
+  param([Parameter(Mandatory = $true)]$Lock)
+
+  $contract = $Lock.projectBootstrap.ninja
+  $patchPath = Join-Path $script:RepositoryRoot ([string]$contract.patch.path)
+  if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
+    throw "Pinned Ninja compatibility patch is missing: $patchPath"
+  }
+  $patchHash = (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash
+  if ($patchHash -ne [string]$contract.patch.sha256) {
+    throw (
+      'Pinned Ninja compatibility patch hash mismatch. Expected ' +
+      "$($contract.patch.sha256), got $patchHash.")
+  }
+  $modulePath = Join-Path $PSScriptRoot 'project_engine_bootstrap.psm1'
+  $moduleHash = (Get-FileHash -LiteralPath $modulePath -Algorithm SHA256).Hash
+  $inputs = [ordered]@{
+    schemaVersion = 1
+    contract = $contract
+    depotToolsRevision = [string]$Lock.depotTools.revision
+    visualStudioVersion = [string]$Lock.hostBaseline.visualStudioVersion
+    msvcToolsetVersion = [string]$Lock.hostBaseline.msvcToolsetVersion
+    msvcCompilerVersion = [string]$Lock.hostBaseline.msvcCompilerVersion
+    windowsSdkVersion = [string]$Lock.hostBaseline.engineBuildWindowsSdkVersion
+    bootstrapModuleSha256 = $moduleHash
+  }
+  $canonical = $inputs | ConvertTo-Json -Depth 12 -Compress
+  return [pscustomobject]@{
+    value = Get-KirakaraSha256Text -Text $canonical
+    inputs = $inputs
+  }
+}
+
+function Assert-KirakaraPatchedNinjaSource {
+  param(
+    [Parameter(Mandatory = $true)][string]$Source,
+    [Parameter(Mandatory = $true)]$Contract
+  )
+
+  if (-not (Test-Path -LiteralPath (Join-Path $Source '.git'))) {
+    throw "Pinned Ninja source checkout is missing: $Source"
+  }
+  $head = Get-GitHead $Source
+  if ($head -ne [string]$Contract.revision) {
+    throw "Pinned Ninja revision mismatch. Expected $($Contract.revision), got $head."
+  }
+  $tree = Get-GitTree $Source
+  if ($tree -ne [string]$Contract.sourceTree) {
+    throw "Pinned Ninja source tree mismatch. Expected $($Contract.sourceTree), got $tree."
+  }
+  $originOutput = @(& git -C $Source remote get-url origin 2>$null)
+  if ($LASTEXITCODE -ne 0 -or $originOutput.Count -ne 1) {
+    throw "Cannot validate pinned Ninja origin: $Source"
+  }
+  $origin = ([string]$originOutput[0]).Trim().TrimEnd('/')
+  $expectedOrigin = ([string]$Contract.repository).Trim().TrimEnd('/')
+  if (-not $origin.Equals(
+      $expectedOrigin, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Pinned Ninja origin mismatch. Expected '$expectedOrigin', got '$origin'."
+  }
+  $autoCrlfOutput = @(& git -C $Source config --local --get core.autocrlf)
+  if ($LASTEXITCODE -ne 0 -or $autoCrlfOutput.Count -ne 1 -or
+      ([string]$autoCrlfOutput[0]).Trim() -cne 'false') {
+    throw 'Pinned Ninja checkout must set local core.autocrlf=false before checkout.'
+  }
+
+  $sourceFiles = [System.Collections.Generic.List[string]]::new()
+  $expectedChangedFiles = @($Contract.sourceFiles | ForEach-Object {
+      ([string]$_.path).Replace('\', '/')
+    } | Sort-Object)
+  foreach ($entry in @($Contract.sourceFiles)) {
+    $sourceFile = [IO.Path]::GetFullPath(
+      (Join-Path $Source ([string]$entry.path)))
+    if (-not (Test-PathWithin $sourceFile $Source) -or
+        -not (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
+      throw "Pinned Ninja source file is missing or escapes its checkout: $sourceFile"
+    }
+    $actualHash = (Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash
+    if ($actualHash -ne [string]$entry.patchedSha256) {
+      throw (
+        "Patched Ninja source hash mismatch for $($entry.path). Expected " +
+        "$($entry.patchedSha256), got $actualHash.")
+    }
+    $sourceFiles.Add($sourceFile)
+  }
+  $changes = @(Get-TrackedGitChanges $Source)
+  $changedFiles = @(& git -C $Source diff --name-only HEAD --)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Cannot enumerate pinned Ninja changes: $Source"
+  }
+  $changedFiles = @($changedFiles | ForEach-Object {
+      ([string]$_).Trim().Replace('\', '/')
+    } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      Sort-Object)
+  $stagedFiles = @(& git -C $Source diff --cached --name-only HEAD --)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Cannot enumerate staged pinned Ninja changes: $Source"
+  }
+  $stagedFiles = @($stagedFiles | Where-Object {
+      -not [string]::IsNullOrWhiteSpace([string]$_)
+    })
+  if ($changes.Count -ne $expectedChangedFiles.Count -or
+      $changedFiles.Count -ne $expectedChangedFiles.Count -or
+      @(Compare-Object $expectedChangedFiles $changedFiles -CaseSensitive).Count -ne 0 -or
+      $stagedFiles.Count -ne 0) {
+    throw (
+      'Pinned Ninja checkout must contain exactly the one locked, unstaged ' +
+      "source patch. Found:`n$($changes -join [Environment]::NewLine)")
+  }
+  & git -C $Source diff --check | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Pinned Ninja compatibility patch failed git diff --check.'
+  }
+  return @($sourceFiles)
+}
+
+function Initialize-KirakaraPatchedNinjaSource {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Paths,
+    [Parameter(Mandatory = $true)]$Contract
+  )
+
+  New-Item -ItemType Directory -Path $Paths.root -Force | Out-Null
+  if (Test-Path -LiteralPath (Join-Path $Paths.source '.git')) {
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'config', 'core.autocrlf', 'false'
+    ) 'Could not lock the Ninja checkout line-ending policy.' | Out-Null
+  }
+  $null = Repair-InterruptedManagedGitCheckout `
+    -Path $Paths.source `
+    -ManagedRoot $Paths.root `
+    -Repository ([string]$Contract.repository) `
+    -Revision ([string]$Contract.revision) `
+    -Label 'project Ninja source'
+  if (-not (Test-Path -LiteralPath $Paths.source -PathType Container)) {
+    Write-Host '[Kirakara Engine] Cloning the locked Ninja source into .kfe/cache/ninja...'
+    Invoke-CheckedNative git @(
+      'clone', '--filter=blob:none', '--no-checkout',
+      [string]$Contract.repository, $Paths.source
+    ) 'Could not clone the locked Ninja source.' | Out-Host
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'config', 'core.autocrlf', 'false'
+    ) 'Could not lock the Ninja checkout line-ending policy.' | Out-Null
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'fetch', '--depth=1', 'origin',
+      [string]$Contract.revision
+    ) 'Could not fetch the locked Ninja revision.' | Out-Host
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'checkout', '--detach',
+      [string]$Contract.revision
+    ) 'Could not check out the locked Ninja revision.' | Out-Host
+  }
+
+  $patchPath = Join-Path $script:RepositoryRoot ([string]$Contract.patch.path)
+  $patchHash = (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash
+  if ($patchHash -ne [string]$Contract.patch.sha256) {
+    throw (
+      'Pinned Ninja compatibility patch hash mismatch. Expected ' +
+      "$($Contract.patch.sha256), got $patchHash.")
+  }
+  $states = [System.Collections.Generic.List[string]]::new()
+  foreach ($entry in @($Contract.sourceFiles)) {
+    $sourceFile = [IO.Path]::GetFullPath(
+      (Join-Path $Paths.source ([string]$entry.path)))
+    if (-not (Test-PathWithin $sourceFile $Paths.source) -or
+        -not (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
+      throw "Pinned Ninja source file is missing or escapes its checkout: $sourceFile"
+    }
+    $actualHash = (Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash
+    if ($actualHash -eq [string]$entry.sourceSha256) {
+      $states.Add('stock')
+    } elseif ($actualHash -eq [string]$entry.patchedSha256) {
+      $states.Add('patched')
+    } else {
+      throw (
+        "Pinned Ninja source file $($entry.path) is neither stock nor the " +
+        "exact locked patch. Expected $($entry.sourceSha256) or " +
+        "$($entry.patchedSha256), got $actualHash.")
+    }
+  }
+  $sourceStates = @($states | Sort-Object -Unique)
+  if ($sourceStates.Count -ne 1) {
+    throw "Pinned Ninja source files contain a mixed patch state: $($sourceStates -join ', ')."
+  }
+  if ($sourceStates[0] -eq 'stock') {
+    $changes = @(Get-TrackedGitChanges $Paths.source)
+    if ($changes.Count -ne 0) {
+      throw (
+        'Pinned Ninja source has unrelated tracked changes and will not be ' +
+        "overwritten:`n$($changes -join [Environment]::NewLine)")
+    }
+    Write-Host '[Kirakara Engine] Applying the locked Ninja Unicode-process patch...'
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'apply', '--check', $patchPath
+    ) 'Ninja Unicode-process patch preflight failed.' | Out-Host
+    Invoke-CheckedNative git @(
+      '-C', $Paths.source, 'apply', $patchPath
+    ) 'Could not apply the Ninja Unicode-process patch.' | Out-Host
+  }
+  $null = Assert-KirakaraPatchedNinjaSource `
+    -Source $Paths.source `
+    -Contract $Contract
+}
+
+function Test-KirakaraNinjaReadyStamp {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)]$Lock,
+    [Parameter(Mandatory = $true)]$Fingerprint,
+    [Parameter(Mandatory = $true)][pscustomobject]$Paths
+  )
+
+  if (-not (Test-Path -LiteralPath $Paths.readyStamp -PathType Leaf)) {
+    return [pscustomobject]@{ ready = $false; reason = 'Ninja ready stamp is missing' }
+  }
+  try {
+    $stamp = Get-Content -Raw -LiteralPath $Paths.readyStamp | ConvertFrom-Json
+    if ($stamp.schemaVersion -ne 1) {
+      throw "unsupported Ninja ready stamp schema $($stamp.schemaVersion)"
+    }
+    if ([string]$stamp.fingerprint -ne [string]$Fingerprint.value) {
+      throw 'Ninja bootstrap fingerprint changed'
+    }
+    if ([int]$stamp.unitTestCount -ne
+        [int]$Lock.projectBootstrap.ninja.unitTestCount) {
+      throw 'Ninja unit-test count changed'
+    }
+    if ([string]$stamp.version -ne
+        [string]$Lock.projectBootstrap.ninja.upstreamVersion) {
+      throw 'Ninja version changed'
+    }
+    $null = Assert-KirakaraPatchedNinjaSource `
+      -Source $Paths.source `
+      -Contract $Lock.projectBootstrap.ninja
+    $binary = [IO.Path]::GetFullPath(
+      (Join-Path $Layout.Root ([string]$stamp.binaryPath)))
+    if (-not (Test-PathWithin $binary $Paths.root) -or
+        -not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+      throw "Ninja binary is missing or escapes its managed cache: $binary"
+    }
+    $item = Get-Item -LiteralPath $binary
+    if ([long]$item.Length -ne [long]$stamp.binarySize) {
+      throw 'Ninja binary size changed'
+    }
+    $hash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+    if ($hash -ne [string]$stamp.binarySha256) {
+      throw 'Ninja binary hash changed'
+    }
+    $versionOutput = @(& $binary --version 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $versionOutput.Count -ne 1 -or
+        ([string]$versionOutput[0]).Trim() -ne [string]$stamp.version) {
+      throw 'Ninja binary version probe failed'
+    }
+    foreach ($property in 'buildStdout', 'buildStderr', 'testStdout', 'testStderr') {
+      $log = [IO.Path]::GetFullPath(
+        (Join-Path $Layout.Root ([string]$stamp.$property)))
+      if (-not (Test-PathWithin $log $Layout.Logs) -or
+          -not (Test-Path -LiteralPath $log -PathType Leaf)) {
+        throw "Ninja ready-stamp log is missing or outside .kfe/logs: $property"
+      }
+    }
+    return [pscustomobject]@{
+      ready = $true
+      reason = 'all Ninja ready-stamp gates passed'
+      binary = $binary
+      binarySha256 = $hash
+      stamp = $stamp
+    }
+  } catch {
+    return [pscustomobject]@{ ready = $false; reason = $_.Exception.Message }
+  }
+}
+
+function Write-KirakaraNinjaReadyStamp {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)][pscustomobject]$Paths,
+    [Parameter(Mandatory = $true)]$Fingerprint,
+    [Parameter(Mandatory = $true)][string]$Binary,
+    [Parameter(Mandatory = $true)][string]$Version,
+    [Parameter(Mandatory = $true)][int]$UnitTestCount,
+    [Parameter(Mandatory = $true)]$BuildResult,
+    [Parameter(Mandatory = $true)]$TestResult,
+    [Parameter(Mandatory = $true)][hashtable]$Logs
+  )
+
+  $binaryItem = Get-Item -LiteralPath $Binary
+  $stamp = [ordered]@{
+    schemaVersion = 1
+    generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    fingerprint = $Fingerprint.value
+    fingerprintInputs = $Fingerprint.inputs
+    binaryPath = [IO.Path]::GetRelativePath(
+      $Layout.Root, $Binary).Replace('\', '/')
+    binarySize = [long]$binaryItem.Length
+    binarySha256 = (Get-FileHash -LiteralPath $Binary -Algorithm SHA256).Hash
+    version = $Version
+    unitTestCount = $UnitTestCount
+    buildDurationMilliseconds = [long]$BuildResult.durationMilliseconds
+    testDurationMilliseconds = [long]$TestResult.durationMilliseconds
+    buildStdout = [IO.Path]::GetRelativePath(
+      $Layout.Root, $Logs.buildStdout).Replace('\', '/')
+    buildStderr = [IO.Path]::GetRelativePath(
+      $Layout.Root, $Logs.buildStderr).Replace('\', '/')
+    testStdout = [IO.Path]::GetRelativePath(
+      $Layout.Root, $Logs.testStdout).Replace('\', '/')
+    testStderr = [IO.Path]::GetRelativePath(
+      $Layout.Root, $Logs.testStderr).Replace('\', '/')
+  }
+  New-Item -ItemType Directory -Path $Layout.State -Force | Out-Null
+  $temporary = Join-Path $Layout.State (
+    ".ninja-ready-$([Guid]::NewGuid().ToString('N')).tmp")
+  try {
+    $stamp | ConvertTo-Json -Depth 14 | Set-Content `
+      -LiteralPath $temporary `
+      -Encoding utf8
+    Move-Item -LiteralPath $temporary -Destination $Paths.readyStamp -Force
+  } finally {
+    if (Test-Path -LiteralPath $temporary -PathType Leaf) {
+      Remove-Item -LiteralPath $temporary -Force
+    }
+  }
+}
+
+function Build-KirakaraPatchedNinja {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)]$Lock,
+    [Parameter(Mandatory = $true)][pscustomobject]$Paths,
+    [Parameter(Mandatory = $true)]$Fingerprint,
+    [Parameter(Mandatory = $true)][string]$VisualStudioPath
+  )
+
+  $contract = $Lock.projectBootstrap.ninja
+  $null = Assert-KirakaraPatchedNinjaSource `
+    -Source $Paths.source `
+    -Contract $contract
+  if (Test-Path -LiteralPath $Paths.output) {
+    $output = [IO.Path]::GetFullPath($Paths.output)
+    if (-not (Test-PathWithin $output $Paths.root) -or
+        $output.TrimEnd('\').Equals(
+          ([IO.Path]::GetFullPath($Paths.root)).TrimEnd('\'),
+          [StringComparison]::OrdinalIgnoreCase)) {
+      throw "Refusing to replace an unexpected Ninja output directory: $output"
+    }
+    Remove-Item -LiteralPath $output -Recurse -Force
+  }
+  New-Item -ItemType Directory -Path $Paths.output -Force | Out-Null
+  $buildSource = Join-Path $Paths.output 'source'
+  New-Item -ItemType Directory -Path $buildSource -Force | Out-Null
+  $trackedFiles = @(& git -C $Paths.source ls-files)
+  if ($LASTEXITCODE -ne 0 -or $trackedFiles.Count -eq 0) {
+    throw "Cannot enumerate the locked Ninja source files: $($Paths.source)"
+  }
+  foreach ($relativeFile in $trackedFiles) {
+    $relative = ([string]$relativeFile).Trim().Replace('/', '\')
+    $sourceFile = [IO.Path]::GetFullPath((Join-Path $Paths.source $relative))
+    $destination = [IO.Path]::GetFullPath((Join-Path $buildSource $relative))
+    if (-not (Test-PathWithin $sourceFile $Paths.source) -or
+        -not (Test-PathWithin $destination $buildSource) -or
+        -not (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
+      throw "Refusing to stage an invalid Ninja source path: $relativeFile"
+    }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $destination) `
+      -Force | Out-Null
+    Copy-Item -LiteralPath $sourceFile -Destination $destination -Force
+  }
+  New-Item -ItemType Directory -Path $Layout.Logs -Force | Out-Null
+  $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+  $nonce = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+  $logs = @{
+    buildStdout = Join-Path $Layout.Logs "ninja-build-$stamp-$nonce.stdout.log"
+    buildStderr = Join-Path $Layout.Logs "ninja-build-$stamp-$nonce.stderr.log"
+    testStdout = Join-Path $Layout.Logs "ninja-test-$stamp-$nonce.stdout.log"
+    testStderr = Join-Path $Layout.Logs "ninja-test-$stamp-$nonce.stderr.log"
+  }
+
+  $vcvars = Join-Path $VisualStudioPath 'VC\Auxiliary\Build\vcvarsall.bat'
+  $python = Join-Path $Layout.DepotTools 'python-bin\python3.bat'
+  foreach ($tool in @($vcvars, $python)) {
+    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+      throw "Ninja build tool is missing: $tool"
+    }
+    if ($tool.Contains('"')) {
+      throw "Ninja build tool path contains an unsupported quote: $tool"
+    }
+  }
+  $toolsetParts = ([string]$Lock.hostBaseline.msvcToolsetVersion).Split('.')
+  if ($toolsetParts.Count -lt 2) {
+    throw 'Pinned MSVC toolset version cannot be converted for vcvarsall.'
+  }
+  $vcvarsToolset = "$($toolsetParts[0]).$($toolsetParts[1])"
+  $compilerFlags = @($contract.compilerFlags) -join ' '
+  $configureArguments = @($contract.configureArguments)
+  if (@($configureArguments | Where-Object {
+        [string]$_ -notmatch '^--[A-Za-z0-9-]+$'
+      }).Count -ne 0) {
+    throw 'Pinned Ninja configure argument contains unsupported command characters.'
+  }
+  $targets = @($contract.ninjaTargets)
+  if (@($targets | Where-Object {
+        [string]$_ -notmatch '^[A-Za-z0-9_.-]+$'
+      }).Count -ne 0) {
+    throw 'Pinned Ninja build target contains unsupported command characters.'
+  }
+  foreach ($path in @($Paths.source, $Paths.output, $buildSource)) {
+    if ($path.Contains('"')) {
+      throw "Ninja build path contains an unsupported quote: $path"
+    }
+  }
+  New-Item -ItemType Directory -Path $Layout.Temp -Force | Out-Null
+  $commandFile = Join-Path $Layout.Temp "ninja-build-$nonce.cmd"
+  $commandLines = @(
+    '@echo off',
+    'setlocal',
+    'set "VSCMD_SKIP_SENDTELEMETRY=1"',
+    'call "%KFE_NINJA_VCVARS%" amd64 %KFE_NINJA_SDK% -vcvars_ver=%KFE_NINJA_TOOLSET% >nul',
+    'if errorlevel 1 exit /b %errorlevel%',
+    'set "CL=%KFE_NINJA_COMPILER_FLAGS%"',
+    'cd /d "%KFE_NINJA_OUTPUT%"',
+    'call "%KFE_NINJA_PYTHON%" "%KFE_NINJA_SOURCE%\configure.py" %KFE_NINJA_CONFIGURE_ARGUMENTS%',
+    'if errorlevel 1 exit /b %errorlevel%',
+    'call "%KFE_NINJA_OUTPUT%\ninja.exe" %KFE_NINJA_TARGETS%',
+    'exit /b %errorlevel%'
+  ) -join "`r`n"
+  [IO.File]::WriteAllText(
+    $commandFile, $commandLines, [Text.Encoding]::ASCII)
+  $buildEnvironment = @{
+    KFE_NINJA_VCVARS = $vcvars
+    KFE_NINJA_SDK = [string]$Lock.hostBaseline.engineBuildWindowsSdkVersion
+    KFE_NINJA_TOOLSET = $vcvarsToolset
+    KFE_NINJA_COMPILER_FLAGS = $compilerFlags
+    KFE_NINJA_PYTHON = $python
+    KFE_NINJA_SOURCE = $buildSource
+    KFE_NINJA_OUTPUT = $buildSource
+    KFE_NINJA_CONFIGURE_ARGUMENTS = $configureArguments -join ' '
+    KFE_NINJA_TARGETS = $targets -join ' '
+    PYTHONUTF8 = '1'
+    PYTHONIOENCODING = 'utf-8'
+  }
+  Write-Host '[Kirakara Engine] Building the locked Ninja Unicode-process tool...'
+  try {
+    $buildResult = Invoke-KirakaraLoggedProcess `
+      -FilePath $env:ComSpec `
+      -Arguments @('/d', '/c', 'call', $commandFile) `
+      -WorkingDirectory $buildSource `
+      -StdoutPath $logs.buildStdout `
+      -StderrPath $logs.buildStderr `
+      -TimeoutSeconds 3600 `
+      -Environment $buildEnvironment
+  } finally {
+    if (Test-Path -LiteralPath $commandFile -PathType Leaf) {
+      Remove-Item -LiteralPath $commandFile -Force
+    }
+  }
+  if (-not $buildResult.completed -or $buildResult.exitCode -ne 0) {
+    $tail = Get-KirakaraProcessFailureTail `
+      -Stdout $buildResult.stdout `
+      -Stderr $buildResult.stderr
+    throw "Locked Ninja build failed. Logs: $($logs.buildStdout), $($logs.buildStderr)`n$tail"
+  }
+
+  $binary = Join-Path $buildSource 'ninja.exe'
+  $tests = Join-Path $buildSource 'ninja_test.exe'
+  foreach ($artifact in @($binary, $tests)) {
+    if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+      throw "Locked Ninja build did not produce: $artifact"
+    }
+  }
+  $versionOutput = @(& $binary --version 2>$null)
+  if ($LASTEXITCODE -ne 0 -or $versionOutput.Count -ne 1) {
+    throw "Locked Ninja version probe failed: $binary"
+  }
+  $version = ([string]$versionOutput[0]).Trim()
+  if ($version -ne [string]$contract.upstreamVersion) {
+    throw "Locked Ninja version mismatch. Expected $($contract.upstreamVersion), got $version."
+  }
+
+  Write-Host (
+    '[Kirakara Engine] Running all ' +
+    "$($contract.unitTestCount) locked Ninja unit tests...")
+  $testResult = Invoke-KirakaraLoggedProcess `
+    -FilePath $tests `
+    -Arguments @() `
+    -WorkingDirectory $buildSource `
+    -StdoutPath $logs.testStdout `
+    -StderrPath $logs.testStderr `
+    -TimeoutSeconds 1800
+  $testMatches = @([regex]::Matches(
+      $testResult.stdout,
+      '(?m)^\[(\d+)/(\d+)\]\s'))
+  $totals = @($testMatches | ForEach-Object {
+      [int]$_.Groups[2].Value
+    } | Sort-Object -Unique)
+  $completedTests = if ($testMatches.Count -eq 0) {
+    0
+  } else {
+    [int](($testMatches | ForEach-Object {
+          [int]$_.Groups[1].Value
+        } | Measure-Object -Maximum).Maximum)
+  }
+  if (-not $testResult.completed -or
+      $testResult.exitCode -ne 0 -or
+      $totals.Count -ne 1 -or
+      $totals[0] -ne [int]$contract.unitTestCount -or
+      $completedTests -ne [int]$contract.unitTestCount -or
+      $testResult.stdout -notmatch '(?m)^passed\s*$' -or
+      $testResult.stdout -notmatch '(?m)^\[\d+/\d+\]\s+SubprocessTest\.UnicodeCommandLine\s*$') {
+    $tail = Get-KirakaraProcessFailureTail `
+      -Stdout $testResult.stdout `
+      -Stderr $testResult.stderr
+    throw "Locked Ninja unit tests failed or were incomplete. Logs: $($logs.testStdout), $($logs.testStderr)`n$tail"
+  }
+  Write-KirakaraNinjaReadyStamp `
+    -Layout $Layout `
+    -Paths $Paths `
+    -Fingerprint $Fingerprint `
+    -Binary $binary `
+    -Version $version `
+    -UnitTestCount $completedTests `
+    -BuildResult $buildResult `
+    -TestResult $testResult `
+    -Logs $logs
+}
+
+function Get-KirakaraPriorNinjaHash {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)][pscustomobject]$Paths
+  )
+
+  if (-not (Test-Path -LiteralPath $Paths.readyStamp -PathType Leaf)) {
+    return $null
+  }
+  try {
+    $stamp = Get-Content -Raw -LiteralPath $Paths.readyStamp | ConvertFrom-Json
+    if ($stamp.schemaVersion -ne 1 -or
+        [string]$stamp.binarySha256 -notmatch '^[0-9A-F]{64}$') {
+      return $null
+    }
+    $binary = [IO.Path]::GetFullPath(
+      (Join-Path $Layout.Root ([string]$stamp.binaryPath)))
+    if (-not (Test-PathWithin $binary $Paths.root) -or
+        -not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+      return $null
+    }
+    $hash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+    if ($hash -eq [string]$stamp.binarySha256) {
+      return $hash
+    }
+  } catch {
+    return $null
+  }
+  return $null
+}
+
+function Assert-KirakaraNinjaDependencyPin {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)]$Contract
+  )
+
+  $depsPath = Join-Path $Layout.FlutterCheckout 'DEPS'
+  if (-not (Test-Path -LiteralPath $depsPath -PathType Leaf)) {
+    throw "Engine DEPS file is missing while validating Ninja: $depsPath"
+  }
+  $deps = Get-Content -Raw -LiteralPath $depsPath
+  $packagePrefix = ([string]$Contract.cipdPackage) -replace '/windows-amd64$', ''
+  if (-not $deps.Contains("'$packagePrefix/`${{platform}}'") -or
+      -not $deps.Contains("'$([string]$Contract.cipdVersion)'")) {
+    throw (
+      'Engine Ninja CIPD pin does not match engine.lock.json. Expected ' +
+      "$packagePrefix/`${{platform}} at $($Contract.cipdVersion).")
+  }
+
+  $packageRoot = Join-Path $Layout.FlutterCheckout '.cipd\pkgs'
+  if (-not (Test-Path -LiteralPath $packageRoot -PathType Container)) {
+    throw "Engine CIPD package metadata is missing: $packageRoot"
+  }
+  $matches = @()
+  foreach ($directory in @(Get-ChildItem -LiteralPath $packageRoot -Directory)) {
+    $descriptionPath = Join-Path $directory.FullName 'description.json'
+    $currentPath = Join-Path $directory.FullName '_current.txt'
+    if (-not (Test-Path -LiteralPath $descriptionPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $currentPath -PathType Leaf)) {
+      continue
+    }
+    try {
+      $description = Get-Content -Raw -LiteralPath $descriptionPath |
+        ConvertFrom-Json
+    } catch {
+      continue
+    }
+    if ([string]$description.package_name -eq [string]$Contract.cipdPackage -and
+        [string]$description.subdir -eq 'third_party/ninja') {
+      $matches += [pscustomobject]@{
+        directory = $directory.FullName
+        instance = (Get-Content -Raw -LiteralPath $currentPath).Trim()
+      }
+    }
+  }
+  if ($matches.Count -ne 1 -or
+      [string]$matches[0].instance -ne [string]$Contract.cipdInstance) {
+    $found = if ($matches.Count -eq 0) {
+      '<none>'
+    } else {
+      @($matches | ForEach-Object { [string]$_.instance }) -join ', '
+    }
+    throw (
+      'Engine Ninja CIPD instance mismatch. Expected ' +
+      "$($Contract.cipdInstance), found $found.")
+  }
+}
+
+function Install-KirakaraPatchedNinja {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)]$Contract,
+    [Parameter(Mandatory = $true)][string]$Binary,
+    [AllowNull()][string]$PriorBinarySha256
+  )
+
+  Assert-KirakaraNinjaDependencyPin -Layout $Layout -Contract $Contract
+  $target = Join-Path $Layout.FlutterCheckout 'third_party\ninja\ninja.exe'
+  if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+    throw "Engine dependency checkout is missing the official Ninja binary: $target"
+  }
+  $customHash = (Get-FileHash -LiteralPath $Binary -Algorithm SHA256).Hash
+  $targetHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+  if ($targetHash -ne $customHash) {
+    $accepted = @(
+      [string]$Contract.officialBinarySha256,
+      $customHash,
+      $PriorBinarySha256
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      Sort-Object -Unique
+    if ($targetHash -notin $accepted) {
+      throw (
+        'Refusing to replace an unknown Engine Ninja binary. Expected the ' +
+        "locked official or previously verified local hash, got ${targetHash}: $target")
+    }
+    $targetItem = Get-Item -LiteralPath $target -Force
+    $wasReadOnly = $targetItem.IsReadOnly
+    try {
+      if ($wasReadOnly) {
+        $targetItem.IsReadOnly = $false
+      }
+      Copy-Item -LiteralPath $Binary -Destination $target -Force
+    } finally {
+      if ($wasReadOnly -and (Test-Path -LiteralPath $target -PathType Leaf)) {
+        (Get-Item -LiteralPath $target -Force).IsReadOnly = $true
+      }
+    }
+  }
+  $installedHash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
+  if ($installedHash -ne $customHash) {
+    throw "Installed Ninja hash mismatch. Expected $customHash, got $installedHash."
+  }
+  $versionOutput = @(& $target --version 2>$null)
+  if ($LASTEXITCODE -ne 0 -or $versionOutput.Count -ne 1 -or
+      ([string]$versionOutput[0]).Trim() -ne [string]$Contract.upstreamVersion) {
+    throw "Installed Ninja version probe failed: $target"
+  }
+  return $installedHash
+}
+
+function Ensure-KirakaraPatchedNinja {
+  param(
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)]$Lock,
+    [Parameter(Mandatory = $true)][string]$VisualStudioPath
+  )
+
+  $fingerprint = Get-KirakaraNinjaFingerprint -Lock $Lock
+  $paths = Get-KirakaraNinjaPaths `
+    -Layout $Layout `
+    -Fingerprint $fingerprint.value
+  $priorHash = Get-KirakaraPriorNinjaHash -Layout $Layout -Paths $paths
+  $ready = Test-KirakaraNinjaReadyStamp `
+    -Layout $Layout `
+    -Lock $Lock `
+    -Fingerprint $fingerprint `
+    -Paths $paths
+  if (-not $ready.ready) {
+    Write-Host "[Kirakara Engine] Ninja cache is not reusable: $($ready.reason)"
+    Initialize-KirakaraPatchedNinjaSource `
+      -Paths $paths `
+      -Contract $Lock.projectBootstrap.ninja
+    Build-KirakaraPatchedNinja `
+      -Layout $Layout `
+      -Lock $Lock `
+      -Paths $paths `
+      -Fingerprint $fingerprint `
+      -VisualStudioPath $VisualStudioPath
+    $ready = Test-KirakaraNinjaReadyStamp `
+      -Layout $Layout `
+      -Lock $Lock `
+      -Fingerprint $fingerprint `
+      -Paths $paths
+    if (-not $ready.ready) {
+      throw "New Ninja ready stamp failed its own reuse gate: $($ready.reason)"
+    }
+  } else {
+    Write-Host (
+      '[Kirakara Engine] Reusing the verified Ninja Unicode-process tool ' +
+      "($($fingerprint.value.Substring(0, 12))).")
+  }
+  $installedHash = Install-KirakaraPatchedNinja `
+    -Layout $Layout `
+    -Contract $Lock.projectBootstrap.ninja `
+    -Binary $ready.binary `
+    -PriorBinarySha256 $priorHash
+  Write-Host "[Kirakara Engine] Verified repository-local Ninja: $($installedHash.Substring(0, 12))."
 }
 
 function Get-KirakaraReadyStampPath {
@@ -930,7 +2528,17 @@ function Remove-KirakaraExpiredLogs {
       try {
         $stamp = Get-Content -Raw -LiteralPath $stampPath.FullName |
           ConvertFrom-Json
-        foreach ($property in 'verificationReport', 'abiReport') {
+        foreach ($property in @(
+            'verificationReport',
+            'abiReport',
+            'buildStdout',
+            'buildStderr',
+            'testStdout',
+            'testStderr'
+          )) {
+          if ($null -eq $stamp.PSObject.Properties[$property]) {
+            continue
+          }
           $relative = [string]$stamp.$property
           if ([string]::IsNullOrWhiteSpace($relative)) {
             continue
@@ -1020,6 +2628,14 @@ function Ensure-KirakaraProjectEngine {
       -WindowsSdkPath $preflight.windowsSdkPath `
       -ProxyUrl $ProxyUrl
     Repair-KirakaraVpythonVirtualenv -Layout $Layout -Lock $Lock
+    Ensure-KirakaraPatchedGn `
+      -Layout $Layout `
+      -Lock $Lock `
+      -VisualStudioPath $preflight.visualStudioPath
+    Ensure-KirakaraPatchedNinja `
+      -Layout $Layout `
+      -Lock $Lock `
+      -VisualStudioPath $preflight.visualStudioPath
 
     Write-Host "[Kirakara Engine] Building only the requested $Mode Engine mode..."
     & (Join-Path $PSScriptRoot 'build_windows_engine.ps1') `
@@ -1303,6 +2919,9 @@ function Invoke-KirakaraFlutter {
     $engineOutput = Get-EngineOutputDirectory `
       -Layout $layout `
       -LocalEngine $build.localEngine
+    Invalidate-StaleFlutterWindowsBuildForSdk `
+      -FlutterSdkRoot $sdk.root `
+      -AppRoot $script:RepositoryRoot | Out-Null
     Invalidate-StaleFlutterEphemeralEngine `
       -EngineOutputDirectory $engineOutput `
       -AppRoot $script:RepositoryRoot

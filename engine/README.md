@@ -82,6 +82,47 @@ again. Wrong origins and tracked changes fail explicitly. Old `.kfe/logs`
 files are bounded by the lock while reports referenced by current ready stamps
 remain protected.
 
+The repository and `.kfe` workspace may live under a non-ASCII Windows path;
+no junction, mapped drive or global alias is required. The bootstrap builds
+locked, patched GN and Ninja binaries from source and applies narrowly scoped
+Unicode fixes to vpython virtualenv, Engine `shader_archiver`, and the nested
+Dart `gen_snapshot` repository. Exact revisions, patch hashes, stock/patched
+trees and upstream test counts are part of `engine.lock.json`. Main-repository
+and nested-dependency patches use the same exact reverse/apply gates.
+
+After the profile Engine is ready, the focused path regression can be repeated
+without rebuilding it:
+
+```powershell
+.\engine\scripts\test_project_engine_unicode_paths.ps1
+```
+
+It runs `shader_archiver` and `gen_snapshot` inside a real Chinese `.kfe/tmp`
+directory, verifies their outputs, and removes only that bounded probe folder.
+
+The pinned stock Flutter 3.44.4 tool has a separate non-ASCII-path bug in
+`flutter analyze`: it writes the LSP `Content-Length` using Dart character
+count rather than UTF-8 byte count, so the analysis server receives truncated
+JSON. Direct `dart analyze` is the current non-mutating workaround. The wrapper
+does not patch either official SDK or hide the repository behind an alias; the
+three Windows bootstrap entry points above are unaffected.
+
+The fallback SDK boundary has a repeatable diagnostic:
+
+```powershell
+.\engine\scripts\test_flutterw_local_sdk_fallback.ps1
+```
+
+It temporarily hides every Flutter command visible on `PATH`, removes the
+process-only explicit SDK override, and requires `flutterw` to select
+`.kfe/sdk`. Its default `pub get` also enters the debug Engine state machine.
+If that SDK does not exist, the command performs the real locked bootstrap;
+otherwise it proves offline-style reuse without another clone or precache. It
+also checks all three official Windows DLLs, revisions, tracked state,
+process/user/machine environment, global Git configuration and every external
+Flutter checkout that was visible before isolation. Pass
+`-WrapperArguments @('--version')` for the SDK-only form.
+
 Use these maintenance commands when needed:
 
 ```powershell

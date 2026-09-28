@@ -178,6 +178,20 @@ foreach ($mode in 'debug', 'profile', 'release') {
 if (@($fingerprints.Values | Sort-Object -Unique).Count -ne 3) {
   throw 'Build-mode fingerprints must be distinct.'
 }
+$toolFingerprints = [ordered]@{}
+foreach ($toolName in 'Gn', 'Ninja') {
+  $first = & $bootstrapModule {
+    param($Lock, $ToolName)
+    & "Get-Kirakara${ToolName}Fingerprint" -Lock $Lock
+  } $lock $toolName
+  $second = & $bootstrapModule {
+    param($Lock, $ToolName)
+    & "Get-Kirakara${ToolName}Fingerprint" -Lock $Lock
+  } $lock $toolName
+  Assert-Equal -Expected $first.value -Actual $second.value `
+    -Label "$toolName tool fingerprint stability"
+  $toolFingerprints[$toolName.ToLowerInvariant()] = $first.value
+}
 
 $ignore = Get-Content -LiteralPath (Join-Path $repository '.gitignore')
 if ($ignore -notcontains '.kfe/') {
@@ -188,7 +202,9 @@ $scratchParent = Join-Path $repository 'build\diagnostics\engine'
 $scratch = Join-Path $scratchParent (
   "project-bootstrap-test-$([Guid]::NewGuid().ToString('N'))")
 $ephemeralInvalidation = $null
+$sdkSwitchInvalidation = $null
 $readyStampChecks = @()
+$toolReadyStampChecks = @()
 $logRetention = $null
 $checkoutRecovery = @()
 try {
@@ -217,6 +233,46 @@ try {
   $ephemeralInvalidation = [ordered]@{
     matchingOutputPreserved = $true
     staleOutputInvalidated = $true
+  }
+
+  $sdkSwitchApp = Join-Path $scratch 'sdk-switch-app'
+  $sdkSwitchEphemeral = Join-Path $sdkSwitchApp `
+    'windows\flutter\ephemeral'
+  $sdkSwitchBuild = Join-Path $sdkSwitchApp 'build\windows\x64'
+  New-Item -ItemType Directory `
+    -Path $sdkSwitchEphemeral, $sdkSwitchBuild `
+    -Force | Out-Null
+  Set-Content -LiteralPath (Join-Path $sdkSwitchApp 'pubspec.yaml') `
+    -Value 'name: sdk_switch_test' -Encoding utf8
+  Set-Content -LiteralPath (Join-Path $sdkSwitchApp `
+      'windows\CMakeLists.txt') -Value '# generated test marker' -Encoding utf8
+  $sdkConfig = Join-Path $sdkSwitchEphemeral 'generated_config.cmake'
+  Set-Content -LiteralPath $sdkConfig -Value (
+    'file(TO_CMAKE_PATH "C:\\previous\\flutter" FLUTTER_ROOT)') `
+    -Encoding utf8
+  Set-Content -LiteralPath (Join-Path $sdkSwitchBuild 'sentinel.txt') `
+    -Value 'generated' -NoNewline
+  $invalidated = Invalidate-StaleFlutterWindowsBuildForSdk `
+    -FlutterSdkRoot 'C:\selected\flutter' `
+    -AppRoot $sdkSwitchApp
+  if (-not $invalidated -or (Test-Path -LiteralPath $sdkSwitchBuild)) {
+    throw 'Flutter SDK switch did not invalidate the generated Windows App build.'
+  }
+  New-Item -ItemType Directory -Path $sdkSwitchBuild -Force | Out-Null
+  Set-Content -LiteralPath (Join-Path $sdkSwitchBuild 'sentinel.txt') `
+    -Value 'generated' -NoNewline
+  Set-Content -LiteralPath $sdkConfig -Value (
+    'file(TO_CMAKE_PATH "C:\\selected\\flutter" FLUTTER_ROOT)') `
+    -Encoding utf8
+  $preserved = Invalidate-StaleFlutterWindowsBuildForSdk `
+    -FlutterSdkRoot 'C:\selected\flutter' `
+    -AppRoot $sdkSwitchApp
+  if ($preserved -or -not (Test-Path -LiteralPath $sdkSwitchBuild)) {
+    throw 'Matching Flutter SDK selection removed the Windows App build.'
+  }
+  $sdkSwitchInvalidation = [ordered]@{
+    changedSdkRemovedGeneratedBuild = $true
+    matchingSdkPreservedGeneratedBuild = $true
   }
 
   $readyPath = Join-Path $layout.State 'debug-ready.json'
@@ -278,6 +334,89 @@ try {
       name = 'corrupt-gn-hash'
       passed = $true
       reason = $argsResult.reason
+    }
+  }
+
+  $ninjaFingerprint = & $bootstrapModule {
+    param($Lock)
+    Get-KirakaraNinjaFingerprint -Lock $Lock
+  } $lock
+  $ninjaPaths = & $bootstrapModule {
+    param($Layout, $Fingerprint)
+    Get-KirakaraNinjaPaths -Layout $Layout -Fingerprint $Fingerprint
+  } $layout ([string]$ninjaFingerprint.value)
+  if (Test-Path -LiteralPath $ninjaPaths.readyStamp -PathType Leaf) {
+    $currentNinja = & $bootstrapModule {
+      param($Layout, $Lock, $Fingerprint, $Paths)
+      Test-KirakaraNinjaReadyStamp `
+        -Layout $Layout -Lock $Lock -Fingerprint $Fingerprint -Paths $Paths
+    } $layout $lock $ninjaFingerprint $ninjaPaths
+    if (-not $currentNinja.ready) {
+      throw "Current Ninja ready stamp failed validation: $($currentNinja.reason)"
+    }
+    $toolReadyStampChecks += [ordered]@{
+      name = 'verified-ninja-ready-stamp'
+      passed = $true
+      reason = $currentNinja.reason
+    }
+
+    $toolState = Join-Path $scratch 'tool-state'
+    New-Item -ItemType Directory -Path $toolState -Force | Out-Null
+    $testNinjaPaths = $ninjaPaths | Select-Object *
+    $testNinjaPaths.readyStamp = Join-Path $toolState 'ninja-ready.json'
+    $missingNinja = & $bootstrapModule {
+      param($Layout, $Lock, $Fingerprint, $Paths)
+      Test-KirakaraNinjaReadyStamp `
+        -Layout $Layout -Lock $Lock -Fingerprint $Fingerprint -Paths $Paths
+    } $layout $lock $ninjaFingerprint $testNinjaPaths
+    if ($missingNinja.ready -or
+        $missingNinja.reason -ne 'Ninja ready stamp is missing') {
+      throw "Missing Ninja ready stamp was accepted: $($missingNinja.reason)"
+    }
+    $toolReadyStampChecks += [ordered]@{
+      name = 'missing-ninja-ready-stamp'
+      passed = $true
+      reason = $missingNinja.reason
+    }
+
+    $ninjaStamp = Get-Content -Raw -LiteralPath $ninjaPaths.readyStamp |
+      ConvertFrom-Json
+    $badNinjaCount = $ninjaStamp | ConvertTo-Json -Depth 20 |
+      ConvertFrom-Json
+    $badNinjaCount.unitTestCount = 0
+    $badNinjaCount | ConvertTo-Json -Depth 20 | Set-Content `
+      -LiteralPath $testNinjaPaths.readyStamp -Encoding utf8
+    $countResult = & $bootstrapModule {
+      param($Layout, $Lock, $Fingerprint, $Paths)
+      Test-KirakaraNinjaReadyStamp `
+        -Layout $Layout -Lock $Lock -Fingerprint $Fingerprint -Paths $Paths
+    } $layout $lock $ninjaFingerprint $testNinjaPaths
+    if ($countResult.ready -or $countResult.reason -notmatch 'test count') {
+      throw "Corrupt Ninja test count was accepted: $($countResult.reason)"
+    }
+    $toolReadyStampChecks += [ordered]@{
+      name = 'corrupt-ninja-test-count'
+      passed = $true
+      reason = $countResult.reason
+    }
+
+    $badNinjaHash = $ninjaStamp | ConvertTo-Json -Depth 20 |
+      ConvertFrom-Json
+    $badNinjaHash.binarySha256 = '0' * 64
+    $badNinjaHash | ConvertTo-Json -Depth 20 | Set-Content `
+      -LiteralPath $testNinjaPaths.readyStamp -Encoding utf8
+    $hashResult = & $bootstrapModule {
+      param($Layout, $Lock, $Fingerprint, $Paths)
+      Test-KirakaraNinjaReadyStamp `
+        -Layout $Layout -Lock $Lock -Fingerprint $Fingerprint -Paths $Paths
+    } $layout $lock $ninjaFingerprint $testNinjaPaths
+    if ($hashResult.ready -or $hashResult.reason -notmatch 'binary hash') {
+      throw "Corrupt Ninja binary hash was accepted: $($hashResult.reason)"
+    }
+    $toolReadyStampChecks += [ordered]@{
+      name = 'corrupt-ninja-binary-hash'
+      passed = $true
+      reason = $hashResult.reason
     }
   }
 
@@ -437,8 +576,11 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $absoluteReport) `
   invocationCases = @($caseReports)
   rejectionCases = @($failureReports)
   fingerprints = $fingerprints
+  toolFingerprints = $toolFingerprints
   ephemeralInvalidation = $ephemeralInvalidation
+  sdkSwitchInvalidation = $sdkSwitchInvalidation
   readyStampChecks = @($readyStampChecks)
+  toolReadyStampChecks = @($toolReadyStampChecks)
   logRetention = $logRetention
   checkoutRecovery = @($checkoutRecovery)
   cleanupBoundaryPassed = $true

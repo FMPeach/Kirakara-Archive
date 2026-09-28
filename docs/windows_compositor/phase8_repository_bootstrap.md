@@ -8,10 +8,23 @@ Phase 8 已把 Phase 1～7 的底层 Engine 脚本收敛为仓库根目录的 `f
 惰性准备，并且只有在源码、补丁、工具链、GN、ABI 和实际产物全部通过门禁后才会写入
 ready stamp。
 
-当前 Windows 11 / NVIDIA 主机已经完成仓库本地源码获取、补丁、debug/profile/release
-构建、ABI 门禁、App 三模式构建和运行门禁。中途还从一次被中断的干净 App/CMake
-依赖下载直接续跑成功，没有清理 `.kfe` 或 App build。该结论不替代计划要求的第二位
-协作者从全新 clone 独立复现；后者仍同时是 Phase 7 和 Phase 8 未完成的发布门槛。
+当前 Windows 11 / NVIDIA 主机已经在仓库的真实物理路径
+`D:\仓库\Kirakara-App` 完成仓库本地源码获取、补丁、debug/profile/release 构建、ABI
+门禁、App 三模式构建和运行门禁，全程没有借助 junction、全局 alias 或短 ASCII 路径。
+这次真实中文路径构建依次暴露并修复了 vpython virtualenv 前缀读取、GN 写 Ninja 文件、
+Ninja 创建 Windows 子进程、Engine `shader_archiver` 路径转换和 Dart `gen_snapshot` 参数
+解码五个独立边界。GN 与 Ninja 现在从锁定 revision 和可审查补丁源码构建，分别通过
+736/736 与 396/396 项上游测试；Engine 主仓库和内嵌 Dart 仓库的补丁都能精确反向恢复
+stock tree 并重新得到锁定 patched tree。
+
+中途还从一次被中断的干净 App/CMake
+依赖下载直接续跑成功，没有清理 `.kfe` 或 App build。随后在子进程 PATH 中完全移除
+已安装 Flutter，先观察到 GitHub 直连 reset 和明确失败，再通过仅限进程树的代理自动
+获取 `.kfe/sdk`、checkout 锁定 revision、完成 Windows precache 并运行成功；第二次在
+无代理环境中 1.397 秒复用，没有再次 clone、precache 或下载。随后同一隔离环境中的
+真实 `flutterw pub get` 在 11.354 秒内复用 debug Engine 并完成依赖解析。该结论不替代
+计划要求的第二位协作者从全新 clone 独立复现；后者仍同时是 Phase 7 和 Phase 8 未完成
+的发布门槛。
 
 ## 仓库入口与模式选择
 
@@ -59,6 +72,22 @@ fetch，也覆盖备用 Flutter SDK、Flutter tool 和 CMake 第三方依赖下�
 `projectBootstrap.maxLogFiles` 把 `.kfe/logs` 限制为有界集合；裁剪时始终保护三个当前
 ready stamp 引用的 verification/ABI 报告。日志记录路径、哈希、模式、错误和耗时，不
 记录剪贴板文本或代理值。
+
+## 中文路径工具链补丁
+
+仓库可以位于非 ASCII 路径，不要求开发者创建映射盘或英文路径副本。锁文件额外固定
+以下小型补丁栈及其输入/输出哈希：
+
+- vpython virtualenv 以 UTF-8 读写解释器前缀；
+- GN 在 Windows 通过 Unicode 安全的原子写入生成 Ninja 文件；
+- Ninja 将 UTF-8 命令行转换后调用 `CreateProcessW`；
+- `shader_archiver` 把 `std::filesystem::path` 明确转换为 UTF-8 后交给 FML；
+- 内嵌 Dart 的 `gen_snapshot` 在 Windows 把宽字符命令行转换为 UTF-8 argv。
+
+内嵌依赖补丁和 Engine 主仓库补丁采用相同的 stock/patched tree 门禁，不能在依赖仓库
+存在未知 tracked 修改时继续。`test_project_engine_unicode_paths.ps1` 会在 `.kfe/tmp` 的
+真实中文目录中分别运行 `shader_archiver` 和 `gen_snapshot`，检查产物后只删除这一个
+已验证位于项目临时根目录内的探针目录。
 
 ## 指纹、并发与中断恢复
 
@@ -111,50 +140,67 @@ VS Code task 和 launch 示例调用相同的 `flutterw` 入口；Dart 调试器
 | 中断目录恢复、干净 checkout 续拉、dirty checkout 拒绝 | 通过 |
 | 两个并发 debug prepare | 一个构建/验证，另一个等待后复用 |
 | process/user/machine 环境、全局 Git、官方 SDK 隔离 | 通过 |
+| PATH 无匹配 SDK 时自动获取 `.kfe/sdk` | 通过；直连失败明确退出，进程代理重试成功 |
+| `.kfe/sdk` 第二次无代理复用 | 通过；1.397 s，无 clone/precache/download |
+| `.kfe/sdk` 执行 `flutterw pub get` | 通过；真实中文路径 11.354 s，复用 verified debug Engine |
+| 锁定 GN / Ninja 源码构建与上游测试 | 通过；736/736 与 396/396 |
+| Engine 主仓库和 Dart 依赖补丁反向/重放 | 通过；精确得到锁定 stock/patched tree |
+| 中文临时目录工具探针 | 通过；`shader_archiver` 与 `gen_snapshot` 均退出 0 并产生有效输出 |
 | debug/profile/release Engine 与 ABI | 三模式通过，错误 ABI/结构大小均返回明确 version mismatch |
 | debug/profile/release App build 与 GUI smoke | 三模式均加载对应 DLL、响应、正常关闭且退出码 0 |
-| 第二次命令不 fetch/sync/GN/Ninja | 通过；4.366 s / 3.719 s / 3.690 s |
+| 第二次命令不 fetch/sync/GN/Ninja | 通过；10.094 s / 9.830 s / 9.841 s |
 | `flutterw clean` 保留 `.kfe` | 通过；App build 被清除，三模式 stamp 与 DLL 哈希不变 |
 
 当前仓库本地开发 DLL（开发态 ready stamp 的实际哈希，不改写 Phase 7 release lock）：
 
 | 模式 | `flutter_windows.dll` SHA-256 | 大小 |
 | --- | --- | ---: |
-| debug | `5E845FC14F5345660FAD7D81042457E90139044D3601F9DBBF9A3FB4F203A9EC` | 45,583,872 |
-| profile | `FEA2EC410224044DC4A70B27AB9FB4795A6A308F33FC2E37AD0F2CD0ECA5287C` | 21,899,776 |
-| release | `1EF827FA6ABAEBF1735DF7C72389D9178A1F4263D2D074D6FF62A83FC900DCFF` | 21,316,608 |
+| debug | `D0E83C3A65BFFF719D097CF56478A07E1E711B8268D2A4336AE096D2DB7D28B4` | 45,583,872 |
+| profile | `9715A8C3AEABAE7BD65EFE13C2FD810969558AC0588309C9693B94BE9175427A` | 21,899,776 |
+| release | `BABA3B7BDE00465BFB46395863DF78924229EA34CC179F2DC89F67FC962F1A23` | 21,316,608 |
 
 关键报告：
 
-- `build/diagnostics/engine/project-bootstrap-tests-20260929-005239.json`；
-- `build/diagnostics/engine/project-engine-reuse-20260929-005735.json`；
-- `build/diagnostics/engine/project-app-bundles-20260929-005954.json`；
-- `build/diagnostics/engine/phase8-project-abi.json`；
-- `build/diagnostics/engine/flutterw-isolation-20260929-005725.json`；
-- `build/diagnostics/engine/flutterw-clean-boundary-20260929-004757.json`；
-- `build/diagnostics/engine/patched-engine-tests-20260929-005832.json`；
-- `build/diagnostics/synthetic-compositor-20260929-005851.json`；
-- `build/diagnostics/engine/app-smoke-local-patched-debug-20260929-010000.json`；
-- `build/diagnostics/engine/app-smoke-local-patched-profile-20260929-005801.json`；
-- `build/diagnostics/engine/app-smoke-local-patched-release-20260929-005810.json`。
+- `build/diagnostics/engine/project-bootstrap-tests-20260929-044234.json`；
+- `build/diagnostics/engine/flutterw-local-sdk-fallback-20260929-044316.json`；
+- `build/diagnostics/engine/flutterw-local-sdk-fallback-20260929-044440.json`；
+- `build/diagnostics/engine/project-engine-reuse-20260929-044304.json`；
+- `build/diagnostics/engine/project-app-bundles-20260929-044926.json`；
+- `build/diagnostics/engine/flutterw-isolation-20260929-044318.json`；
+- `build/diagnostics/engine/flutterw-clean-boundary-20260929-043715.json`；
+- `build/diagnostics/engine/project-engine-unicode-paths-20260929-044327.json`；
+- `build/diagnostics/engine/app-smoke-local-patched-debug-20260929-044857.json`；
+- `build/diagnostics/engine/app-smoke-local-patched-profile-20260929-044121.json`；
+- `build/diagnostics/engine/app-smoke-local-patched-release-20260929-044142.json`；
+- `build/diagnostics/engine/patched-engine-tests-20260929-044547.json`；
+- `build/diagnostics/synthetic-compositor-20260929-044729.json`；
+- `.kfe/logs/verify-debug-20260929-042646-549bfaa0.json` 与对应 ABI 报告；
+- `.kfe/logs/verify-profile-20260929-042851-4f7ea9d4.json` 与对应 ABI 报告；
+- `.kfe/logs/verify-release-20260929-043055-ef449040.json` 与对应 ABI 报告。
 
 Engine 聚焦回归为 compositor API 6、剪贴板 19、关键调度 2、上游 compositor 25 和
 两个隔离 adapter 测试全部通过。synthetic 复验中 platform thread stall 750 ms 时
 Stage 推进 45 帧而 Flutter present 增量为 0；交互后的静止 2 秒样本 Stage 推进 120
 帧且 Flutter present 增量为 0，所有 Stage HRESULT/device-removal 计数正常。
 
-`flutter analyze` 保持仓库既有 68 条 info、0 warning、0 error。完整 `flutter test`
-保持 94 通过、1 个既有失败：`bilibili_resolver_test.dart` 仍期待已从实际质量列表移除的
-`qn=6`；本阶段没有借机修改该业务断言。
+锁定 SDK 的 `dart analyze` 在真实中文路径保持仓库既有 68 条 info、0 warning、0 error。
+同版本 stock `flutter analyze`（包括绕过 wrapper 直接调用官方 SDK）会因 Flutter tool 以
+Dart 字符数而非 UTF-8 字节数填写 LSP `Content-Length`，在中文 workspace URI 处令
+analysis server 以退出码 255 拒绝截断 JSON；这是官方 Flutter 3.44.4 工具层问题，不是
+定制 Engine 回归。这里没有修改官方 SDK，也没有用 junction 掩盖它；Phase 8 规定的
+`pub get`、Windows `run` 与 `build` 入口不受影响。完整 `flutter test` 保持 94 通过、
+1 个既有失败：`bilibili_resolver_test.dart` 仍期待已从实际质量列表移除的 `qn=6`；本阶段
+没有借机修改该业务断言。并行执行 analyze/test 时曾令一个资源抢占时序测试额外失败，
+该用例单独及串行全套复跑均通过，未作为稳定回归记录。
 
 开发态验证产生的 DLL/PDB、Engine 源码、缓存和 ready stamp 都留在 `.kfe` 或忽略的
 App build 目录，不进入普通 Git。提交前还会检查 Git tracked 文件集和源码包排除规则。
 
 ## 尚需独立验证
 
-本机一次真实的源码获取与三模式构建可以证明状态机和产物门禁，但不能冒充三份真正
-独立的 clean clone，也不能替代第二位协作者。因此仍需在另一份新 clone/另一位协作者
-环境分别记录以下首次入口：
+本机一次真实的源码获取、三模式构建和无系统 Flutter 的 `.kfe/sdk` 获取可以证明状态机
+和产物门禁，但不能冒充三份真正独立的 clean clone，也不能替代第二位协作者。因此
+仍需在另一份新 clone/另一位协作者环境分别记录以下首次入口：
 
 1. `flutterw pub get` 作为第一次命令；
 2. `flutterw run -d windows` 作为第一次命令；

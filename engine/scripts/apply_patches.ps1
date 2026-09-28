@@ -70,6 +70,54 @@ foreach ($patch in $patches) {
     "Patch $Variant transition failed: $($patch.path)"
 }
 
+$dependencySets = @($lock.projectBootstrap.engineDependencyPatches)
+if ($Variant -eq 'stock') {
+  [array]::Reverse($dependencySets)
+}
+foreach ($dependency in $dependencySets) {
+  $dependencyName = [string]$dependency.name
+  $dependencyRepository = [IO.Path]::GetFullPath((Join-Path `
+        $layout.FlutterCheckout `
+        ([string]$dependency.repositoryPath)))
+  if (-not (Test-PathWithin `
+      -Candidate $dependencyRepository `
+      -Parent $layout.FlutterCheckout)) {
+    throw (
+      "Engine dependency '$dependencyName' escapes the Flutter checkout: " +
+      $dependencyRepository)
+  }
+  $dependencyPatches = @($dependency.patches)
+  if ($Variant -eq 'stock') {
+    [array]::Reverse($dependencyPatches)
+  }
+  foreach ($patch in $dependencyPatches) {
+    $patchPath = Join-Path $appRoot $patch.path
+    if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
+      throw "Patch is missing: $patchPath"
+    }
+    $actualHash = (
+      Get-FileHash -LiteralPath $patchPath -Algorithm SHA256
+    ).Hash
+    if ($actualHash -ne $patch.sha256) {
+      throw (
+        "Patch hash mismatch for $($patch.path). Expected " +
+        "$($patch.sha256), got $actualHash.")
+    }
+    $direction = if ($Variant -eq 'stock') { @('--reverse') } else { @() }
+    $preflightArguments = @('-C', $dependencyRepository, 'apply')
+    $preflightArguments += $direction
+    $preflightArguments += @(
+      '--check', '--whitespace=error-all', $patchPath)
+    Invoke-CheckedNative git $preflightArguments `
+      "Dependency patch $Variant preflight failed: $($patch.path)"
+    $applyArguments = @('-C', $dependencyRepository, 'apply')
+    $applyArguments += $direction
+    $applyArguments += @('--whitespace=error-all', $patchPath)
+    Invoke-CheckedNative git $applyArguments `
+      "Dependency patch $Variant transition failed: $($patch.path)"
+  }
+}
+
 if ($Variant -eq 'patched') {
   Assert-AppliedPatchset -Lock $lock -Layout $layout
   Write-Host "Applied patchset $($lock.patchset.revision) v$($lock.patchset.version)."

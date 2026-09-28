@@ -89,6 +89,9 @@ if (Test-Path -LiteralPath $absoluteReport) {
 }
 
 if (-not $SkipBuild) {
+  Invalidate-StaleFlutterWindowsBuildForSdk `
+    -FlutterSdkRoot $flutterRoot `
+    -AppRoot $repositoryRoot | Out-Null
   Invalidate-StaleFlutterEphemeralEngine `
     -EngineOutputDirectory $engineOutput `
     -AppRoot $repositoryRoot

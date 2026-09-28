@@ -38,6 +38,10 @@ foreach ($fixture in $fixtures.Values) {
 $appRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 . (Join-Path $appRoot 'engine\scripts\common.ps1')
 $flutter = (Get-Command $FlutterExecutable -ErrorAction Stop).Source
+$flutterRoot = Split-Path -Parent (Split-Path -Parent $flutter)
+Invalidate-StaleFlutterWindowsBuildForSdk `
+  -FlutterSdkRoot $flutterRoot `
+  -AppRoot $appRoot | Out-Null
 if ($Mode -eq 'debug') {
   $arguments = @(
     'test',
@@ -141,7 +145,6 @@ try {
       'profile' { 'Profile' }
     }
     $bundle = Join-Path $appRoot "build\windows\x64\runner\$configuration"
-    $flutterRoot = Split-Path -Parent (Split-Path -Parent $flutter)
     if ($Engine -eq 'official') {
       $officialDirectoryName = switch ($Mode) {
         'debug' { 'windows-x64' }

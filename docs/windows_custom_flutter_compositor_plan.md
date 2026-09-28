@@ -122,9 +122,14 @@
   `flutterw.cmd` 会在被忽略的 `.kfe/` 内准备锁定源码、补丁、三模式输出、缓存、日志、
   互斥锁和 ready stamp，并自动注入 local-Engine 参数。debug/profile/release Engine、
   ABI、App build、GUI 正常退出、并发等待、二次廉价复用、代理中断续跑、普通
-  `flutterw clean` 边界和进程/用户/系统环境隔离均通过；没有修改官方 SDK、全局 Git、
-  PATH 或注册表。真正独立的三种首次入口 clean-clone 排列及第二位协作者复现尚未完成，
-  因此 Phase 8 和总计划仍不能宣称全部完成。详见
+  `flutterw clean` 边界和进程/用户/系统环境隔离均通过；移除 PATH 中已安装 Flutter 后，
+  `.kfe/sdk` 的真实自动获取、锁定 revision checkout、Windows precache 和无代理二次复用
+  也已通过，没有修改官方 SDK、全局 Git、PATH 或注册表。随后在真实物理路径
+  `D:\仓库\Kirakara-App`（无 junction/全局 alias）补齐 vpython、GN、Ninja、
+  `shader_archiver` 和内嵌 Dart `gen_snapshot` 的 Unicode 边界：锁定源码构建的 GN/Ninja
+  通过 736/736 与 396/396 项测试，主仓库和依赖补丁可精确反向/重放，三模式 Engine、
+  App build 和 GUI smoke 全部重跑通过。真正独立的三种首次入口 clean-clone 排列及第二位
+  协作者复现尚未完成，因此 Phase 8 和总计划仍不能宣称全部完成。详见
   `docs/windows_compositor/phase8_repository_bootstrap.md`。
 
 ## 为什么要做这件事
@@ -757,6 +762,15 @@ ABI/patchset version、GN 参数、目标架构、构建模式、MSVC/Windows SD
   ready stamp、后台进程或持久配置。
 - 第二位协作者能够仅凭普通官方 Flutter/Windows 编译前置条件和本仓库，从 clean clone
   完成以上流程；该复现证据同时补齐 Phase 7 尚未完成的独立构建门槛。
+
+当前退出条件判定（2026-09-29）：当前主机能够执行的实现、真实中文路径三模式构建、
+运行门禁、二次复用、故障恢复、并发、隔离、清理边界和聚焦 Unicode 工具测试均已通过。
+三种“第一次命令”仍需分别在真正独立的 clean clone 中执行，且至少一轮必须由第二位
+协作者完成；共享现有 `.kfe` 的排列测试不能替代该证据。因此 Phase 8 保持未完全完成，
+其独立复现完成前 Phase 7 的协作者门槛和总计划也保持未完成。另已确认 stock Flutter
+3.44.4 的 `flutter analyze` 在中文 workspace URI 上存在 LSP `Content-Length` 字符数/字节数
+缺陷；直接 `dart analyze` 通过，且 Phase 8 规定的三个 Windows 自举入口不受影响。本计划
+不通过修改官方 SDK 或创建路径 alias 掩盖该独立工具问题。
 
 ## 必要的可观测能力
 

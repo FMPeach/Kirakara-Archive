@@ -168,6 +168,56 @@ function Invalidate-StaleFlutterEphemeralEngine {
   Remove-Item -LiteralPath $actualEphemeral -Force
 }
 
+function Invalidate-StaleFlutterWindowsBuildForSdk {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory = $true)][string]$FlutterSdkRoot,
+    [string]$AppRoot = (Get-AppRepositoryRoot)
+  )
+
+  $repository = [IO.Path]::GetFullPath((Resolve-UnresolvedPath $AppRoot))
+  foreach ($marker in 'pubspec.yaml', 'windows\CMakeLists.txt') {
+    $markerPath = Join-Path $repository $marker
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+      throw "Refusing to invalidate a directory without Flutter App marker: $markerPath"
+    }
+  }
+  $generatedConfig = Join-Path $repository `
+    'windows\flutter\ephemeral\generated_config.cmake'
+  if (-not (Test-Path -LiteralPath $generatedConfig -PathType Leaf)) {
+    return $false
+  }
+
+  $configText = Get-Content -Raw -LiteralPath $generatedConfig
+  $matches = [regex]::Matches(
+    $configText,
+    '(?m)^file\(TO_CMAKE_PATH "(?<root>[^"]+)" FLUTTER_ROOT\)\r?$')
+  if ($matches.Count -ne 1) {
+    throw "Cannot identify the prior Flutter SDK in $generatedConfig"
+  }
+  $priorText = $matches[0].Groups['root'].Value.Replace('\\', '\')
+  $priorRoot = [IO.Path]::GetFullPath((Resolve-UnresolvedPath $priorText))
+  $selectedRoot = [IO.Path]::GetFullPath(
+    (Resolve-UnresolvedPath $FlutterSdkRoot))
+  if ($priorRoot.TrimEnd('\').Equals(
+      $selectedRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+    return $false
+  }
+
+  $windowsBuild = [IO.Path]::GetFullPath(
+    (Join-Path $repository 'build\windows\x64'))
+  if (-not (Test-PathWithin $windowsBuild $repository)) {
+    throw "Refusing to invalidate an unexpected Windows App build: $windowsBuild"
+  }
+  if (Test-Path -LiteralPath $windowsBuild) {
+    Write-Host (
+      '[Kirakara Engine] Flutter SDK root changed; invalidating only the ' +
+      "generated Windows App build: $priorRoot -> $selectedRoot")
+    Remove-Item -LiteralPath $windowsBuild -Recurse -Force
+  }
+  return $true
+}
+
 function Test-PathWithin {
   param(
     [Parameter(Mandatory = $true)][string]$Candidate,
@@ -360,6 +410,10 @@ function Assert-PinnedFlutterSource {
     if ($changes.Count -ne 0) {
       throw "Stock Engine source has tracked changes:`n$($changes -join [Environment]::NewLine)"
     }
+    Assert-PinnedEngineDependencies `
+      -Lock $Lock `
+      -Layout $Layout `
+      -Variant stock
   }
 }
 
@@ -514,6 +568,82 @@ function Get-WorkingTreeSnapshot {
   }
 }
 
+function Assert-PinnedEngineDependencies {
+  param(
+    [Parameter(Mandatory = $true)]$Lock,
+    [Parameter(Mandatory = $true)][pscustomobject]$Layout,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('stock', 'patched')]
+    [string]$Variant
+  )
+
+  $property = $Lock.projectBootstrap.PSObject.Properties[
+    'engineDependencyPatches']
+  if ($null -eq $property) {
+    return
+  }
+
+  $checkoutRoot = [IO.Path]::GetFullPath($Layout.FlutterCheckout)
+  $checkoutPrefix = $checkoutRoot.TrimEnd(
+    [IO.Path]::DirectorySeparatorChar,
+    [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+  foreach ($dependency in @($property.Value)) {
+    $name = [string]$dependency.name
+    $relative = ([string]$dependency.repositoryPath).Replace(
+      '/', [IO.Path]::DirectorySeparatorChar)
+    $repository = [IO.Path]::GetFullPath(
+      (Join-Path $checkoutRoot $relative))
+    if (-not $repository.StartsWith(
+        $checkoutPrefix,
+        [StringComparison]::OrdinalIgnoreCase
+      )) {
+      throw "Engine dependency '$name' escapes the Flutter checkout: $repository"
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $repository '.git'))) {
+      throw "Engine dependency checkout is missing for '$name': $repository"
+    }
+
+    $head = Get-GitHead $repository
+    if ($head -ne [string]$dependency.revision) {
+      throw (
+        "Engine dependency '$name' revision mismatch. Expected " +
+        "$($dependency.revision), got $head.")
+    }
+    $sourceTree = Get-GitTree $repository
+    if ($sourceTree -ne [string]$dependency.sourceTree) {
+      throw (
+        "Engine dependency '$name' source tree mismatch. Expected " +
+        "$($dependency.sourceTree), got $sourceTree.")
+    }
+
+    $expectedTree = $sourceTree
+    if ($Variant -eq 'patched') {
+      $patches = @($dependency.patches)
+      if ($patches.Count -eq 0) {
+        throw "Engine dependency '$name' has no locked patches."
+      }
+      $expectedTree = Get-PatchsetExpectedTree `
+        -Lock $Lock `
+        -Repository $repository `
+        -Patches $patches
+      if ($expectedTree -ne [string]$dependency.patchedTree) {
+        throw (
+          "Engine dependency '$name' patched tree mismatch. Expected " +
+          "$($dependency.patchedTree), patches produce $expectedTree.")
+      }
+    }
+
+    $workingTree = Get-WorkingTreeSnapshot -Repository $repository
+    if ($workingTree -ne $expectedTree) {
+      $status = @(& git -C $repository status --short)
+      throw (
+        "Engine dependency '$name' does not match the locked $Variant tree. " +
+        "Expected $expectedTree, got $workingTree.`n" +
+        ($status -join [Environment]::NewLine))
+    }
+  }
+}
+
 function Assert-AppliedPatchset {
   param(
     [Parameter(Mandatory = $true)]$Lock,
@@ -563,6 +693,13 @@ function Assert-AppliedPatchset {
       "Engine working tree does not exactly match the locked patchset. " +
       "Expected tree $expectedTree, got $workingTree.`n$($status -join [Environment]::NewLine)"
     )
+  }
+  if ($Layout.Kind -eq 'repository-local' -and
+      -not $ExcludeRepositoryBootstrap) {
+    Assert-PinnedEngineDependencies `
+      -Lock $Lock `
+      -Layout $Layout `
+      -Variant patched
   }
 }
 
@@ -753,7 +890,17 @@ function Set-EngineProcessEnvironment {
 
   $env:DEPOT_TOOLS_UPDATE = '0'
   $env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
-  $env:Path = "$($Layout.DepotTools);$env:Path"
+  $depotToolPaths = @($Layout.DepotTools)
+  if ($Layout.Kind -eq 'repository-local') {
+    # GN resolves script_executable from PATH without invoking depot_tools'
+    # batch-file shims.  The CIPD-installed vpython3.exe therefore has to
+    # precede the checkout when the repository lives below a Unicode path.
+    $depotToolPaths = @(
+      (Join-Path $Layout.DepotTools '.cipd_bin'),
+      $Layout.DepotTools
+    )
+  }
+  $env:Path = "$($depotToolPaths -join ';');$env:Path"
   if ($Layout.Kind -eq 'repository-local') {
     foreach ($directory in @(
         $Layout.PubCache,

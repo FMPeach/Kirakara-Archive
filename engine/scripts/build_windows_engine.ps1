@@ -55,8 +55,19 @@ if ($Variant -eq 'stock' -and -not (
 }
 $gn = Join-Path $layout.EngineSource 'flutter\tools\gn.bat'
 $autoninja = Join-Path $layout.DepotTools 'autoninja.bat'
+$repositoryNinja = if ($layout.Kind -eq 'repository-local') {
+  Join-Path $layout.FlutterCheckout 'third_party\ninja\ninja.exe'
+} else {
+  $null
+}
 if ($Variant -eq 'patched') {
-  foreach ($required in @($gn, $autoninja)) {
+  $requiredTools = @($gn)
+  if ($layout.Kind -eq 'repository-local') {
+    $requiredTools += $repositoryNinja
+  } else {
+    $requiredTools += $autoninja
+  }
+  foreach ($required in $requiredTools) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
       throw "Patched Engine build tool is missing: $required"
     }
@@ -100,14 +111,29 @@ try {
     $outputDirectory = Get-EngineOutputDirectory `
       -Layout $layout `
       -LocalEngine $build.localEngine
-    $ninjaArguments = @('-C', $outputDirectory)
+    $ninjaArguments = @()
     if ($Jobs -gt 0) {
       $ninjaArguments += @('-j', $Jobs.ToString())
     }
     $ninjaArguments += @($build.ninjaTargets)
     Write-Host "Building patched Windows Engine mode '$buildMode'..."
-    Invoke-CheckedNative $autoninja $ninjaArguments `
-      "Patched Engine build failed for mode '$buildMode'."
+    if ($layout.Kind -eq 'repository-local') {
+      # cmd.exe corrupts an absolute Unicode -C argument while expanding the
+      # depot_tools autoninja.bat shim. CreateProcessW can set the working
+      # directory without that lossy conversion, so invoke the gclient-pinned
+      # Ninja binary there and pass only ASCII target names.
+      Push-Location $outputDirectory
+      try {
+        Invoke-CheckedNative $repositoryNinja $ninjaArguments `
+          "Patched Engine build failed for mode '$buildMode'."
+      } finally {
+        Pop-Location
+      }
+    } else {
+      $externalNinjaArguments = @('-C', $outputDirectory) + $ninjaArguments
+      Invoke-CheckedNative $autoninja $externalNinjaArguments `
+        "Patched Engine build failed for mode '$buildMode'."
+    }
   }
 } finally {
   Pop-Location

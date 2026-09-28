@@ -149,19 +149,115 @@
     "workspace": ".kfe",
     "minimumFreeSpaceBytes": 68719476736,
     "maxLogFiles": 60,
-    "engineSourceTree": "f91cf7f5234fdfe2647ba07c2c787e5e22125fd8",
+    "engineSourceTree": "b01f3bfaddb9129d5c9625aba9b2ef1d05f6e8bc",
     "engineSourcePatches": [
       {
         "path": "engine/bootstrap/0002-engine-output-outside-source-tree.patch",
         "sha256": "7555E13545D50583CFF5B7610259C5569C2FD72E01B14A4FBBD5F2AF7090A931"
+      },
+      {
+        "path": "engine/bootstrap/0006-engine-shader-archive-unicode-path.patch",
+        "sha256": "7EE952EE5FDEAEB7DECA6836DA21637ADA4FBE0B6CB9BEA951440CF378E298B5"
+      }
+    ],
+    "engineDependencyPatches": [
+      {
+        "name": "dart",
+        "repositoryPath": "engine/src/flutter/third_party/dart",
+        "revision": "d684a576a6aa954ae107a03b2b4e1d61c3bebe93",
+        "sourceTree": "4e9377dfb0d009c0845b68cf4e1a89f2c6c7c05c",
+        "patchedTree": "7f8d42ebf653973d873e4572e6f52793b5a4587c",
+        "patches": [
+          {
+            "path": "engine/bootstrap/0007-dart-gen-snapshot-unicode-argv.patch",
+            "sha256": "9BA891555D90A0B72850439A871BA307BAFDAD1C7A0BCBBF0ACA22C6343A892F"
+          }
+        ]
       }
     ],
     "vpythonVirtualenv": {
       "version": "16.7.12",
-      "patch": "engine/bootstrap/0001-vpython-virtualenv-windows-codepage.patch",
-      "patchSha256": "46AC84DD7289D1F2BDC31D4A760AE5E54ED4B4A28504D59F56F0C9D2CAF833AC",
       "sourceSha256": "69EA6E60A1710D7F3B27A4D3701AD4F0E154E54BFEED21E0E8EFABD00B62C9AC",
-      "patchedSha256": "388620D619CACEA27AC7556EBC8114C3F1597EF9DB99C4B7D662DA605DEA1DC4"
+      "patches": [
+        {
+          "path": "engine/bootstrap/0001-vpython-virtualenv-windows-codepage.patch",
+          "sha256": "46AC84DD7289D1F2BDC31D4A760AE5E54ED4B4A28504D59F56F0C9D2CAF833AC",
+          "resultSha256": "388620D619CACEA27AC7556EBC8114C3F1597EF9DB99C4B7D662DA605DEA1DC4"
+        },
+        {
+          "path": "engine/bootstrap/0003-vpython-virtualenv-unicode-prefix.patch",
+          "sha256": "5CAFF7635B7F8C6524780A772B544CAA962D9C934BBE3AB2F9BFD1A3B61664F3",
+          "resultSha256": "E8707C161A21379C6CCFC3676F821E99D3073C88BDF7E3D68FC83BF88677F3D0"
+        }
+      ],
+      "patchedSha256": "E8707C161A21379C6CCFC3676F821E99D3073C88BDF7E3D68FC83BF88677F3D0"
+    },
+    "gn": {
+      "schemaVersion": 1,
+      "repository": "https://gn.googlesource.com/gn",
+      "revision": "81b24e01531ecf0eff12ec9359a555ec3944ec4e",
+      "officialBinarySha256": "D32F8AF0EF2F7DA66D3C7CC9DB792C729B822543D22438DD29807C6000BDC331",
+      "sourceFiles": [
+        {
+          "path": "src/gn/ninja_toolchain_writer.cc",
+          "sourceSha256": "A74821A9497F36CF17EA960451F90885720C026E0AC84176D353625FCCCE5F0C",
+          "patchedSha256": "8BCA2AD36D08D0243C63852CB789D0F9840D1D323F72A07832771EAB5AFF8C63"
+        },
+        {
+          "path": "src/gn/setup.cc",
+          "sourceSha256": "F009DAD1B0F6D106BF49C908422D5A07ACE214A1334C0E0FC651713ABC12F762",
+          "patchedSha256": "342D62658465ECCD7A0C945D9B18C3E17EC75990B57EA0D241E30288178FF7D9"
+        }
+      ],
+      "patch": {
+        "path": "engine/bootstrap/0004-gn-windows-unicode-output.patch",
+        "sha256": "08931622C08850433E0F58BBA3EC38619F7FA0FC59BFEB0C6FB6CF46DB7FF0B6"
+      },
+      "compilerFlags": [
+        "/utf-8"
+      ],
+      "ninjaTargets": [
+        "gn.exe",
+        "gn_unittests.exe"
+      ],
+      "unitTestCount": 736
+    },
+    "ninja": {
+      "schemaVersion": 1,
+      "repository": "https://github.com/ninja-build/ninja.git",
+      "revision": "a524bf3f6bacd1b4ad85d719eed2737d8562f27a",
+      "sourceTree": "94da8634ce8bc550c1c3fb988fa8e9ebd6df31aa",
+      "upstreamVersion": "1.11.1",
+      "cipdPackage": "infra/3pp/tools/ninja/windows-amd64",
+      "cipdVersion": "version:2@1.11.1.chromium.4",
+      "cipdInstance": "vRuNKLio1lvsQtbvzG6Vt2i7MUTh9tKTLxvJb6zjqeAC",
+      "officialBinarySha256": "9FAE00EB7F25B587573023761CFB7F7E00488D29BFCE7E347A186B4E5DF56A79",
+      "sourceFiles": [
+        {
+          "path": "src/subprocess-win32.cc",
+          "sourceSha256": "2C620C0979E51AB40F3B45F9F3374ADB06250446A3045CE1452A5C3117057491",
+          "patchedSha256": "6B82BAC2630854C3983D31ACF978A8B731AC52ED4941C6FB8EAC8C47EF3016DC"
+        },
+        {
+          "path": "src/subprocess_test.cc",
+          "sourceSha256": "482EB44FFC1FFBDB7720633B390F8CEDC689B5052B9F501B84BAAEFE9D4AAB9C",
+          "patchedSha256": "1537D17108455C43454772E9BB0C0CB84622C2FEB30883ADDD28D6014248717C"
+        }
+      ],
+      "patch": {
+        "path": "engine/bootstrap/0005-ninja-windows-unicode-process.patch",
+        "sha256": "3B84ADEEB767DC834DB343EF0B3EDB8CE09A9CC312A5DA67714D522E64C6E01E"
+      },
+      "compilerFlags": [
+        "/utf-8"
+      ],
+      "configureArguments": [
+        "--bootstrap"
+      ],
+      "ninjaTargets": [
+        "ninja_test"
+      ],
+      "unitTestCount": 396
     }
   },
   "hostBaseline": {
