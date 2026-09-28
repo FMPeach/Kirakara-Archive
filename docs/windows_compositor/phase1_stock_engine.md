@@ -133,6 +133,13 @@ Release 因 `flutter drive --release` 不受支持，使用普通 App release bu
 启动/响应路径通过，不把强制终止描述为优雅退出。该对称结果满足 Phase 1 的 Engine
 行为等价判断，正常退出问题保留到生命周期阶段处理。
 
+Phase 7 复核说明（2026-09-28）：上述现象后来定位为烟测在一次超时
+`WaitForExit` 后复用了缓存的旧主窗口句柄；Flutter 启动期间 HWND 已变化。脚本在
+close 前 `Process.Refresh()` 并重新读取 HWND 后，官方与 custom Release 分别约
+163/168 ms 正常退出、退出码 0，均不需要强制清理。这里保留原始 Phase 1 观察用于
+说明当时的等价判定，当前生命周期结论以
+`docs/windows_compositor/phase7_compatibility_release.md` 为准。
+
 烟测只追踪它自己启动的精确 PID；等待输入队列和顶层窗口均有截止时间，观察期间
 检查窗口响应，退出阶段先发送正常 close，最后才允许对该 PID 做有界清理。测试
 启动探针不是产品轮询或常驻定时器。集成测试生成的 runner bundle 不能拿来执行

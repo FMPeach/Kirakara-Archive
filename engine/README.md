@@ -8,7 +8,7 @@ release artifact. They must not be committed to the App repository.
 The root `builds` entries preserve the completely stock Phase 1 artifacts for
 Flutter 3.44.4. `patchset` separately locks the ordered Phase 2/3 compositor and
 Phase 6 clipboard patches, their resulting Git tree, additional public export
-and custom debug artifacts.
+and custom debug/profile/release artifacts.
 Switching variants never edits the installed Flutter SDK and never removes the
 other variant's `out/` directory.
 
@@ -24,8 +24,10 @@ E:\Kirakara-Flutter-Engine\
    └─ engine\src\out\
       ├─ host_debug\
       ├─ host_profile\
-      ├─ host_release\
-      └─ host_debug_kirakara_v4\
+       ├─ host_release\
+       ├─ host_debug_kirakara_v4\
+       ├─ host_profile_kirakara_v4\
+       └─ host_release_kirakara_v4\
 ```
 
 No absolute host path is stored in `engine.lock.json`. The example uses E: only
@@ -75,7 +77,7 @@ custom output under its own target directory:
 .\engine\scripts\build_windows_engine.ps1 `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
   -Variant patched `
-  -Mode debug `
+  -Mode debug,profile,release `
   -VisualStudioPath 'D:\Program Files\Microsoft Visual Studio\Community\2026'
 ```
 
@@ -97,10 +99,13 @@ stock output, reverse only the known patch stack and select the stock variant:
 
 Reapply `-Variant patched` before continuing custom Engine work. Stock builds
 use the upstream `windows/host_debug`, `windows/host_profile` and
-`windows/host_release` configurations; the current patch stack locks only
-`host_debug_kirakara_v4`. Both paths disable RBE and never copy Engine products
-into this repository. Verification rejects a generated `toolchain.ninja` or PE
-linker version that does not use the locked 14.34 toolset.
+`windows/host_release` configurations; the current patch stack locks matching
+`host_debug_kirakara_v4`, `host_profile_kirakara_v4` and
+`host_release_kirakara_v4` outputs. Profile and release explicitly build both
+`gen_snapshot` and `flutter_patched_sdk`; an incomplete AOT toolchain is a hard
+failure. Both variants disable RBE and never copy Engine products into this
+repository. Verification rejects a generated `toolchain.ninja` or PE linker
+version that does not use the locked 14.34 toolset.
 
 This pinned Engine source requires Windows SDK `10.0.22621.0`; newer SDKs do
 not substitute for it because upstream's stock toolchain script explicitly
@@ -114,7 +119,7 @@ libraries and tools before invoking GN.
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
   -Variant patched `
-  -Mode debug `
+  -Mode debug,profile,release `
   -RequireLockedHashes
 
 # Local stock Engine
@@ -131,7 +136,7 @@ libraries and tools before invoking GN.
   -Engine local `
   -LocalVariant patched `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
-  -Mode debug
+  -Mode debug,profile,release
 
 # Official cached Engine; no local-engine flags are passed.
 .\engine\scripts\build_windows_app.ps1 `
@@ -225,10 +230,60 @@ The smoke verifies the selected DLL and ICU file before launch, waits for the
 GUI input queue, and uses a bounded 100 ms startup probe because Flutter does
 not show the top-level HWND until its first frame. This test-only probe is not
 an application timer. It then checks the main window remains responsive,
-requests a normal close, and writes a JSON report. A shutdown timeout fails by
-default and kills only the exact child process it launched.
+refreshes the process window cache, requests a normal close against the current
+HWND, and writes a JSON report including the shutdown wait. The refresh matters
+because the HWND can change after an earlier timed `WaitForExit`. A shutdown
+timeout fails by default and kills only the exact child process it launched.
 `-AllowForcedCleanup` is for explicitly documenting an already reproduced
 shutdown defect; the forced cleanup remains visible in the report.
+
+Verify that stock DLLs remain stock and every custom build rejects a mismatched
+ABI before testing the exact locked metadata:
+
+```powershell
+.\engine\scripts\test_engine_abi_gate.ps1 `
+  -FlutterSdkRoot 'D:\Program Files\Flutter' `
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine'
+```
+
+This probes debug/profile/release without creating a Flutter view. It requires
+the official DLLs to omit the custom export, requires a wrong ABI and a wrong
+API struct size to return the explicit version-mismatch result, and requires
+the exact ABI, patchset version/revision, Engine revision and function table to
+match the lock.
+
+After a locked custom Release App build, create and smoke-test the distributable
+candidates:
+
+```powershell
+.\engine\scripts\package_windows_release.ps1 `
+  -FlutterSdkRoot 'D:\Program Files\Flutter' `
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine'
+```
+
+The ignored `build/releases` directory receives deterministic Portable,
+per-user installer and patch-source ZIPs plus a release index with SHA-256
+values. Runtime smoke reports live in a `diagnostics/` child of the selected
+output directory and the index records relative paths, so independent or
+repeat builds using `-OutputDirectory` do not collide with an earlier run or
+leak a builder-local absolute path. Runtime selection maps CMake's last
+Debug/Profile/Release install
+manifest to configuration-independent Release paths, includes the immutable
+`data/` and `ime/` runtime trees, and permits only known top-level binary/JSON
+types; an unclassified file fails packaging. This stays correct regardless of
+which mode was built last. Settings, databases, session state and logs are
+excluded. The default gate extracts and smokes the Portable package, verifies
+every installer payload hash, installs without UAC to an isolated directory,
+smokes that installation and exercises its guarded uninstaller.
+`-SkipRuntimeSmoke` is only for a deterministic rebuild comparison, not release
+acceptance. PDBs stay outside the runtime ZIP and remain identified by
+`engine.lock.json`.
+
+The installer candidate is intentionally unsigned until the owner supplies a
+production signing identity. The repository also needs an owner-selected
+project-wide distribution license before a candidate can be called a final
+public release. The scripts do not create a substitute self-signed production
+identity or modify the system trust store.
 
 ## Phase 2 synthetic DirectComposition probe
 

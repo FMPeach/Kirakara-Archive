@@ -14,6 +14,8 @@ param(
   [ValidateSet('debug', 'profile', 'release')]
   [string]$Mode = 'release',
 
+  [string]$BundlePath,
+
   [ValidateRange(1, 120)]
   [int]$StartupTimeoutSeconds = 30,
 
@@ -93,8 +95,14 @@ $configuration = switch ($Mode) {
   'profile' { 'Profile' }
   'release' { 'Release' }
 }
-$bundle = Join-Path (Get-AppRepositoryRoot) `
-  "build\windows\x64\runner\$configuration"
+$bundle = if ([string]::IsNullOrWhiteSpace($BundlePath)) {
+  Join-Path (Get-AppRepositoryRoot) "build\windows\x64\runner\$configuration"
+} else {
+  Resolve-UnresolvedPath $BundlePath
+}
+if (-not (Test-Path -LiteralPath $bundle -PathType Container)) {
+  throw "Kirakara App bundle directory is missing: $bundle"
+}
 $executable = Join-Path $bundle 'kirakara_app.exe'
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
   throw "Kirakara App bundle is missing. Build it before smoke testing: $executable"
@@ -149,6 +157,8 @@ $started = $false
 $processId = $null
 $startupPollCount = 0
 $startupWindowWaitMilliseconds = 0
+$closeWindowHandle = 0
+$shutdownWaitMilliseconds = 0
 try {
   if (-not $process.Start()) {
     throw 'Could not start Kirakara App.'
@@ -187,8 +197,16 @@ try {
     $exitedDuringObservation = $true
   }
   if (-not $process.HasExited) {
+    # A timed-out WaitForExit can leave Process properties cached. Refresh
+    # before resolving the window used by CloseMainWindow; otherwise the smoke
+    # harness can report a forced cleanup even though WM_CLOSE exits normally.
+    $process.Refresh()
+    $closeWindowHandle = [long]$process.MainWindowHandle
     $closeRequested = $process.CloseMainWindow()
+    $shutdownStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $gracefulExit = $process.WaitForExit($ShutdownTimeoutSeconds * 1000)
+    $shutdownStopwatch.Stop()
+    $shutdownWaitMilliseconds = [long]$shutdownStopwatch.ElapsedMilliseconds
   }
   if (-not $process.HasExited) {
     $process.Kill()
@@ -218,7 +236,7 @@ $passed = (
   ($gracefulExit -or ($forcedCleanup -and $AllowForcedCleanup))
 )
 $report = [ordered]@{
-  schemaVersion = 1
+  schemaVersion = 2
   generatedAt = (Get-Date).ToUniversalTime().ToString('o')
   startedAt = $startedAt.ToString('o')
   engine = $Engine
@@ -243,8 +261,10 @@ $report = [ordered]@{
   mainWindowHandle = $mainWindowHandle
   responding = $responding
   exitedDuringObservation = $exitedDuringObservation
+  closeWindowHandle = $closeWindowHandle
   closeRequested = $closeRequested
   gracefulExit = $gracefulExit
+  shutdownWaitMilliseconds = $shutdownWaitMilliseconds
   forcedCleanup = $forcedCleanup
   allowForcedCleanup = [bool]$AllowForcedCleanup
   exitCode = $exitCode

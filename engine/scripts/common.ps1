@@ -26,6 +26,19 @@ function Get-EngineLock {
   if ($lock.schemaVersion -ne 1) {
     throw "Unsupported engine lock schema: $($lock.schemaVersion)"
   }
+  $patchsetProperty = $lock.PSObject.Properties['patchset']
+  $patchset = if ($patchsetProperty) { $patchsetProperty.Value } else { $null }
+  if (
+    -not $patchset -or
+    -not $patchset.PSObject.Properties['abiVersion'] -or
+    -not $patchset.PSObject.Properties['version'] -or
+    -not $patchset.PSObject.Properties['revision'] -or
+    [uint32]$patchset.abiVersion -eq 0 -or
+    [uint32]$patchset.version -eq 0 -or
+    [string]::IsNullOrWhiteSpace([string]$patchset.revision)
+  ) {
+    throw 'engine.lock.json is missing the versioned Kirakara patchset contract.'
+  }
   return $lock
 }
 

@@ -37,10 +37,11 @@
   绑定本次已验证分发候选；重建必须走候选报告、人工重锁和完整门槛。
 - 官方/本地 debug 与 profile 都通过真实 Show external texture A/B 和 bundle 文件
   校验；60 Hz 的短窗口会在 60/60 与 60/53～55 callback/acquire 之间相位波动，
-  与 Phase 0 结论一致。官方/本地 release 都能启动并保持窗口响应，也都未能在标准
-  close 后 20 秒内优雅退出；受限烟测仅在显式精确 PID 清理时通过，生命周期问题
-  留到后续阶段，不能表述为正常退出已通过。详见
-  `docs/windows_compositor/phase1_stock_engine.md`。
+  与 Phase 0 结论一致。Phase 1 当时官方/本地 release 的烟测都曾被记录为标准 close
+  后 20 秒未退出；Phase 7 已证明这是测试脚本在超时 `WaitForExit` 后没有刷新变化过的
+  主窗口句柄，而不是 App/Engine 生命周期差异。修正后官方与 custom Release 均在约
+  170 ms 内退出、退出码 0 且无需强制清理。Phase 1 原始报告保留为历史，当前结论见
+  `docs/windows_compositor/phase7_compatibility_release.md`。
 - Phase 2 实现与当前硬件门槛完成：已加入锁定的 `windows-dcomp-synthetic` v2 源码补丁、版本化 ABI、
   单顶层 HWND 双 Visual DirectComposition、预乘 Alpha Flutter 上层、独立合成 D3D
   Stage producer、自动计数门槛和人工检查 harness。定制 debug Engine 的源码树、
@@ -109,6 +110,14 @@
   Engine 19 项剪贴板聚焦测试和 365 项全量门禁通过既定判定；v4 synthetic、真实
   Stage 及官方/定制 external texture A/B 均未退化。真实触屏、RDP、第三方富文本和
   Windows 10 留在 Phase 7。详见 `docs/windows_clipboard/phase6_reliability.md`。
+- Phase 7 当前环境可可靠执行的发布候选门禁已完成：custom Engine
+  debug/profile/release 三模式及 AOT patched SDK 全部锁定；官方/custom Release
+  对称正常关闭；三模式 ABI 错配明确拒绝；Portable、无 UAC 当前用户安装包和补丁
+  源码包可确定性重建，并通过解包运行、安装、运行、卸载与会话数据排除。Windows 10、
+  Intel/AMD 活动路径、真实高分屏/混合 DPI、物理双屏/Cast、真实睡眠/热插拔/device
+  removal、1130G7 热态、第二位协作者复现、生产签名身份和项目级发布许可证仍未完成，
+  因此 Phase 7 及总计划不能宣称全部完成。详见
+  `docs/windows_compositor/phase7_compatibility_release.md`。
 
 ## 为什么要做这件事
 
@@ -576,11 +585,34 @@ Unicode/快捷键/菜单行为保持可用；实现和测试未引入监听、�
 - 构建 debug/profile/release，并验证安装包与 Portable 包。
 - 发布补丁源码、锁文件、构建说明、许可证、产物校验值、符号策略和回滚说明。
 
+进展（2026-09-28）：custom v4 的 debug/profile/release 三模式已从同一锁定源码树
+构建；profile/release 显式包含 `gen_snapshot` 与 `flutter_patched_sdk`，并锁定 AOT
+工具链。严格校验确认三模式保留全部 102 个官方导出且只增加一个版本化 Kirakara
+导出。官方与 custom Release 均通过不允许强制清理的启动/响应/正常关闭门禁；早期
+同时失败的原因是烟测缓存旧 HWND，修正后分别约 163/168 ms 退出、退出码 0。
+
+新增的 ABI gate 对三模式 stock DLL 确认无 custom export，对 custom DLL 确认错误
+ABI 和错误结构大小都明确返回 version mismatch，只有 ABI 2、patchset 4、补丁 revision
+和 Engine revision 精确匹配才返回函数表。发布脚本从 CMake 安装清单生成 Portable、
+无 UAC 的当前用户安装包和补丁源码包，拒绝未知文件并排除 settings、会话数据库和
+日志；解包运行、逐文件哈希校验、隔离安装、运行和卸载均通过。同一输入连续两次生成
+的三份 ZIP 哈希逐项一致，PDB 只由锁文件标识并留在外部构建/Release 资产。
+
+当前主机仍只证明 Windows 11 23H2 / RTX 4060 Ti 活动路径。UHD 770 和虚拟 4K 设备
+虽然能枚举，但没有作为真实 Stage 呈现目标，不能算 Intel/4K 通过。Windows 10、AMD、
+Intel 活动路径、WARP、175%/200% 真正高分屏、混合 DPI、物理双屏/Cast、真实睡眠/
+热插拔/device removal、Iris Xe 热态、触屏/RDP/第三方富文本仍需实机。第二位协作者
+复现也尚未发生；项目级许可证和生产签名身份需所有者提供。当前阶段因此是“本机发布
+候选基础设施完成”，而不是完整兼容性矩阵完成。
+
 退出条件：
 
 - 定制构建和官方构建都通过 Release 冒烟测试。
 - 另一位协作者可以根据文档和补丁复现定制 DLL。
 - Flutter 升级时，不可能静默加载一个 ABI 或版本不匹配的定制 DLL。
+
+当前退出条件判定（2026-09-28）：第一项已通过，第三项已有自动运行门禁；第二项必须
+由独立协作者实际执行，不能用同一主机自证代替。因此 Phase 7 保持未完全完成状态。
 
 ## 必要的可观测能力
 
