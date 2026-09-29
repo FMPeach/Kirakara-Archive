@@ -91,6 +91,9 @@ function Assert-SyntheticBundleIdentity {
   } catch {
     throw "Synthetic compositor bundle identity stamp is invalid. $rerun"
   }
+  if ($null -eq $actual) {
+    throw "Synthetic compositor bundle identity stamp is invalid. $rerun"
+  }
   foreach ($property in @(
       'schemaVersion',
       'target',
@@ -98,24 +101,44 @@ function Assert-SyntheticBundleIdentity {
       'frameworkRevision',
       'engineRevision'
     )) {
-    if ([string]$actual.$property -ne [string]$Expected.$property) {
+    $actualProperty = $actual.PSObject.Properties[$property]
+    if (
+      $null -eq $actualProperty -or
+      [string]$actualProperty.Value -ne [string]$Expected[$property]
+    ) {
       throw "Synthetic compositor bundle identity mismatch ($property). $rerun"
     }
   }
-  $actualFiles = @($actual.files)
-  $expectedFiles = @($Expected.files)
+  $actualFilesProperty = $actual.PSObject.Properties['files']
+  if ($null -eq $actualFilesProperty) {
+    throw "Synthetic compositor bundle identity mismatch (files). $rerun"
+  }
+  $actualFiles = @($actualFilesProperty.Value)
+  $expectedFiles = @($Expected['files'])
   if ($actualFiles.Count -ne $expectedFiles.Count) {
     throw "Synthetic compositor bundle identity file count mismatch. $rerun"
   }
   for ($index = 0; $index -lt $expectedFiles.Count; $index++) {
     $actualFile = $actualFiles[$index]
     $expectedFile = $expectedFiles[$index]
+    if ($null -eq $actualFile) {
+      throw "Synthetic compositor bundle identity mismatch ($($expectedFile['path'])). $rerun"
+    }
+    $actualPath = $actualFile.PSObject.Properties['path']
+    $actualLength = $actualFile.PSObject.Properties['length']
+    $actualHash = $actualFile.PSObject.Properties['sha256']
+    $expectedPath = [string]$expectedFile['path']
+    $expectedLength = [long]$expectedFile['length']
+    $expectedHash = [string]$expectedFile['sha256']
     if (
-      [string]$actualFile.path -ne [string]$expectedFile.path -or
-      [long]$actualFile.length -ne [long]$expectedFile.length -or
-      [string]$actualFile.sha256 -ne [string]$expectedFile.sha256
+      $null -eq $actualPath -or
+      $null -eq $actualLength -or
+      $null -eq $actualHash -or
+      [string]$actualPath.Value -ne $expectedPath -or
+      [long]$actualLength.Value -ne $expectedLength -or
+      [string]$actualHash.Value -ne $expectedHash
     ) {
-      throw "Synthetic compositor bundle identity mismatch ($($expectedFile.path)). $rerun"
+      throw "Synthetic compositor bundle identity mismatch ($expectedPath). $rerun"
     }
   }
 }
