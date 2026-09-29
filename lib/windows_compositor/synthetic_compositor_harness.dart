@@ -5,6 +5,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'compositor_probe_options.dart';
+
 const _compositorChannel = MethodChannel('kirakara/dcomp_compositor');
 
 int _counter(Map<String, Object?> values, String key) {
@@ -232,6 +234,144 @@ class _SyntheticCompositorHarnessState
       await Future<void>.delayed(const Duration(seconds: 2));
       final postInteractionAfter = await _readMap('getDiagnostics');
 
+      final soakSeconds = parseCompositorSoakSeconds(
+        Platform.environment['KIRAKARA_COMPOSITOR_SOAK_SECONDS'],
+      );
+      Map<String, Object?>? soakSample;
+      var soakStageCadenceInRange = true;
+      var soakStageWaitWasEventDriven = true;
+      var soakFlutterStayedQuiescent = true;
+      var soakDiagnosticsStayedHealthy = true;
+      var soakTopologyStayedStable = true;
+      if (soakSeconds > 0) {
+        if (!mounted) {
+          throw StateError('Synthetic compositor harness was unmounted.');
+        }
+        setState(() {
+          _status = '正在执行 $soakSeconds 秒有界稳态门禁…';
+        });
+        await Future<void>.delayed(const Duration(milliseconds: 750));
+        final beforeRssBytes = ProcessInfo.currentRss;
+        final soakBefore = await _readMap('getDiagnostics');
+        final soakStopwatch = Stopwatch()..start();
+        final firstIntervalMilliseconds = soakSeconds * 500;
+        await Future<void>.delayed(
+          Duration(milliseconds: firstIntervalMilliseconds),
+        );
+        final soakMidpoint = await _readMap('getDiagnostics');
+        final midpointElapsedMilliseconds = soakStopwatch.elapsedMilliseconds;
+        final midpointRssBytes = ProcessInfo.currentRss;
+        await Future<void>.delayed(
+          Duration(
+            milliseconds: soakSeconds * 1000 - firstIntervalMilliseconds,
+          ),
+        );
+        final soakAfter = await _readMap('getDiagnostics');
+        soakStopwatch.stop();
+        final afterRssBytes = ProcessInfo.currentRss;
+        final elapsedMilliseconds = soakStopwatch.elapsedMilliseconds;
+        final secondIntervalMilliseconds =
+            elapsedMilliseconds - midpointElapsedMilliseconds;
+
+        int delta(
+          Map<String, Object?> from,
+          Map<String, Object?> to,
+          String counter,
+        ) =>
+            _counter(to, counter) - _counter(from, counter);
+
+        int minimumStagePresents(int durationMilliseconds) =>
+            (durationMilliseconds * 45) ~/ 1000;
+
+        int maximumStagePresents(int durationMilliseconds) =>
+            ((durationMilliseconds * 75) / 1000).ceil() + 5;
+
+        bool cadenceInRange(int count, int durationMilliseconds) =>
+            count >= minimumStagePresents(durationMilliseconds) &&
+            count <= maximumStagePresents(durationMilliseconds);
+
+        bool diagnosticsHealthy(Map<String, Object?> sample) =>
+            sample['initializationHresult'] == 0 &&
+            sample['lastStagePresentHresult'] == 0 &&
+            sample['lastStagePacingStatus'] == 0 &&
+            sample['lastResizeHresult'] == 0 &&
+            sample['lastStageResourceHresult'] == 0 &&
+            _counter(sample, 'stageDeviceRemovedCount') == 0 &&
+            _counter(sample, 'stageOccludedCount') == 0 &&
+            _counter(sample, 'stageHandleDuplicateFailureCount') == 0 &&
+            _counter(sample, 'stageResourceOpenFailureCount') == 0;
+
+        bool topologyStable(Map<String, Object?> sample) =>
+            _counter(sample, 'topLevelWindow') ==
+                _counter(soakBefore, 'topLevelWindow') &&
+            _counter(sample, 'width') == _counter(soakBefore, 'width') &&
+            _counter(sample, 'height') == _counter(soakBefore, 'height') &&
+            _counter(sample, 'surfaceResizeCount') ==
+                _counter(soakBefore, 'surfaceResizeCount') &&
+            _counter(sample, 'compositionTreeCommitCount') ==
+                _counter(soakBefore, 'compositionTreeCommitCount') &&
+            _counter(sample, 'compositionTreeCommitCount') == 1;
+
+        final firstStageDelta =
+            delta(soakBefore, soakMidpoint, 'stagePresentCount');
+        final secondStageDelta =
+            delta(soakMidpoint, soakAfter, 'stagePresentCount');
+        final soakStageDelta =
+            delta(soakBefore, soakAfter, 'stagePresentCount');
+        final firstWakeDelta =
+            delta(soakBefore, soakMidpoint, 'stageWaitWakeCount');
+        final secondWakeDelta =
+            delta(soakMidpoint, soakAfter, 'stageWaitWakeCount');
+        final soakWakeDelta =
+            delta(soakBefore, soakAfter, 'stageWaitWakeCount');
+        final firstFlutterDelta =
+            delta(soakBefore, soakMidpoint, 'flutterPresentCount');
+        final secondFlutterDelta =
+            delta(soakMidpoint, soakAfter, 'flutterPresentCount');
+        final soakFlutterDelta =
+            delta(soakBefore, soakAfter, 'flutterPresentCount');
+        soakStageCadenceInRange =
+            cadenceInRange(firstStageDelta, midpointElapsedMilliseconds) &&
+                cadenceInRange(secondStageDelta, secondIntervalMilliseconds) &&
+                cadenceInRange(soakStageDelta, elapsedMilliseconds);
+        soakStageWaitWasEventDriven =
+            (firstWakeDelta - firstStageDelta).abs() <= 3 &&
+                (secondWakeDelta - secondStageDelta).abs() <= 3 &&
+                (soakWakeDelta - soakStageDelta).abs() <= 3;
+        soakFlutterStayedQuiescent = firstFlutterDelta <= 3 &&
+            secondFlutterDelta <= 3 &&
+            soakFlutterDelta <= 3;
+        soakDiagnosticsStayedHealthy =
+            diagnosticsHealthy(soakMidpoint) && diagnosticsHealthy(soakAfter);
+        soakTopologyStayedStable =
+            topologyStable(soakMidpoint) && topologyStable(soakAfter);
+        soakSample = <String, Object?>{
+          'requestedDurationSeconds': soakSeconds,
+          'elapsedMilliseconds': elapsedMilliseconds,
+          'midpointElapsedMilliseconds': midpointElapsedMilliseconds,
+          'before': soakBefore,
+          'midpoint': soakMidpoint,
+          'after': soakAfter,
+          'stagePresentDelta': soakStageDelta,
+          'stagePresentDeltaToMidpoint': firstStageDelta,
+          'stagePresentDeltaAfterMidpoint': secondStageDelta,
+          'stageWaitWakeDelta': soakWakeDelta,
+          'stageWaitWakeDeltaToMidpoint': firstWakeDelta,
+          'stageWaitWakeDeltaAfterMidpoint': secondWakeDelta,
+          'flutterPresentDelta': soakFlutterDelta,
+          'flutterPresentDeltaToMidpoint': firstFlutterDelta,
+          'flutterPresentDeltaAfterMidpoint': secondFlutterDelta,
+          'minimumExpectedStagePresents':
+              minimumStagePresents(elapsedMilliseconds),
+          'maximumExpectedStagePresents':
+              maximumStagePresents(elapsedMilliseconds),
+          'beforeRssBytes': beforeRssBytes,
+          'midpointRssBytes': midpointRssBytes,
+          'afterRssBytes': afterRssBytes,
+          'rssDeltaBytes': afterRssBytes - beforeRssBytes,
+        };
+      }
+
       bool keptWindowIdentity(
         Map<String, Object?> before,
         Map<String, Object?> visible,
@@ -327,6 +467,13 @@ class _SyntheticCompositorHarnessState
         'flutterReturnedToQuiescence': postInteractionFlutterDelta <= 3,
         'noStageDeviceRemoval': resizeAfter['stageDeviceRemovedCount'] == 0,
         'noStageOcclusion': resizeAfter['stageOccludedCount'] == 0,
+        if (soakSample != null) ...<String, bool>{
+          'soakStageCadenceInRange': soakStageCadenceInRange,
+          'soakStageWaitWasEventDriven': soakStageWaitWasEventDriven,
+          'soakFlutterStayedQuiescent': soakFlutterStayedQuiescent,
+          'soakDiagnosticsStayedHealthy': soakDiagnosticsStayedHealthy,
+          'soakTopologyStayedStable': soakTopologyStayedStable,
+        },
       };
       report = <String, Object?>{
         'schemaVersion': 1,
@@ -370,6 +517,7 @@ class _SyntheticCompositorHarnessState
           'stagePresentDelta': postInteractionStageDelta,
           'flutterPresentDelta': postInteractionFlutterDelta,
         },
+        if (soakSample != null) 'soakSample': soakSample,
         'gates': gates,
         'passed': gates.values.every((value) => value),
       };

@@ -147,6 +147,9 @@ dirty rectangle 传入平台 compositor；`CompositorOpenGL::Present` 对收到�
 场景，每项至少 20 分钟并单独保存 ETL/计数报告：单屏主控预览、物理双屏 + 主控预览、
 Cast + 主控预览、物理双屏 + Cast + 主控预览、Flutter 面板动画。记录 GPU 频率/占用、
 封装功耗、温度、Show missed slots、预览 cadence 等级、物理 Stage cadence 和音频时钟。
+在真实 Show 场景之前，先按 `phase7_compatibility_release.md` 的 `-SoakSeconds 1800`
+步骤运行 synthetic 有界门禁，保存冷机/半程/终点计数；该自动门禁不替代上述真实业务
+拓扑与视觉观察。
 
 管理员 PowerShell 仅在采集 WPR/ETW 时需要：
 

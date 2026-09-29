@@ -8,8 +8,11 @@ param(
 
   [string]$LocalEngine = 'host_debug_kirakara_v4',
 
-  [ValidateRange(10, 120)]
+  [ValidateRange(10, 14500)]
   [int]$TimeoutSeconds = 45,
+
+  [ValidateRange(0, 14400)]
+  [int]$SoakSeconds = 0,
 
   [ValidateSet(100, 125, 150, 175, 200)]
   [int]$ExpectedScalePercent,
@@ -24,6 +27,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($SoakSeconds -gt 0 -and $SoakSeconds -lt 30) {
+  throw 'SoakSeconds must be zero or between 30 and 14400 seconds.'
+}
+if ($KeepOpen -and $SoakSeconds -gt 0) {
+  throw 'KeepOpen and SoakSeconds are separate modes; choose one.'
+}
 
 $repositoryRoot = [IO.Path]::GetFullPath(
   (Join-Path $PSScriptRoot '..\..')
@@ -80,8 +90,9 @@ Assert-UsableEngineArtifacts `
 
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
   $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+  $suffix = if ($SoakSeconds -gt 0) { "-soak-$($SoakSeconds)s" } else { '' }
   $ReportPath = Join-Path $repositoryRoot `
-    "build\diagnostics\synthetic-compositor-$stamp.json"
+    "build\diagnostics\synthetic-compositor$suffix-$stamp.json"
 }
 $absoluteReport = Resolve-UnresolvedPath $ReportPath
 if (Test-Path -LiteralPath $absoluteReport) {
@@ -135,31 +146,71 @@ $startInfo.UseShellExecute = $false
 $startInfo.Environment['KIRAKARA_COMPOSITOR_BACKEND'] = 'synthetic'
 $startInfo.Environment['KIRAKARA_COMPOSITOR_TEST_MODE'] = '1'
 $startInfo.Environment['KIRAKARA_COMPOSITOR_REPORT_PATH'] = $absoluteReport
+$startInfo.Environment['KIRAKARA_COMPOSITOR_SOAK_SECONDS'] = `
+  $SoakSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
 $startInfo.Environment['KIRAKARA_COMPOSITOR_AUTO_EXIT'] = if ($KeepOpen) {
   '0'
 } else {
   '1'
 }
 
+$powerRequestActive = $false
+if ($SoakSeconds -gt 0) {
+  if (-not ('Kirakara.TestPowerRequest' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace Kirakara {
+  public static class TestPowerRequest {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint SetThreadExecutionState(uint executionState);
+  }
+}
+'@
+  }
+  $executionState = [Kirakara.TestPowerRequest]::SetThreadExecutionState(
+    [uint32]2147483651
+  )
+  if ($executionState -eq 0) {
+    throw "Could not keep the system and display awake (Win32 $([Runtime.InteropServices.Marshal]::GetLastWin32Error()))."
+  }
+  $powerRequestActive = $true
+  Write-Host "Bounded $SoakSeconds-second soak will keep the system and display awake until the child exits."
+  Write-Host 'Keep the probe window visible and unobscured for the entire bounded soak.'
+}
+
 $process = [Diagnostics.Process]::new()
 $process.StartInfo = $startInfo
-if (-not $process.Start()) {
-  throw 'Could not start the synthetic compositor App.'
-}
-Write-Host "Synthetic compositor App started as PID $($process.Id)."
+try {
+  if (-not $process.Start()) {
+    throw 'Could not start the synthetic compositor App.'
+  }
+  Write-Host "Synthetic compositor App started as PID $($process.Id)."
 
-if ($KeepOpen) {
-  Write-Host "Interactive probe left open. Report will be written to $absoluteReport"
-  return
-}
+  if ($KeepOpen) {
+    Write-Host "Interactive probe left open. Report will be written to $absoluteReport"
+    return
+  }
 
-$completed = $process.WaitForExit($TimeoutSeconds * 1000)
-if (-not $completed) {
-  $process.Kill()
-  $process.WaitForExit()
-  throw "Synthetic compositor App timed out after $TimeoutSeconds seconds."
+  $effectiveTimeoutSeconds = [Math]::Max(
+    $TimeoutSeconds,
+    $SoakSeconds + 45
+  )
+  $completed = $process.WaitForExit($effectiveTimeoutSeconds * 1000)
+  if (-not $completed) {
+    $process.Kill()
+    $process.WaitForExit()
+    throw "Synthetic compositor App timed out after $effectiveTimeoutSeconds seconds."
+  }
+  $exitCode = $process.ExitCode
+} finally {
+  if ($powerRequestActive) {
+    [void][Kirakara.TestPowerRequest]::SetThreadExecutionState(
+      [uint32]2147483648
+    )
+  }
 }
-$exitCode = $process.ExitCode
 $process.Dispose()
 if ($exitCode -ne 0) {
   throw "Synthetic compositor App exited with code $exitCode."
@@ -214,3 +265,6 @@ $report.overlaySample | Format-List | Out-Host
 $report.pageSample | Format-List | Out-Host
 $report.monitorMoveSample | Format-List | Out-Host
 $report.postInteractionStaticSample | Format-List | Out-Host
+if ($null -ne $report.soakSample) {
+  $report.soakSample | Format-List | Out-Host
+}

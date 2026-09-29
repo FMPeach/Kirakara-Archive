@@ -302,11 +302,35 @@ callback/acquire/present、inactive 停止唤醒和重建结果。然后运行 s
 
 ### 热态和 Trace
 
-在 1130G7/Iris Xe 目标机用 synthetic `-KeepOpen` 保持独立 Stage Visual，至少运行
-30 分钟；同时按实际业务方式播放真实节目、物理 Stage/Cast 时另做一轮。冷机、15 分钟
-和 30 分钟各记录分辨率/刷新率、Stage cadence、Flutter present、GPU 引擎利用率、温度/
-功耗（设备可提供时）、device removal/HRESULT 和视觉卡顿。不要只报平均帧率，要保留
-间隔分布或 PresentMon/ETW 原始数据。
+在 1130G7/Iris Xe 目标机先运行有界 synthetic 稳态门禁：
+
+```powershell
+.\tool\windows_compositor\run_synthetic_compositor_probe.ps1 `
+  -FlutterSdkRoot $flutterSdkRoot `
+  -WorkspaceRoot $workspaceRoot `
+  -LocalEngine host_debug_kirakara_v4 `
+  -SoakSeconds 1800
+```
+
+`-SoakSeconds` 只接受 `30..14400`，并与人工观察用的 `-KeepOpen` 互斥。脚本仅在子进程
+存活期间调用线程级 `SetThreadExecutionState` 防止系统和显示器进入空闲休眠，退出或失败
+都会恢复，不修改电源计划，也不需要 UAC。Dart harness 只做冷机、半程和终点三次采样，
+中间是两次有限 `Future.delayed`，没有轮询或常驻 timer。两段和全程都必须维持 45～75 Hz
+的 Stage cadence、wait wake 与 present 差值不超过 3、静止 Flutter present 增量不超过 3；
+HWND/尺寸/Visual Tree 不变，device removal、occluded、handle/resource failure 与所有关键
+HRESULT 必须保持健康。RSS 三点只作为趋势数据，不用单个阈值掩盖泄漏调查。
+
+窗口必须真实可见且不被系统安全桌面或其他窗口完全遮挡；`0xc01e0006`
+（`STATUS_GRAPHICS_PRESENT_OCCLUDED`）会明确失败，不能作为热态通过。2026-09-29 当前主机的
+30 秒负例在前台 `PickerHost / Windows 安全中心` 存在时正确失败，并写出 0/15/30 秒三点，
+因此只验证了失败门禁和报告结构，没有计入 RTX 4060 Ti 稳态通过。待交互桌面恢复后需先
+用 30 秒样本通过，再运行完整 1800 秒；Iris Xe 目标机仍必须另跑，不能由本机替代。
+
+有界门禁通过后，可再用 synthetic `-KeepOpen` 做人工视觉观察；同时按实际业务方式播放
+真实节目、物理 Stage/Cast 时另做一轮。冷机、15 分钟和 30 分钟各记录分辨率/刷新率、
+Stage cadence、Flutter present、GPU 引擎利用率、温度/功耗（设备可提供时）、device
+removal/HRESULT 和视觉卡顿。不要只报平均帧率，要保留间隔分布或 PresentMon/ETW 原始
+数据。
 
 WPR/ETW 只有这一步需要管理员终端。先确认 App/Show/服务器和固定场景已经就绪，再在
 管理员 PowerShell 运行 `capture_compositor_trace.ps1`；每份 ETL 只对应一个命名场景，

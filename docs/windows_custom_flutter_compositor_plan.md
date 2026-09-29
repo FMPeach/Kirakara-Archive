@@ -144,6 +144,13 @@
   工具链和构建脚本，避免 relock 造成无意义的三模式失效。因此 Phase 8 和总计划仍不能
   宣称全部完成。详见
   `docs/windows_compositor/phase8_repository_bootstrap.md`。
+- Phase 7 长稳态门禁新增 `-SoakSeconds` 有界模式：只在起点、半程和终点采样，使用两次
+  有限等待而非轮询/timer，并检查两段及全程 Stage cadence、Flutter 静止、事件唤醒、
+  HWND/Visual Tree、HRESULT、device removal、occluded 和资源失败计数。脚本仅在子进程
+  期间临时阻止空闲休眠。2026-09-29 当前主机因前台 `PickerHost / Windows 安全中心`
+  令 DComp 从首帧返回 `STATUS_GRAPHICS_PRESENT_OCCLUDED`，30 秒负例按预期失败并留下
+  0/15/30 秒报告；这验证失败门禁，不算热态通过。桌面恢复后的 30 秒校准、RTX 4060 Ti
+  1800 秒样本及 Iris Xe 实机仍待执行。
 
 ## 为什么要做这件事
 
