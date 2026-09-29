@@ -231,8 +231,26 @@ class _SyntheticCompositorHarnessState
       // quiescent Flutter frame pump while Stage keeps advancing.
       await Future<void>.delayed(const Duration(milliseconds: 750));
       final postInteractionBefore = await _readMap('getDiagnostics');
+      final postInteractionStopwatch = Stopwatch()..start();
       await Future<void>.delayed(const Duration(seconds: 2));
       final postInteractionAfter = await _readMap('getDiagnostics');
+      postInteractionStopwatch.stop();
+      final postInteractionDurationMilliseconds =
+          postInteractionStopwatch.elapsedMilliseconds;
+      final postInteractionStageDelta =
+          _counter(postInteractionAfter, 'stagePresentCount') -
+              _counter(postInteractionBefore, 'stagePresentCount');
+      final postInteractionFlutterDelta =
+          _counter(postInteractionAfter, 'flutterPresentCount') -
+              _counter(postInteractionBefore, 'flutterPresentCount');
+      final cadenceReferenceStagePresents =
+          stageDelta + postInteractionStageDelta;
+      final cadenceReferenceDurationMilliseconds =
+          stopwatch.elapsedMilliseconds + postInteractionDurationMilliseconds;
+      final cadenceExpectation = CompositorCadenceExpectation.fromReference(
+        presentCount: cadenceReferenceStagePresents,
+        durationMilliseconds: cadenceReferenceDurationMilliseconds,
+      );
 
       final soakSeconds = parseCompositorSoakSeconds(
         Platform.environment['KIRAKARA_COMPOSITOR_SOAK_SECONDS'],
@@ -280,16 +298,6 @@ class _SyntheticCompositorHarnessState
         ) =>
             _counter(to, counter) - _counter(from, counter);
 
-        int minimumStagePresents(int durationMilliseconds) =>
-            (durationMilliseconds * 45) ~/ 1000;
-
-        int maximumStagePresents(int durationMilliseconds) =>
-            ((durationMilliseconds * 75) / 1000).ceil() + 5;
-
-        bool cadenceInRange(int count, int durationMilliseconds) =>
-            count >= minimumStagePresents(durationMilliseconds) &&
-            count <= maximumStagePresents(durationMilliseconds);
-
         bool diagnosticsHealthy(Map<String, Object?> sample) =>
             sample['initializationHresult'] == 0 &&
             sample['lastStagePresentHresult'] == 0 &&
@@ -330,10 +338,18 @@ class _SyntheticCompositorHarnessState
             delta(soakMidpoint, soakAfter, 'flutterPresentCount');
         final soakFlutterDelta =
             delta(soakBefore, soakAfter, 'flutterPresentCount');
-        soakStageCadenceInRange =
-            cadenceInRange(firstStageDelta, midpointElapsedMilliseconds) &&
-                cadenceInRange(secondStageDelta, secondIntervalMilliseconds) &&
-                cadenceInRange(soakStageDelta, elapsedMilliseconds);
+        soakStageCadenceInRange = cadenceExpectation.accepts(
+              firstStageDelta,
+              midpointElapsedMilliseconds,
+            ) &&
+            cadenceExpectation.accepts(
+              secondStageDelta,
+              secondIntervalMilliseconds,
+            ) &&
+            cadenceExpectation.accepts(
+              soakStageDelta,
+              elapsedMilliseconds,
+            );
         soakStageWaitWasEventDriven =
             (firstWakeDelta - firstStageDelta).abs() <= 3 &&
                 (secondWakeDelta - secondStageDelta).abs() <= 3 &&
@@ -361,10 +377,28 @@ class _SyntheticCompositorHarnessState
           'flutterPresentDelta': soakFlutterDelta,
           'flutterPresentDeltaToMidpoint': firstFlutterDelta,
           'flutterPresentDeltaAfterMidpoint': secondFlutterDelta,
+          'cadenceReferenceStagePresents': cadenceReferenceStagePresents,
+          'cadenceReferenceDurationMilliseconds':
+              cadenceReferenceDurationMilliseconds,
+          'cadenceReferenceHz': cadenceExpectation.referenceHz,
+          'minimumAcceptedStageHz': cadenceExpectation.minimumAcceptedHz,
+          'maximumAcceptedStageHz': cadenceExpectation.maximumAcceptedHz,
+          'stagePresentHz': cadenceExpectation.sampleHz(
+            soakStageDelta,
+            elapsedMilliseconds,
+          ),
+          'stagePresentHzToMidpoint': cadenceExpectation.sampleHz(
+            firstStageDelta,
+            midpointElapsedMilliseconds,
+          ),
+          'stagePresentHzAfterMidpoint': cadenceExpectation.sampleHz(
+            secondStageDelta,
+            secondIntervalMilliseconds,
+          ),
           'minimumExpectedStagePresents':
-              minimumStagePresents(elapsedMilliseconds),
+              cadenceExpectation.minimumPresentCount(elapsedMilliseconds),
           'maximumExpectedStagePresents':
-              maximumStagePresents(elapsedMilliseconds),
+              cadenceExpectation.maximumPresentCount(elapsedMilliseconds),
           'beforeRssBytes': beforeRssBytes,
           'midpointRssBytes': midpointRssBytes,
           'afterRssBytes': afterRssBytes,
@@ -394,13 +428,6 @@ class _SyntheticCompositorHarnessState
           _counter(overlayBefore, 'stagePresentCount');
       final pageStageDelta = _counter(pageVisible, 'stagePresentCount') -
           _counter(pageBefore, 'stagePresentCount');
-      final postInteractionStageDelta =
-          _counter(postInteractionAfter, 'stagePresentCount') -
-              _counter(postInteractionBefore, 'stagePresentCount');
-      final postInteractionFlutterDelta =
-          _counter(postInteractionAfter, 'flutterPresentCount') -
-              _counter(postInteractionBefore, 'flutterPresentCount');
-
       final gates = <String, bool>{
         'backendMetadataMatches': backend['backend'] == 'synthetic' &&
             backend['abiVersion'] == 2 &&
@@ -511,7 +538,7 @@ class _SyntheticCompositorHarnessState
         },
         'monitorMoveSample': monitorMoveSample,
         'postInteractionStaticSample': <String, Object?>{
-          'durationMilliseconds': 2000,
+          'durationMilliseconds': postInteractionDurationMilliseconds,
           'before': postInteractionBefore,
           'after': postInteractionAfter,
           'stagePresentDelta': postInteractionStageDelta,
