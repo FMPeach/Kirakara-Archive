@@ -69,8 +69,8 @@
   DirectComposition Visual。两秒静止 Flutter 样本为 Show submit `+120`、Stage
   Present `+120`、Flutter Present `+0`；750 ms platform-thread stall 为 Stage
   `+45`、Flutter `+0`。真实门槛已覆盖无标题/带标题、暂停/恢复、重唱、12 秒自然
-  EOF、预准备后的 seamless 自然切歌、generation、fit/clip、遮罩/页面、resize 和
-  detach/reattach；
+  EOF、视频主时钟下音频先 EOF 与视频先 EOF、失配后恢复、预准备后的 seamless
+  自然切歌、generation、fit/clip、遮罩/页面、resize 和 detach/reattach；
   没有 callback 拒绝、handle/resource 失败、stale frame 或 device removal。
 - 官方 debug Engine 与 `host_debug_kirakara_v3` 都通过强制 external texture 的同一
   真实 Show integration smoke；定制合成器失败不会静默落入回退掩盖 Bug。当前原始
@@ -518,8 +518,10 @@ Show follow-up `7a822b2` 同步修正 GPU smoke 的慢驱动等待语义，避�
 真实探针在 96 DPI / RTX 4060 Ti 上通过所有门槛：静止 UI 2 秒 Stage `+120` /
 Flutter `+0`，平台线程阻塞 750 ms Stage `+45` / Flutter `+0`；暂停稳定窗口漂移
 0.000 秒，恢复 750 ms 推进 0.744 秒，重唱从 1.222 秒回到 0.718 秒，12 秒自然 EOF
-精确进入 stopped，随后预准备曲目以 seamless 模式自然接续，detach/reattach 和静止
-样本仍正常。官方与定制 debug
+精确进入 stopped，随后预准备曲目以 seamless 模式自然接续。补充的真实失配门槛中，
+6 秒视频配两条 2 秒音轨在 2.348 秒仍为 playing 并最终于 6.099 秒停止；2 秒视频配
+两条 6 秒音轨于 2.090 秒停止，两者都非 buffering，随后普通节目恢复 playing。detach/reattach
+和静止样本仍正常。官方与定制 debug
 Engine 的 external texture A/B 均通过。标题门槛验证标题 KRL 真实加载；逐像素标题
 正确性由 Show renderer tests 覆盖，不从无截图样本外推。
 
@@ -530,9 +532,10 @@ Engine 的 external texture A/B 均通过。标题门槛验证标题 KRL 真实�
 - 已覆盖切歌、带标题/无标题、重唱、暂停/恢复和自然切歌的长时间测试。
 
 完成结论（2026-09-28）：在当前单屏环境，三项 Phase 3 退出条件均已满足并有自动
-计数/运输状态证据。物理双屏和 Cast 并行实机、不同 GPU、音视频 EOF 不一致，以及
-最小化/热插拔/睡眠/device removal/Show 重建属于后续 Phase 4/7 门槛，明确保持未
-验证，不能据当前通过结果宣称兼容矩阵完成。
+计数/运输状态证据。composed preview 的两种视频主时钟音视频 EOF 失配已于
+2026-09-29 补测通过；物理双屏和 Cast 并行实机下的失配 EOF、不同 GPU，以及真实
+热插拔/睡眠/device removal 属于后续 Phase 7 门槛，明确保持未验证，不能据当前通过
+结果宣称兼容矩阵完成。
 
 ### Phase 4：生命周期与失败恢复
 
@@ -620,9 +623,10 @@ Unicode/快捷键/菜单行为保持可用；实现和测试未引入监听、�
 新增的 ABI gate 对三模式 stock DLL 确认无 custom export，对 custom DLL 确认错误
 ABI 和错误结构大小都明确返回 version mismatch，只有 ABI 2、patchset 4、补丁 revision
 和 Engine revision 精确匹配才返回函数表。发布脚本从 CMake 安装清单生成 Portable、
-无 UAC 的当前用户安装包和补丁源码包，拒绝未知文件并排除 settings、会话数据库和
-日志；解包运行、逐文件哈希校验、隔离安装、运行和卸载均通过。同一输入连续两次生成
-的三份 ZIP 哈希逐项一致，PDB 只由锁文件标识并留在外部构建/Release 资产。
+无 UAC 的当前用户安装包、补丁源码包和独立 Engine 产物包，拒绝未知文件并排除
+settings、会话数据库和日志；解包运行、逐文件哈希校验、隔离安装、运行和卸载均通过。
+同一输入连续两次生成的四份 ZIP 哈希逐项一致，PDB 只进入单独 Engine Release 资产，
+不进入运行包或普通 Git。
 
 当前主机仍只证明 Windows 11 23H2 / RTX 4060 Ti 活动路径。UHD 770 和虚拟 4K 设备
 虽然能枚举，但没有作为真实 Stage 呈现目标，不能算 Intel/4K 通过。Windows 10、AMD、

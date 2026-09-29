@@ -424,6 +424,9 @@ per-user installer, patch-source and Engine-artifact ZIPs plus a release index
 with SHA-256 values. The Engine archive contains the exact reviewed DLL, import
 library, PDB, ICU, AOT tools and patched Dart SDK files for publication as a
 Release asset; it must not be committed to Git or copied into the runtime ZIP.
+The patch-source archive also carries the Windows compositor/clipboard capture,
+fixture and probe tools referenced by the phase documents; generated media and
+diagnostic outputs remain excluded.
 Runtime smoke reports live in a `diagnostics/` child of the selected
 output directory and the index records relative paths, so independent or
 repeat builds using `-OutputDirectory` do not collide with an earlier run or
@@ -528,6 +531,28 @@ program generations, pause/resume, replay, natural EOF, reload, detach and
 reattach. The report rejects callback/schema errors, handle duplication or
 resource-open failures, stale frames, failed HRESULTs and device removal. It
 uses one duration-derived EOF wait and no recurring timer or active polling.
+
+To add both video-master EOF mismatch directions, generate temporary media and
+pass its root explicitly:
+
+```powershell
+$eofRoot = '.\build\diagnostics\eof-mismatch-fixtures'
+.\tool\windows_compositor\make_eof_mismatch_fixtures.ps1 `
+  -OutputDirectory $eofRoot
+.\tool\windows_compositor\run_real_stage_compositor_probe.ps1 `
+  -FlutterSdkRoot 'D:\Program Files\Flutter' `
+  -WorkspaceRoot '.\.kfe' `
+  -ShowHostDll 'D:\path\to\Kirakara Show\build\bin\libshow_host.dll' `
+  -EofMismatchFixtureRoot $eofRoot `
+  -LifecycleProbe `
+  -ExitWhileActive
+```
+
+The generated media is never committed. The probe verifies that auxiliary
+audio EOF does not stop a longer video-master program, that shorter video EOF
+does stop a program with longer audio, and that an ordinary program can be
+loaded afterward. All waits are finite and derived from probed media duration.
+
 The Show input is resolved from the explicit parameter, the process-only
 `KIRAKARA_SHOW_HOST_DLL` build variable, or a sibling `Kirakara Show` checkout,
 in that order. The same ABI gate used for release packaging runs before build;

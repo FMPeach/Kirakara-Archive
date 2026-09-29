@@ -418,13 +418,15 @@ try {
   foreach ($sourceDirectory in @(
       (Join-Path $repository 'engine'),
       (Join-Path $repository 'docs\windows_compositor'),
-      (Join-Path $repository 'docs\windows_clipboard')
+      (Join-Path $repository 'docs\windows_clipboard'),
+      (Join-Path $repository 'tool\windows_compositor'),
+      (Join-Path $repository 'tool\windows_clipboard')
     )) {
     $sourceCandidates += Get-ChildItem -LiteralPath $sourceDirectory -File -Recurse |
       Where-Object {
         $_.FullName -notmatch '[\\/](\.work|artifacts|reports|out)[\\/]' -and
         $_.Extension -in '.ps1', '.psm1', '.patch', '.json', '.md', '.h',
-          '.txt', '.gclient'
+          '.txt', '.gclient', '.cs', '.krl', '.wprp'
       }
   }
   foreach ($relativeSource in @(

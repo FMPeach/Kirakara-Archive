@@ -115,6 +115,180 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
     });
   }
 
+  List<Map<String, Object?>> _readEofMismatchCases(String root) {
+    final manifestPath = _fixture(root, 'manifest.json');
+    final decoded = jsonDecode(File(manifestPath).readAsStringSync());
+    if (decoded is! Map) {
+      throw StateError('EOF mismatch manifest is not a JSON object.');
+    }
+    final manifest = Map<String, Object?>.from(decoded);
+    if (manifest['schemaVersion'] != 1 ||
+        manifest['videoMasterClock'] != true) {
+      throw StateError('EOF mismatch manifest contract is incompatible.');
+    }
+    final rawCases = manifest['cases'];
+    if (rawCases is! List || rawCases.length != 2) {
+      throw StateError('EOF mismatch manifest must contain exactly two cases.');
+    }
+    final cases = <Map<String, Object?>>[];
+    final names = <String>{};
+    for (final rawCase in rawCases) {
+      if (rawCase is! Map) {
+        throw StateError('EOF mismatch case is not a JSON object.');
+      }
+      final fixtureCase = Map<String, Object?>.from(rawCase);
+      final name = fixtureCase['name'];
+      if (name is! String || !names.add(name)) {
+        throw StateError('EOF mismatch case has an invalid or duplicate name.');
+      }
+      for (final key in ['video', 'vocal', 'accompaniment']) {
+        final fileName = fixtureCase[key];
+        if (fileName is! String ||
+            fileName.trim().isEmpty ||
+            fileName.contains('/') ||
+            fileName.contains(r'\')) {
+          throw StateError('EOF mismatch case $name has no $key file.');
+        }
+        _fixture(root, fileName);
+      }
+      for (final key in [
+        'videoDurationSeconds',
+        'vocalDurationSeconds',
+        'accompanimentDurationSeconds',
+      ]) {
+        final duration = fixtureCase[key];
+        if (duration is! num ||
+            !duration.toDouble().isFinite ||
+            duration <= 0 ||
+            duration > 20) {
+          throw StateError('EOF mismatch case $name has invalid $key.');
+        }
+      }
+      cases.add(fixtureCase);
+    }
+    if (!names.contains('audio-shorter-than-video') ||
+        !names.contains('video-shorter-than-audio')) {
+      throw StateError(
+          'EOF mismatch manifest does not contain both directions.');
+    }
+    final audioShort = cases.singleWhere(
+      (fixtureCase) => fixtureCase['name'] == 'audio-shorter-than-video',
+    );
+    final videoShort = cases.singleWhere(
+      (fixtureCase) => fixtureCase['name'] == 'video-shorter-than-audio',
+    );
+    final audioShortLatestEof = [
+      (audioShort['vocalDurationSeconds'] as num).toDouble(),
+      (audioShort['accompanimentDurationSeconds'] as num).toDouble(),
+    ].reduce((left, right) => left > right ? left : right);
+    final videoShortEarliestAudioEof = [
+      (videoShort['vocalDurationSeconds'] as num).toDouble(),
+      (videoShort['accompanimentDurationSeconds'] as num).toDouble(),
+    ].reduce((left, right) => left < right ? left : right);
+    if ((audioShort['videoDurationSeconds'] as num).toDouble() -
+                audioShortLatestEof <
+            0.75 ||
+        videoShortEarliestAudioEof -
+                (videoShort['videoDurationSeconds'] as num).toDouble() <
+            0.75) {
+      throw StateError(
+          'EOF mismatch fixture durations do not actually differ.');
+    }
+    return cases;
+  }
+
+  Future<Map<String, Object?>> _runEofMismatchCase(
+    KirakaraShowFFI show,
+    String mismatchRoot,
+    String lyricPath,
+    Map<String, Object?> fixtureCase,
+  ) async {
+    final name = fixtureCase['name']! as String;
+    final videoDuration =
+        (fixtureCase['videoDurationSeconds']! as num).toDouble();
+    final vocalDuration =
+        (fixtureCase['vocalDurationSeconds']! as num).toDouble();
+    final accompanimentDuration =
+        (fixtureCase['accompanimentDurationSeconds']! as num).toDouble();
+    final latestAudioEof = vocalDuration > accompanimentDuration
+        ? vocalDuration
+        : accompanimentDuration;
+    show.stop();
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    final before = await _readMap('getStageDiagnostics');
+    final loaded = show.load(
+      _fixture(mismatchRoot, fixtureCase['video']! as String),
+      lyricPath: lyricPath,
+      vocalPath: _fixture(mismatchRoot, fixtureCase['vocal']! as String),
+      accompanimentPath:
+          _fixture(mismatchRoot, fixtureCase['accompaniment']! as String),
+      videoMasterClock: true,
+    );
+    if (!loaded) {
+      throw StateError('Show rejected EOF mismatch case $name.');
+    }
+    show.setVolume(0);
+    show.play();
+    await Future<void>.delayed(const Duration(milliseconds: 750));
+    final warm = await _readMap('getStageDiagnostics');
+    final observedDuration = show.duration;
+    final warmPosition = show.position;
+    final warmState = show.state;
+    if (!observedDuration.isFinite ||
+        observedDuration <= 0 ||
+        observedDuration > 20) {
+      throw StateError(
+          'Show reported an invalid duration for EOF mismatch case $name.');
+    }
+
+    Map<String, Object?>? afterAudioEof;
+    double? afterAudioEofPosition;
+    int? afterAudioEofState;
+    bool? afterAudioEofBuffering;
+    if (latestAudioEof < videoDuration) {
+      final waitSeconds =
+          (latestAudioEof + 0.35 - warmPosition).clamp(0.0, 20.0);
+      await Future<void>.delayed(
+        Duration(milliseconds: (waitSeconds * 1000).ceil()),
+      );
+      afterAudioEof = await _readMap('getStageDiagnostics');
+      afterAudioEofPosition = show.position;
+      afterAudioEofState = show.state;
+      afterAudioEofBuffering = show.isBuffering;
+    }
+
+    final remainingSeconds =
+        (observedDuration - show.position).clamp(0.0, 20.0) + 0.75;
+    final eofWaitMilliseconds = (remainingSeconds * 1000).ceil();
+    await Future<void>.delayed(
+      Duration(milliseconds: eofWaitMilliseconds),
+    );
+    final after = await _readMap('getStageDiagnostics');
+    return <String, Object?>{
+      'name': name,
+      'videoDurationSeconds': videoDuration,
+      'vocalDurationSeconds': vocalDuration,
+      'accompanimentDurationSeconds': accompanimentDuration,
+      'observedDurationSeconds': observedDuration,
+      'warmPositionSeconds': warmPosition,
+      'warmState': warmState,
+      'eofWaitMilliseconds': eofWaitMilliseconds,
+      'before': before,
+      'warm': warm,
+      if (afterAudioEof != null) 'afterAudioEof': afterAudioEof,
+      if (afterAudioEofPosition != null)
+        'afterAudioEofPositionSeconds': afterAudioEofPosition,
+      if (afterAudioEofState != null) 'afterAudioEofState': afterAudioEofState,
+      if (afterAudioEofBuffering != null)
+        'afterAudioEofBuffering': afterAudioEofBuffering,
+      'after': after,
+      'finalPositionSeconds': show.position,
+      'finalDurationSeconds': show.duration,
+      'finalState': show.state,
+      'finalBuffering': show.isBuffering,
+    };
+  }
+
   Future<void> _loadFixture(
     KirakaraShowFFI show,
     String root,
@@ -162,6 +336,15 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
       }
       final lifecycleProbe =
           Platform.environment['KIRAKARA_COMPOSITOR_LIFECYCLE_PROBE'] == '1';
+      final eofMismatchRootValue =
+          Platform.environment['KIRAKARA_COMPOSITOR_EOF_MISMATCH_ROOT'];
+      final eofMismatchRoot =
+          eofMismatchRootValue == null || eofMismatchRootValue.trim().isEmpty
+              ? null
+              : eofMismatchRootValue.trim();
+      final eofMismatchCases = eofMismatchRoot == null
+          ? <Map<String, Object?>>[]
+          : _readEofMismatchCases(eofMismatchRoot);
       var show = KirakaraShowFFI();
       _show = show;
       final attachment =
@@ -649,6 +832,40 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
         });
       }
 
+      Map<String, Object?>? audioShorterThanVideo;
+      Map<String, Object?>? videoShorterThanAudio;
+      Map<String, Object?>? eofMismatchRecoveryBefore;
+      Map<String, Object?>? eofMismatchRecoveryAfter;
+      double? eofMismatchRecoveryPosition;
+      int? eofMismatchRecoveryState;
+      if (eofMismatchCases.isNotEmpty) {
+        final lyricPath = _fixture(fixtureRoot, 'l1.krl');
+        audioShorterThanVideo = await _runEofMismatchCase(
+          show,
+          eofMismatchRoot!,
+          lyricPath,
+          eofMismatchCases.singleWhere(
+            (fixtureCase) => fixtureCase['name'] == 'audio-shorter-than-video',
+          ),
+        );
+        videoShorterThanAudio = await _runEofMismatchCase(
+          show,
+          eofMismatchRoot,
+          lyricPath,
+          eofMismatchCases.singleWhere(
+            (fixtureCase) => fixtureCase['name'] == 'video-shorter-than-audio',
+          ),
+        );
+        show.stop();
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+        eofMismatchRecoveryBefore = await _readMap('getStageDiagnostics');
+        await _loadFixture(show, fixtureRoot, 1);
+        await Future<void>.delayed(const Duration(milliseconds: 1250));
+        eofMismatchRecoveryPosition = show.position;
+        eofMismatchRecoveryState = show.state;
+        eofMismatchRecoveryAfter = await _readMap('getStageDiagnostics');
+      }
+
       await Future<void>.delayed(const Duration(milliseconds: 750));
       final settledBefore = await _readMap('getStageDiagnostics');
       await Future<void>.delayed(const Duration(seconds: 2));
@@ -808,6 +1025,90 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
             _counter(finalEngine, 'stageDeviceRemovedCount') == 0,
         'showLastOperationSucceeded': _counter(finalShow, 'lastHresult') == 0,
       };
+      if (audioShorterThanVideo != null &&
+          videoShorterThanAudio != null &&
+          eofMismatchRecoveryBefore != null &&
+          eofMismatchRecoveryAfter != null) {
+        final audioWarm = Map<String, Object?>.from(
+          _map(audioShorterThanVideo['warm'], 'audio-short warm sample'),
+        );
+        final audioAfterEof = Map<String, Object?>.from(
+          _map(
+            audioShorterThanVideo['afterAudioEof'],
+            'audio-short post-audio-EOF sample',
+          ),
+        );
+        final audioVideoDuration =
+            (audioShorterThanVideo['videoDurationSeconds']! as num).toDouble();
+        final audioVocalDuration =
+            (audioShorterThanVideo['vocalDurationSeconds']! as num).toDouble();
+        final audioAccompanimentDuration =
+            (audioShorterThanVideo['accompanimentDurationSeconds']! as num)
+                .toDouble();
+        final audioLatestEof = audioVocalDuration > audioAccompanimentDuration
+            ? audioVocalDuration
+            : audioAccompanimentDuration;
+        final audioObservedDuration =
+            (audioShorterThanVideo['observedDurationSeconds']! as num)
+                .toDouble();
+        final videoDuration =
+            (videoShorterThanAudio['videoDurationSeconds']! as num).toDouble();
+        final videoVocalDuration =
+            (videoShorterThanAudio['vocalDurationSeconds']! as num).toDouble();
+        final videoAccompanimentDuration =
+            (videoShorterThanAudio['accompanimentDurationSeconds']! as num)
+                .toDouble();
+        final videoEarliestAudioEof =
+            videoVocalDuration < videoAccompanimentDuration
+                ? videoVocalDuration
+                : videoAccompanimentDuration;
+        final videoObservedDuration =
+            (videoShorterThanAudio['observedDurationSeconds']! as num)
+                .toDouble();
+        gates.addAll(<String, bool>{
+          'audioEofDidNotEndVideoMasterProgram':
+              audioVideoDuration - audioLatestEof >= 0.75 &&
+                  (audioObservedDuration - audioVideoDuration).abs() <= 0.35 &&
+                  audioShorterThanVideo['warmState'] == _showStatePlaying &&
+                  audioShorterThanVideo['afterAudioEofState'] ==
+                      _showStatePlaying &&
+                  audioShorterThanVideo['afterAudioEofBuffering'] == false &&
+                  (audioShorterThanVideo['afterAudioEofPositionSeconds']!
+                              as num)
+                          .toDouble() >=
+                      audioLatestEof + 0.1 &&
+                  engineDelta(
+                        audioWarm,
+                        audioAfterEof,
+                        'stagePresentCount',
+                      ) >=
+                      15 &&
+                  audioShorterThanVideo['finalState'] == _showStateStopped &&
+                  audioShorterThanVideo['finalBuffering'] == false &&
+                  (audioShorterThanVideo['finalPositionSeconds']! as num)
+                          .toDouble() >=
+                      audioObservedDuration - 0.75,
+          'videoEofEndedProgramWithLongerAudio':
+              videoEarliestAudioEof - videoDuration >= 0.75 &&
+                  (videoObservedDuration - videoDuration).abs() <= 0.35 &&
+                  videoShorterThanAudio['warmState'] == _showStatePlaying &&
+                  videoShorterThanAudio['finalState'] == _showStateStopped &&
+                  videoShorterThanAudio['finalBuffering'] == false &&
+                  (videoShorterThanAudio['finalPositionSeconds']! as num)
+                          .toDouble() >=
+                      videoObservedDuration - 0.75,
+          'normalProgramRecoveredAfterEofMismatch':
+              eofMismatchRecoveryState == _showStatePlaying &&
+                  eofMismatchRecoveryPosition != null &&
+                  eofMismatchRecoveryPosition >= 0.5 &&
+                  engineDelta(
+                        eofMismatchRecoveryBefore,
+                        eofMismatchRecoveryAfter,
+                        'stagePresentCount',
+                      ) >=
+                      20,
+        });
+      }
       for (final entry in lifecycleGates.entries) {
         gates['lifecycle.${entry.key}'] = entry.value;
       }
@@ -900,6 +1201,18 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
           'positionSeconds': reloadPosition,
           'state': reloadState,
         },
+        if (audioShorterThanVideo != null && videoShorterThanAudio != null)
+          'eofMismatchSample': <String, Object?>{
+            'fixtureRoot': eofMismatchRoot,
+            'audioShorterThanVideo': audioShorterThanVideo,
+            'videoShorterThanAudio': videoShorterThanAudio,
+            'recovery': <String, Object?>{
+              'before': eofMismatchRecoveryBefore,
+              'after': eofMismatchRecoveryAfter,
+              'positionSeconds': eofMismatchRecoveryPosition,
+              'state': eofMismatchRecoveryState,
+            },
+          },
         'detachReattachSample': <String, Object?>{
           'before': detachBefore,
           'detached': detached,

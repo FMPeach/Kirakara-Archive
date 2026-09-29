@@ -167,7 +167,8 @@ SHA-256。DLL、PDB、ZIP 和 Engine 源码都不进入普通 Git 历史。
 通过；Show SHA-256 为
 `1CA811AE12B508903426F89F8A3B7E4B84261C9DEC4538173519F8E465E35519`。四个 ZIP
 的条目名隐私扫描为零命中，补丁源码包包含 wrapper、release contract 与 Show ABI
-校验器，Engine 包包含候选契约规定的 10 个产物和独立 manifest。使用历史 Show DLL
+校验器，以及 compositor/clipboard 的采集、素材生成和探针工具；生成媒体、报告与缓存
+保持排除。Engine 包包含候选契约规定的 10 个产物和独立 manifest。使用历史 Show DLL
 的负向打包在创建输出目录前因缺少版本化导出而明确拒绝。
 
 当前安装包是未签名的本地门禁产物。没有所有者签名证书时，脚本不会生成或信任一个
@@ -194,6 +195,7 @@ SHA-256。DLL、PDB、ZIP 和 Engine 源码都不进入普通 Git 历史。
 | 单 HWND、Alpha 孔、Flutter 覆盖、缩放、焦点、中文 IME | 通过 |
 | 720p60 fixture 到固定 1080p Stage，再缩放到 preview | 真实 Show probe 通过 |
 | 最小化/恢复、模拟 session/power/display 消息、Show 重建 | Phase 4 自动门禁通过 |
+| composed preview 的音频先 EOF、视频先 EOF 与失配后恢复 | 真实 Show 刻意失配门禁通过 |
 | 官方/custom external texture A/B | 通过且继续保留 |
 | custom debug/profile/release 构建与启动 | 通过 |
 | 官方/custom Release 正常退出 | 通过 |
@@ -208,7 +210,7 @@ SHA-256。DLL、PDB、ZIP 和 Engine 源码都不进入普通 Git 历史。
 | 真实显示器热插拔、锁屏、睡眠/恢复、graphics device removal | 只能模拟消息，必须实机 |
 | 物理双屏和 Cast 同时启用/切换 | 当前没有对应实体拓扑 |
 | 4K 下采样及 576p/540p/480p/360p 上采样视觉 | Show 单测覆盖几何，尚缺本 compositor 实机视觉矩阵 |
-| 第一首/后续歌曲的音视频 EOF 不一致与缓冲异常 | 常规/自然 EOF 已测，刻意失配素材未完成 |
+| 物理 Stage/Cast 并行时的音视频 EOF 不一致与缓冲异常 | composed preview 已用刻意失配素材通过；当前缺实体输出拓扑 |
 | Iris Xe 1130G7 长时间热限制 | 当前 12600K/4060 Ti 不能替代 |
 | 真实触屏、RDP、第三方富文本剪贴板 | 当前自动/桌面输入不能替代 |
 
@@ -263,11 +265,16 @@ Stage 前进且 Flutter delta 为 0；所有 HRESULT、device removal 和资源�
 ### 真实 Show、生命周期和当前 GPU
 
 ```powershell
+$eofMismatchRoot = '.\build\diagnostics\eof-mismatch-fixtures'
+.\tool\windows_compositor\make_eof_mismatch_fixtures.ps1 `
+  -OutputDirectory $eofMismatchRoot
+
 .\tool\windows_compositor\run_real_stage_compositor_probe.ps1 `
   -FlutterSdkRoot $flutterSdkRoot `
   -WorkspaceRoot $workspaceRoot `
   -LocalEngine host_debug_kirakara_v4 `
   -ShowHostDll '<当前 Show build\bin\libshow_host.dll>' `
+  -EofMismatchFixtureRoot $eofMismatchRoot `
   -TimeoutSeconds 120 `
   -LifecycleProbe `
   -ExitWhileActive
@@ -278,6 +285,8 @@ Stage/Flutter delta、Show callback/rejected、submit/coalesced/stale、keyed-mu
 handle duplicate/resource open failure、occluded/device removed、全部 HRESULT、generation/
 frame ID、最小化/恢复、Show rebuild 和 active-exit gate。若环境不支持，记录实际能力与
 HRESULT 后验证 external texture 回退；崩溃、同步错误或资源破坏不得归类为兼容回退。
+失配 EOF 报告还必须保存两组媒体的实际 duration、音频 EOF 后状态/position、最终
+state/buffering 和普通歌曲恢复样本。生成的 MP4/WAV 位于忽略目录，不能加入 Git。
 
 真实锁屏、睡眠/恢复和显示器热插拔必须由操作者实际执行，报告里的 simulated lifecycle
 消息只证明 Win32 路由和状态机。操作前后确认同一个 App 顶层 HWND、Stage 恢复推进、

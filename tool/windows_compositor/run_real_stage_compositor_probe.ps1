@@ -10,6 +10,8 @@ param(
 
   [string]$FixtureRoot = (Join-Path $env:TEMP 'kira_fixtures'),
 
+  [string]$EofMismatchFixtureRoot,
+
   [string]$ShowHostDll,
 
   [string]$TitleKrl = (Join-Path $PSScriptRoot 'fixtures\title_probe.krl'),
@@ -92,6 +94,10 @@ if ($sdkEngineRevision -ne $lock.flutter.engineRevision) {
 }
 
 $fixtureDirectory = Resolve-UnresolvedPath $FixtureRoot
+$eofMismatchDirectory = $null
+if (-not [string]::IsNullOrWhiteSpace($EofMismatchFixtureRoot)) {
+  $eofMismatchDirectory = Resolve-UnresolvedPath $EofMismatchFixtureRoot
+}
 $showDll = Resolve-ShowHostDll -ExplicitPath $ShowHostDll
 $showAbi = & (Join-Path $repositoryRoot `
   'engine\scripts\verify_show_host_stage_visual_abi.ps1') `
@@ -105,6 +111,74 @@ foreach ($name in $requiredFixtures) {
   $path = Join-Path $fixtureDirectory $name
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
     throw "Real Stage fixture is missing: $path. Run the Show repository's tools\make_smoke_fixtures.ps1 first."
+  }
+}
+if ($eofMismatchDirectory) {
+  $mismatchManifestPath = Join-Path $eofMismatchDirectory 'manifest.json'
+  if (-not (Test-Path -LiteralPath $mismatchManifestPath -PathType Leaf)) {
+    throw (
+      "EOF mismatch manifest is missing: $mismatchManifestPath. " +
+      'Run tool\windows_compositor\make_eof_mismatch_fixtures.ps1 first.')
+  }
+  $mismatchManifest = Get-Content -Raw -LiteralPath $mismatchManifestPath |
+    ConvertFrom-Json
+  if (
+    [int]$mismatchManifest.schemaVersion -ne 1 -or
+    $mismatchManifest.videoMasterClock -ne $true -or
+    @($mismatchManifest.cases).Count -ne 2
+  ) {
+    throw "EOF mismatch manifest contract is invalid: $mismatchManifestPath"
+  }
+  $mismatchNames = @($mismatchManifest.cases | ForEach-Object {
+      [string]$_.name
+    } | Sort-Object)
+  if (
+    @(Compare-Object `
+        @('audio-shorter-than-video', 'video-shorter-than-audio') `
+        $mismatchNames).Count -ne 0
+  ) {
+    throw 'EOF mismatch manifest does not contain both required directions.'
+  }
+  foreach ($fixtureCase in @($mismatchManifest.cases)) {
+    foreach ($property in 'video', 'vocal', 'accompaniment') {
+      $fileName = [string]$fixtureCase.$property
+      $path = Join-Path $eofMismatchDirectory $fileName
+      if (
+        [string]::IsNullOrWhiteSpace($fileName) -or
+        [IO.Path]::GetFileName($fileName) -cne $fileName -or
+        -not (Test-Path -LiteralPath $path -PathType Leaf)
+      ) {
+        throw "EOF mismatch fixture is missing: $path"
+      }
+    }
+    $videoDuration = [double]$fixtureCase.videoDurationSeconds
+    $vocalDuration = [double]$fixtureCase.vocalDurationSeconds
+    $accompanimentDuration = [double]$fixtureCase.accompanimentDurationSeconds
+    foreach ($duration in $videoDuration, $vocalDuration,
+        $accompanimentDuration) {
+      if (
+        [double]::IsNaN($duration) -or
+        [double]::IsInfinity($duration) -or
+        $duration -le 0 -or
+        $duration -gt 20
+      ) {
+        throw "EOF mismatch manifest has an invalid duration: $duration"
+      }
+    }
+    if (
+      [string]$fixtureCase.name -eq 'audio-shorter-than-video' -and
+      $videoDuration - [Math]::Max($vocalDuration, $accompanimentDuration) `
+        -lt 0.75
+    ) {
+      throw 'The audio-short EOF fixture does not end both audio tracks first.'
+    }
+    if (
+      [string]$fixtureCase.name -eq 'video-shorter-than-audio' -and
+      [Math]::Min($vocalDuration, $accompanimentDuration) - $videoDuration `
+        -lt 0.75
+    ) {
+      throw 'The video-short EOF fixture does not end before both audio tracks.'
+    }
   }
 }
 if (-not (Test-Path -LiteralPath $showDll -PathType Leaf)) {
@@ -135,8 +209,12 @@ Assert-UsableEngineArtifacts `
 
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
   $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-  $reportStem = if ($LifecycleProbe) {
+  $reportStem = if ($LifecycleProbe -and $eofMismatchDirectory) {
+    'real-stage-lifecycle-eof-mismatch'
+  } elseif ($LifecycleProbe) {
     'real-stage-lifecycle'
+  } elseif ($eofMismatchDirectory) {
+    'real-stage-eof-mismatch'
   } else {
     'real-stage-compositor'
   }
@@ -209,6 +287,13 @@ $startInfo.UseShellExecute = $false
 $startInfo.Environment['KIRAKARA_COMPOSITOR_BACKEND'] = 'composed'
 $startInfo.Environment['KIRAKARA_COMPOSITOR_TEST_MODE'] = '1'
 $startInfo.Environment['KIRAKARA_COMPOSITOR_FIXTURE_ROOT'] = $fixtureDirectory
+$startInfo.Environment['KIRAKARA_COMPOSITOR_EOF_MISMATCH_ROOT'] = if (
+  $eofMismatchDirectory
+) {
+  $eofMismatchDirectory
+} else {
+  ''
+}
 $startInfo.Environment['KIRAKARA_COMPOSITOR_TITLE_KRL'] = $titleKrlPath
 $startInfo.Environment['KIRAKARA_COMPOSITOR_REPORT_PATH'] = $absoluteReport
 $startInfo.Environment['KIRAKARA_COMPOSITOR_AUTO_EXIT'] = if ($KeepOpen) {
@@ -291,6 +376,9 @@ $report.pauseResumeSample | Format-List | Out-Host
 $report.replaySample | Format-List | Out-Host
 $report.naturalEofSample | Format-List | Out-Host
 $report.reloadAfterNaturalEofSample | Format-List | Out-Host
+if ($eofMismatchDirectory) {
+  $report.eofMismatchSample | Format-List | Out-Host
+}
 $report.detachReattachSample | Format-List | Out-Host
 $report.visibilitySample | Format-List | Out-Host
 $report.animationSample | Format-List | Out-Host

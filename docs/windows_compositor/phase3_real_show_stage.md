@@ -10,9 +10,9 @@ A/B。当前 RTX 4060 Ti / Windows 11 / 96 DPI 实机自动门槛通过：静止
 Present 增量仍为 0。
 
 真实运输门槛还覆盖了第一首与后续歌曲、无标题与带标题 KRL、暂停/恢复、重唱、
-12 秒自然 EOF、预准备后的 seamless 自然下一曲、generation 切换、contain/cover、
-裁切、Flutter 半透明面板与全屏页面、窗口缩放，以及 detach/reattach。最终样本没有
-callback 拒绝、NT
+12 秒自然 EOF、视频主时钟下音频先 EOF 与视频先 EOF 两种刻意失配、失配后普通歌曲
+恢复、预准备后的 seamless 自然下一曲、generation 切换、contain/cover、裁切、Flutter
+半透明面板与全屏页面、窗口缩放，以及 detach/reattach。最终样本没有 callback 拒绝、NT
 handle 复制失败、共享资源打开失败、stale frame 或 device removal。官方 debug
 Engine 与 `host_debug_kirakara_v3` 也分别通过同一 external texture integration
 smoke，证明回退路径没有因 composed 接入而腐烂。
@@ -120,8 +120,10 @@ Stage Visual，原位 Resize Flutter swapchain，并在新尺寸 Flutter 上层�
 
 ## 自动验证结果
 
-2026-09-28 的完整真实探针报告为本机忽略目录中的
-`build/diagnostics/real-stage-compositor-20260928-165313.json`。关键数据：
+2026-09-28 的基础真实探针报告为本机忽略目录中的
+`build/diagnostics/real-stage-compositor-20260928-165313.json`；2026-09-29 的失配 EOF
+与生命周期合并复验为
+`build/diagnostics/real-stage-lifecycle-eof-mismatch-20260929-101755.json`。关键数据：
 
 | 门槛 | 实测 |
 | --- | ---: |
@@ -132,6 +134,9 @@ Stage Visual，原位 Resize Flutter swapchain，并在新尺寸 Flutter 上层�
 | 无标题到带标题 content generation | 1 → 3 |
 | 重唱前 / 后 position | 1.222 s / 0.718 s |
 | 自然 EOF position / duration / state | 12.000 / 12.000 / stopped |
+| 音频先 EOF：video / vocal / accompaniment / 越过双音轨 EOF 时 position / state | 6.000 / 2.000 / 2.000 / 2.348 / playing |
+| 音频先 EOF：最终 position / state / buffering | 6.099 / stopped / false |
+| 视频先 EOF：video / vocal / accompaniment / 最终 position / state / buffering | 2.000 / 6.000 / 6.000 / 2.090 / stopped / false |
 | prepared seamless 下一曲 position / state | 1.210 s / playing |
 | callback rejected / stale / device removed | 0 / 0 / 0 |
 | keyed mutex 初次零超时 busy | 0（本机未触发等待分支） |
@@ -146,6 +151,13 @@ Stage Visual，原位 Resize Flutter swapchain，并在新尺寸 Flutter 上层�
 进入 stopped 后，再以 `SHOW_TRANSITION_SEAMLESS` 加载已准备曲目；报告要求
 `prepared=true`、新 content generation、playing 状态、推进的时钟和持续的 Stage
 Present。它不是先发 stop 的手动切歌。
+
+失配 EOF 门槛使用 ffmpeg 生成但不提交媒体：一组是 6 秒视频配 2 秒双音轨，另一组是
+2 秒视频配 6 秒双音轨。两组都保持 App 现有 `videoMasterClock=true` 语义。探针只做
+由媒体 duration 推导的有限等待；第一组要求越过音频 EOF 后仍为 playing、非 buffering
+且 Stage 继续 Present，随后在视频 EOF 停止；第二组要求在较短视频 EOF 停止而不等待
+较长音轨。最后再载入普通曲目并要求时钟和 Stage 恢复，过程中没有增加轮询器或修改
+Show 时钟实现。
 
 外部纹理 A/B 的同一秒样本：
 
@@ -200,9 +212,10 @@ Set-Location 'D:\Kirakara-App-ascii'
 ```
 
 `run_real_stage_compositor_probe.ps1` 默认使用 `%TEMP%\kira_fixtures` 的两组
-720p60/12 秒 Show 素材，以及仓库内的小型 `title_probe.krl`。它只做有限次数的等待
-与采样，运行结束即关闭；不会留下后台采集器或常驻计时器。`-KeepOpen` 仅用于人工
-视觉观察。
+720p60/12 秒 Show 素材，以及仓库内的小型 `title_probe.krl`。传入
+`-EofMismatchFixtureRoot` 时再执行由 `make_eof_mismatch_fixtures.ps1` 生成的两组失配
+素材。它只做有限次数的等待与采样，运行结束即关闭；不会留下后台采集器或常驻
+计时器。`-KeepOpen` 仅用于人工视觉观察。
 
 ## 已验证与未验证
 
@@ -213,7 +226,8 @@ Set-Location 'D:\Kirakara-App-ascii'
 - contain/cover、clip、geometry、detach/reattach；
 - 静止 Flutter 不被 Stage 帧泵唤醒；Flutter 短暂停顿不阻塞 Stage；
 - 面板、遮罩与全屏 Flutter 页面覆盖实时 Stage；
-- 第一首、后续曲、标题/无标题、暂停/恢复、重唱、自然 EOF、预准备自然切歌；
+- 第一首、后续曲、标题/无标题、暂停/恢复、重唱、自然 EOF、两种视频主时钟失配
+  EOF、失配后恢复、预准备自然切歌；
 - 官方与定制 Engine 的 external texture 回退。
 
 仍需 Phase 4 或实机矩阵验证：
@@ -221,6 +235,6 @@ Set-Location 'D:\Kirakara-App-ascii'
 - 最小化/恢复、锁屏、睡眠、热插拔和 graphics device removal 后的事务式恢复；
 - Show 销毁/重建与 App 退出并发；
 - 不同 DPI 多屏迁移、175%/200% 真高分屏；
-- 物理双屏与 Cast 同时运行时的时钟、吞吐和 EOF 不一致；
+- 物理双屏与 Cast 同时运行时的时钟、吞吐和失配 EOF；
 - Intel/AMD，以及 Windows 10；
 - 4K 下采样与 576p/540p/480p/360p 上采样的实机视觉结果。
