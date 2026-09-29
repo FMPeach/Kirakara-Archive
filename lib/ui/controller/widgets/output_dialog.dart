@@ -4,6 +4,7 @@ class _OutputDialog extends StatefulWidget {
   const _OutputDialog({
     required this.displayManager,
     required this.castService,
+    required this.settingsService,
     required this.onDualChanged,
     required this.onCastChanged,
     required this.onDisplaySelected,
@@ -13,6 +14,7 @@ class _OutputDialog extends StatefulWidget {
 
   final DisplayManager displayManager;
   final CastService castService;
+  final SettingsService settingsService;
   final Future<void> Function(bool enabled) onDualChanged;
   final Future<void> Function(bool enabled) onCastChanged;
   final Future<void> Function(DisplayInfo display) onDisplaySelected;
@@ -26,7 +28,6 @@ class _OutputDialog extends StatefulWidget {
 class _OutputDialogState extends State<_OutputDialog> {
   bool _busy = false;
   bool _refreshingDisplays = false;
-  bool _pureKDiscoveryEnabled = false;
 
   Future<void> _run(Future<void> Function() action) async {
     if (_busy) return;
@@ -66,17 +67,6 @@ class _OutputDialogState extends State<_OutputDialog> {
         SnackBar(content: Text('已添加 DLNA 设备：${device.friendlyName}')),
       );
     });
-  }
-
-  void _setPureKDiscoveryEnabled(bool enabled) {
-    setState(() => _pureKDiscoveryEnabled = enabled);
-    if (enabled) {
-      unawaited(
-        _run(
-          () => widget.castService.refreshDevices(includePureK: true),
-        ),
-      );
-    }
   }
 
   @override
@@ -218,33 +208,9 @@ class _OutputDialogState extends State<_OutputDialog> {
       onRefresh: _busy || connecting || discovering
           ? null
           : () => widget.castService.refreshDevices(
-                includePureK: _pureKDiscoveryEnabled,
+                includePureK: widget.settingsService.dlnaDeepSearchEnabled,
               ),
       children: [
-        CheckboxListTile(
-          key: const ValueKey('purek-dlna-discovery-checkbox'),
-          value: _pureKDiscoveryEnabled,
-          onChanged: _busy || connecting || discovering
-              ? null
-              : (value) => _setPureKDiscoveryEnabled(value ?? false),
-          dense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-          controlAffinity: ListTileControlAffinity.leading,
-          activeColor: const Color(0xffdd3e38),
-          title: const Text(
-            '搜索纯K设备',
-            style: TextStyle(
-              color: KiraColors.cream,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          subtitle: const Text(
-            '固定扫描 192.168.254.1–254:49152，不扫描其他网段或端口',
-            style: TextStyle(color: KiraColors.muted, fontSize: 11),
-          ),
-        ),
-        const Divider(height: 1, color: KiraColors.line),
         if (devices.isNotEmpty)
           for (final device in devices)
             _OutputDeviceRow(

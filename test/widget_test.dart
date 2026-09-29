@@ -70,12 +70,18 @@ void main() {
     expect(find.text('显示输出'), findsOneWidget);
     expect(find.text('双屏异显'), findsOneWidget);
     expect(find.text('无线投屏'), findsOneWidget);
+    expect(find.text('深度搜索（慎用）'), findsNothing);
     await tester.tap(find.byIcon(Icons.close).last);
     await tester.pump();
 
     await tester.tap(find.byTooltip('设置'));
     await tester.pump();
     expect(find.text('报幕文字'), findsOneWidget);
+    expect(find.text('深度搜索（慎用）'), findsOneWidget);
+    final deepSearchSwitch = tester.widget<Switch>(
+      find.byKey(const ValueKey('dlna-deep-search-switch')),
+    );
+    expect(deepSearchSwitch.value, isFalse);
     expect(find.text('媒体缓存'), findsOneWidget);
     expect(find.text('队列预缓存范围'), findsOneWidget);
   });

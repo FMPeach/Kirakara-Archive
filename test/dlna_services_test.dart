@@ -523,8 +523,7 @@ void main() {
       );
       addTearDown(service.dispose);
 
-      await service.enableCastMode();
-      await service.refreshDevices(includePureK: true);
+      await service.enableCastMode(includePureK: true);
 
       expect(discovery.pureKDiscoveryCalls, 1);
       expect(service.devices, hasLength(2));

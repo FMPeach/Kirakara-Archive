@@ -66,14 +66,14 @@ class CastService extends ChangeNotifier {
   String? get mpegTsUrl => _mpegTsUrl;
   String? get lastError => _lastError;
 
-  Future<void> enableCastMode() async {
+  Future<void> enableCastMode({bool includePureK = false}) async {
     if (!_isEnabled) {
       _isEnabled = true;
       _lastError = null;
       _devices = DlnaDiscoveryService.deduplicateDevices(_manualDevices);
       notifyListeners();
     }
-    await refreshDevices();
+    await refreshDevices(includePureK: includePureK);
   }
 
   Future<void> disableCastMode({
