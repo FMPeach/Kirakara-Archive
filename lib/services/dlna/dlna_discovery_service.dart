@@ -12,6 +12,11 @@ typedef DlnaDescriptionLoader = Future<String> Function(
   Uri location,
   String localAddress,
 );
+typedef DlnaTimedDescriptionLoader = Future<String> Function(
+  Uri location,
+  String localAddress,
+  Duration timeout,
+);
 typedef DlnaLocalInterfaceResolver = Future<LanAddressCandidate?> Function();
 typedef DlnaDiscoveryLogger = void Function(String message);
 typedef DlnaUnicastSearch = Future<List<DlnaSsdpResponse>> Function(
@@ -40,11 +45,14 @@ class DlnaDiscoveryService {
   DlnaDiscoveryService({
     DlnaDeviceDescriptionParser parser = const DlnaDeviceDescriptionParser(),
     DlnaDescriptionLoader? descriptionLoader,
+    DlnaTimedDescriptionLoader? timedDescriptionLoader,
     DlnaLocalInterfaceResolver? localInterfaceResolver,
     DlnaUnicastSearch? unicastSearch,
     DlnaDiscoveryLogger? logger,
   })  : _parser = parser,
         _descriptionLoader = descriptionLoader ?? _loadDescription,
+        _timedDescriptionLoader =
+            timedDescriptionLoader ?? _loadDescriptionWithTimeout,
         _localInterfaceResolver =
             localInterfaceResolver ?? LanAddressResolver.detectIpv4Candidate,
         _unicastSearch = unicastSearch ?? _searchUnicast,
@@ -61,12 +69,15 @@ class DlnaDiscoveryService {
   static const String multicastSource = 'ssdp-multicast';
   static const String unicastSource = 'ssdp-unicast';
   static const String manualUrlSource = 'manual-url';
+  static const String pureKHttpSource = 'purek-http';
 
   final DlnaDeviceDescriptionParser _parser;
   final DlnaDescriptionLoader _descriptionLoader;
+  final DlnaTimedDescriptionLoader _timedDescriptionLoader;
   final DlnaLocalInterfaceResolver _localInterfaceResolver;
   final DlnaUnicastSearch _unicastSearch;
   final DlnaDiscoveryLogger _logger;
+  final List<String> _pureKSuccessfulHosts = <String>[];
 
   Future<List<DlnaDevice>> discover({
     Duration responseWindow = const Duration(milliseconds: 2600),
@@ -123,6 +134,95 @@ class DlnaDiscoveryService {
       }),
     );
     return deduplicateDevices(devices);
+  }
+
+  /// Probes the one fixed Pure K renderer subnet and HTTP endpoint.
+  ///
+  /// This is deliberately opt-in. It never expands beyond
+  /// 192.168.254.1-254:49152 and performs description GET requests only.
+  Future<List<DlnaDevice>> discoverPureKRenderers({
+    int concurrency = 24,
+    Duration requestTimeout = const Duration(milliseconds: 400),
+  }) async {
+    if (concurrency <= 0) {
+      throw ArgumentError.value(concurrency, 'concurrency', 'must be positive');
+    }
+    if (requestTimeout <= Duration.zero) {
+      throw ArgumentError.value(
+        requestTimeout,
+        'requestTimeout',
+        'must be positive',
+      );
+    }
+
+    final localInterface = await _requireLocalInterface();
+    final allHosts = [
+      for (var suffix = 1; suffix <= 254; suffix++) '192.168.254.$suffix',
+    ];
+    final successfulHosts =
+        _pureKSuccessfulHosts.where(allHosts.contains).toList(growable: false);
+    final candidates = <String>[
+      ...successfulHosts,
+      ...allHosts.where((host) => !successfulHosts.contains(host)),
+    ];
+    final devices = <DlnaDevice>[];
+    var nextCandidate = 0;
+    final stopwatch = Stopwatch()..start();
+
+    Future<void> worker() async {
+      while (true) {
+        if (nextCandidate >= candidates.length) return;
+        final host = candidates[nextCandidate++];
+        final location = Uri(
+          scheme: 'http',
+          host: host,
+          port: 49152,
+          path: '/description.xml',
+        );
+        try {
+          final description = await _timedDescriptionLoader(
+            location,
+            localInterface.address,
+            requestTimeout,
+          );
+          final device = _parser.parse(
+            description,
+            location: location,
+            localAddress: localInterface.address,
+          );
+          devices.add(device);
+          _pureKSuccessfulHosts.remove(host);
+          _pureKSuccessfulHosts.insert(0, host);
+          _logDevice(
+            device,
+            source: pureKHttpSource,
+            localInterface: localInterface,
+          );
+        } on TimeoutException {
+          // A timeout is the expected result for almost every address.
+        } on SocketException {
+          // Unreachable and refused hosts are normal during a bounded scan.
+        } on HttpException {
+          // Only successful description responses are renderer candidates.
+        } on FormatException {
+          // Ignore non-UPnP XML and devices that are not MediaRenderers.
+        }
+      }
+    }
+
+    final workerCount =
+        concurrency < candidates.length ? concurrency : candidates.length;
+    await Future.wait(List.generate(workerCount, (_) => worker()));
+    stopwatch.stop();
+    final result = deduplicateDevices(devices);
+    _logger(
+      '[dlna-discovery] discoverySource=$pureKHttpSource '
+      'scanComplete=true candidates=${candidates.length} '
+      'renderers=${result.length} concurrency=$concurrency '
+      'timeoutMs=${requestTimeout.inMilliseconds} '
+      'elapsedMs=${stopwatch.elapsedMilliseconds}',
+    );
+    return result;
   }
 
   /// Resolves an explicitly supplied renderer URL or IPv4 address.
@@ -284,13 +384,19 @@ class DlnaDiscoveryService {
     required String source,
     required LanAddressCandidate localInterface,
   }) {
+    final discoverySource = switch (source) {
+      multicastSource || unicastSource => 'ssdp',
+      _ => source,
+    };
     _logger(
-      '[dlna-discovery] source=$source '
+      '[dlna-discovery] discoverySource=$discoverySource source=$source '
       'sourceInterface=${jsonEncode('${localInterface.interfaceName} (${localInterface.address})')} '
-      'rendererIp=${jsonEncode(device.location.host)} '
-      'descriptionUrl=${jsonEncode(device.location.toString())} '
+      'rendererIP=${jsonEncode(device.location.host)} '
+      'descriptionURL=${jsonEncode(device.location.toString())} '
       'friendlyName=${jsonEncode(device.friendlyName)} '
-      'udn=${jsonEncode(device.udn)} '
+      'UDN=${jsonEncode(device.udn)} '
+      'manufacturer=${jsonEncode(device.manufacturer)} '
+      'modelName=${jsonEncode(device.modelName)} '
       'avTransport=${jsonEncode(device.avTransport.controlUrl.toString())}',
     );
   }
@@ -384,6 +490,18 @@ class DlnaDiscoveryService {
     return DlnaHttpClient.getText(
       location,
       localAddress: localAddress,
+    );
+  }
+
+  static Future<String> _loadDescriptionWithTimeout(
+    Uri location,
+    String localAddress,
+    Duration timeout,
+  ) {
+    return DlnaHttpClient.getText(
+      location,
+      localAddress: localAddress,
+      timeout: timeout,
     );
   }
 

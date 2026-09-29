@@ -103,8 +103,24 @@ void main() {
         'http://192.168.1.20:1400/upnp/control/avtransport',
       );
       expect(
+        device.avTransport.eventSubUrl.toString(),
+        'http://192.168.1.20:1400/upnp/event/avtransport',
+      );
+      expect(
+        device.avTransport.scpdUrl.toString(),
+        'http://192.168.1.20:1400/avtransport.xml',
+      );
+      expect(
         device.connectionManager?.controlUrl.toString(),
         'http://192.168.1.20:1400/base/connection/control',
+      );
+      expect(
+        device.connectionManager?.eventSubUrl.toString(),
+        'http://192.168.1.20:1400/base/connection/event',
+      );
+      expect(
+        device.connectionManager?.scpdUrl.toString(),
+        'http://192.168.1.20:1400/base/connection.xml',
       );
     });
 
@@ -172,13 +188,30 @@ void main() {
           '_urn:schemas-upnp-org:service:ConnectionManager_control',
         ),
       );
+      expect(
+        device.avTransport.eventSubUrl,
+        Uri.parse(
+          'http://192.168.254.7:49152/'
+          '_urn:schemas-upnp-org:service:AVTransport_event',
+        ),
+      );
+      expect(
+        device.avTransport.scpdUrl,
+        Uri.parse(
+          'http://192.168.254.7:49152/'
+          '_urn:schemas-upnp-org:service:AVTransport_scpd.xml',
+        ),
+      );
       expect(logs.single, contains('source=manual-url'));
+      expect(logs.single, contains('discoverySource=manual-url'));
       expect(
         logs.single,
         contains(r'sourceInterface="Ethernet (192.168.16.170)"'),
       );
       expect(logs.single, contains(r'friendlyName="纯K-K08"'));
-      expect(logs.single, contains(r'udn="uuid:pure-k-k08"'));
+      expect(logs.single, contains(r'UDN="uuid:pure-k-k08"'));
+      expect(logs.single, contains(r'manufacturer="dolphinstar"'));
+      expect(logs.single, contains(r'modelName="Myou Media Renderer"'));
       expect(
         logs.single,
         contains(
@@ -218,6 +251,85 @@ void main() {
 
       expect(device.udn, 'uuid:pure-k-k08');
       expect(logs.single, contains('source=ssdp-unicast'));
+      expect(logs.single, contains('discoverySource=ssdp'));
+    });
+
+    test('scans only the fixed Pure K /24 endpoint with bounded concurrency',
+        () async {
+      final requested = <Uri>[];
+      final logs = <String>[];
+      var activeRequests = 0;
+      var maximumActiveRequests = 0;
+      final service = DlnaDiscoveryService(
+        localInterfaceResolver: () async => const LanAddressCandidate(
+          interfaceName: 'Ethernet',
+          address: '192.168.16.170',
+        ),
+        timedDescriptionLoader: (location, localAddress, timeout) async {
+          requested.add(location);
+          expect(localAddress, '192.168.16.170');
+          expect(timeout, const Duration(milliseconds: 400));
+          activeRequests++;
+          if (activeRequests > maximumActiveRequests) {
+            maximumActiveRequests = activeRequests;
+          }
+          try {
+            await Future<void>.delayed(const Duration(milliseconds: 1));
+            if (location.host == '192.168.254.6') {
+              return _pureKDescription
+                  .replaceFirst('纯K-K08', '纯K-K07')
+                  .replaceFirst('uuid:pure-k-k08', 'uuid:pure-k-k07');
+            }
+            if (location.host == '192.168.254.7') {
+              return _pureKDescription;
+            }
+            throw TimeoutException('expected inactive Pure K address');
+          } finally {
+            activeRequests--;
+          }
+        },
+        logger: logs.add,
+      );
+
+      final devices = await service.discoverPureKRenderers();
+
+      expect(requested, hasLength(254));
+      expect(
+        requested.map((uri) => uri.host).toSet(),
+        {
+          for (var suffix = 1; suffix <= 254; suffix++) '192.168.254.$suffix',
+        },
+      );
+      expect(
+        requested.every(
+          (uri) =>
+              uri.scheme == 'http' &&
+              uri.port == 49152 &&
+              uri.path == '/description.xml' &&
+              !uri.hasQuery &&
+              !uri.hasFragment,
+        ),
+        isTrue,
+      );
+      expect(maximumActiveRequests, inInclusiveRange(2, 24));
+      expect(
+        devices.map((device) => device.friendlyName).toSet(),
+        {'纯K-K07', '纯K-K08'},
+      );
+      expect(
+        logs.where((line) => line.contains('source=purek-http')),
+        hasLength(2),
+      );
+      expect(
+        logs.last,
+        allOf(
+          contains('discoverySource=purek-http'),
+          contains('candidates=254'),
+          contains('renderers=2'),
+          contains('concurrency=24'),
+          contains('timeoutMs=400'),
+        ),
+      );
     });
 
     test('asks for a full URL when directed SSDP has no response', () async {
@@ -379,6 +491,58 @@ void main() {
       await service.connectToDevice(service.devices.single, show);
       expect(service.isCasting, isTrue);
       expect(control.lastDevice, same(manual));
+      expect(show.startCalls, 1);
+    });
+
+    test('Pure K results merge with SSDP and wait for explicit selection',
+        () async {
+      final ssdpK07 = _device(
+        location: 'http://192.168.16.50/device.xml',
+        udn: 'uuid:pure-k-k07',
+        friendlyName: '纯K-K07',
+      );
+      final pureKK07 = _device(
+        location: 'http://192.168.254.6:49152/description.xml',
+        udn: 'uuid:pure-k-k07',
+        friendlyName: '纯K-K07',
+      );
+      final pureKK08 = _device(
+        location: 'http://192.168.254.7:49152/description.xml',
+        udn: 'uuid:pure-k-k08',
+        friendlyName: '纯K-K08',
+      );
+      final discovery = _FakeDiscoveryService(
+        [ssdpK07],
+        pureKResult: [pureKK07, pureKK08],
+      );
+      final control = _FakeControlPoint();
+      final show = _FakeShowService();
+      final service = CastService(
+        discoveryService: discovery,
+        controlPoint: control,
+      );
+      addTearDown(service.dispose);
+
+      await service.enableCastMode();
+      await service.refreshDevices(includePureK: true);
+
+      expect(discovery.pureKDiscoveryCalls, 1);
+      expect(service.devices, hasLength(2));
+      expect(
+        service.devices
+            .singleWhere((device) => device.udn == 'uuid:pure-k-k07')
+            .location,
+        pureKK07.location,
+      );
+      expect(service.state, CastState.idle);
+      expect(control.lastDevice, isNull);
+      expect(show.startCalls, 0);
+
+      final selected = service.devices.singleWhere(
+        (device) => device.udn == 'uuid:pure-k-k08',
+      );
+      await service.connectToDevice(selected, show);
+      expect(control.lastDevice, same(pureKK08));
       expect(show.startCalls, 1);
     });
 
@@ -569,11 +733,12 @@ class _FakeNativeWindowService extends NativeWindowService {
 DlnaDevice _device({
   String location = 'http://192.168.31.214/device.xml',
   String udn = 'uuid:renderer',
+  String friendlyName = '测试电视',
 }) {
   return DlnaDevice(
     id: udn.isEmpty ? location : udn,
     udn: udn,
-    friendlyName: '测试电视',
+    friendlyName: friendlyName,
     manufacturer: 'Example',
     modelName: 'Renderer',
     location: Uri.parse(location),
@@ -586,16 +751,31 @@ DlnaDevice _device({
 }
 
 class _FakeDiscoveryService extends DlnaDiscoveryService {
-  _FakeDiscoveryService(this.result, {this.manualResult});
+  _FakeDiscoveryService(
+    this.result, {
+    this.manualResult,
+    this.pureKResult = const [],
+  });
 
   final List<DlnaDevice> result;
   final DlnaDevice? manualResult;
+  final List<DlnaDevice> pureKResult;
+  int pureKDiscoveryCalls = 0;
 
   @override
   Future<List<DlnaDevice>> discover({
     Duration responseWindow = const Duration(milliseconds: 2600),
   }) async {
     return result;
+  }
+
+  @override
+  Future<List<DlnaDevice>> discoverPureKRenderers({
+    int concurrency = 24,
+    Duration requestTimeout = const Duration(milliseconds: 400),
+  }) async {
+    pureKDiscoveryCalls++;
+    return pureKResult;
   }
 
   @override
@@ -684,6 +864,8 @@ const _pureKDescription = '''
       <service>
         <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
         <controlURL>_urn:schemas-upnp-org:service:AVTransport_control</controlURL>
+        <eventSubURL>_urn:schemas-upnp-org:service:AVTransport_event</eventSubURL>
+        <SCPDURL>_urn:schemas-upnp-org:service:AVTransport_scpd.xml</SCPDURL>
       </service>
       <service>
         <serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType>

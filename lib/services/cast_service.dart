@@ -87,23 +87,51 @@ class CastService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> refreshDevices() async {
+  Future<void> refreshDevices({bool includePureK = false}) async {
     if (!_isEnabled || _isDiscovering) return;
     final generation = ++_discoveryGeneration;
     _isDiscovering = true;
     _lastError = null;
     notifyListeners();
+    final ssdpDevices = <DlnaDevice>[];
+    final pureKDevices = <DlnaDevice>[];
+    final errors = <Object>[];
+
+    Future<void> discoverSsdp() async {
+      try {
+        ssdpDevices.addAll(await _discoveryService.discover());
+      } catch (error) {
+        errors.add(error);
+        debugPrint('DLNA SSDP discovery failed: $error');
+      }
+    }
+
+    Future<void> discoverPureK() async {
+      try {
+        pureKDevices.addAll(
+          await _discoveryService.discoverPureKRenderers(),
+        );
+      } catch (error) {
+        errors.add(error);
+        debugPrint('Pure K HTTP discovery failed: $error');
+      }
+    }
+
     try {
-      final devices = await _discoveryService.discover();
+      await Future.wait([
+        discoverSsdp(),
+        if (includePureK) discoverPureK(),
+      ]);
       if (!_isEnabled || generation != _discoveryGeneration) return;
       _devices = DlnaDiscoveryService.deduplicateDevices([
-        ...devices,
+        ...ssdpDevices,
+        ...pureKDevices,
         ..._manualDevices,
       ]);
-    } catch (error) {
-      if (!_isEnabled || generation != _discoveryGeneration) return;
-      _devices = DlnaDiscoveryService.deduplicateDevices(_manualDevices);
-      _lastError = error.toString();
+      final requestedSources = includePureK ? 2 : 1;
+      if (errors.length == requestedSources) {
+        _lastError = errors.map((error) => error.toString()).join('\n');
+      }
     } finally {
       if (_isEnabled && generation == _discoveryGeneration) {
         _isDiscovering = false;

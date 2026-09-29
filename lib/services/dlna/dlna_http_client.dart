@@ -4,12 +4,15 @@ import 'dart:io';
 class DlnaHttpClient {
   DlnaHttpClient._();
 
-  static HttpClient create(String localAddress) {
+  static HttpClient create(
+    String localAddress, {
+    Duration timeout = const Duration(seconds: 5),
+  }) {
     final sourceAddress = InternetAddress(localAddress);
     final client = HttpClient();
     client.findProxy = (_) => 'DIRECT';
-    client.connectionTimeout = const Duration(seconds: 5);
-    client.idleTimeout = const Duration(seconds: 5);
+    client.connectionTimeout = timeout;
+    client.idleTimeout = timeout;
     client.userAgent = 'Kirakara/0.1 UPnP/1.1';
     client.connectionFactory = (uri, proxyHost, proxyPort) {
       if (proxyHost != null || proxyPort != null) {
@@ -34,22 +37,29 @@ class DlnaHttpClient {
   static Future<String> getText(
     Uri uri, {
     required String localAddress,
+    Duration timeout = const Duration(seconds: 5),
   }) async {
     _validateLanUri(uri);
-    final client = create(localAddress);
+    if (timeout <= Duration.zero) {
+      throw ArgumentError.value(timeout, 'timeout', 'must be positive');
+    }
+    final client = create(localAddress, timeout: timeout);
     try {
-      final request = await client.getUrl(uri);
-      request.headers
-          .set(HttpHeaders.acceptHeader, 'text/xml, application/xml');
-      final response = await request.close();
-      final body = await utf8.decoder.bind(response).join();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException(
-          'UPnP description returned HTTP ${response.statusCode}',
-          uri: uri,
-        );
-      }
-      return body;
+      return await (() async {
+        final request = await client.getUrl(uri);
+        request.headers
+            .set(HttpHeaders.acceptHeader, 'text/xml, application/xml');
+        final response = await request.close();
+        final body = await utf8.decoder.bind(response).join();
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw HttpException(
+            'UPnP description returned HTTP ${response.statusCode}',
+            uri: uri,
+          );
+        }
+        return body;
+      })()
+          .timeout(timeout);
     } finally {
       client.close(force: true);
     }

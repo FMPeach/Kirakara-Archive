@@ -14,11 +14,16 @@ Future<void> main(List<String> args) async {
 }
 
 Future<void> _run(List<String> args) async {
-  final discovery = DlnaDiscoveryService();
+  final discovery = DlnaDiscoveryService(logger: stdout.writeln);
   const controlPoint = DlnaControlPoint();
 
   late final List<DlnaDevice> devices;
-  if (args.isEmpty) {
+  if (args.length == 1 && args.single == '--purek') {
+    stdout.writeln(
+      '正在扫描 192.168.254.1-254:49152 的 Pure K MediaRenderer...',
+    );
+    devices = await discovery.discoverPureKRenderers();
+  } else if (args.isEmpty) {
     stdout.writeln('正在扫描实体局域网内的 DLNA MediaRenderer...');
     devices = await discovery.discover(
       responseWindow: const Duration(seconds: 4),

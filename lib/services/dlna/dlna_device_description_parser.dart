@@ -83,11 +83,17 @@ class DlnaDeviceDescriptionParser {
     )) {
       final serviceType = (_directText(service, 'serviceType') ?? '').trim();
       final controlUrl = (_directText(service, 'controlURL') ?? '').trim();
+      final eventSubUrl = (_directText(service, 'eventSubURL') ?? '').trim();
+      final scpdUrl = (_directText(service, 'SCPDURL') ?? '').trim();
       if (serviceType.isEmpty || controlUrl.isEmpty) continue;
       services.add(
         DlnaServiceEndpoint(
           serviceType: serviceType,
           controlUrl: _resolveDeviceUrl(baseUri, controlUrl),
+          eventSubUrl: eventSubUrl.isEmpty
+              ? null
+              : _resolveDeviceUrl(baseUri, eventSubUrl),
+          scpdUrl: scpdUrl.isEmpty ? null : _resolveDeviceUrl(baseUri, scpdUrl),
         ),
       );
     }

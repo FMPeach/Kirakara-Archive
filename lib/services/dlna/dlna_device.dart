@@ -2,10 +2,14 @@ class DlnaServiceEndpoint {
   const DlnaServiceEndpoint({
     required this.serviceType,
     required this.controlUrl,
+    this.eventSubUrl,
+    this.scpdUrl,
   });
 
   final String serviceType;
   final Uri controlUrl;
+  final Uri? eventSubUrl;
+  final Uri? scpdUrl;
 }
 
 class DlnaDevice {
