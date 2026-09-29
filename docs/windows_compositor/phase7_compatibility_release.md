@@ -20,7 +20,16 @@ Release Candidate 的既定阶段验收完成，不表示所有 Windows/GPU/显�
 完成后的扩展兼容矩阵。另一位协作者从 clean clone 复现 Engine 归入 Phase 8，不再重复
 阻塞 Phase 7。项目目前没有声明项目级发布许可证，也没有所有者提供的生产签名身份；
 这两项会阻止把候选称为正式公开发行版，但不会阻止本地可移植包与无管理员权限的当前
-用户安装门禁。
+用户安装门禁。高分屏现场结果来自当时的 PMv2 配置；2026-09-30 恢复
+`dpiAwareness=false` 后，双 Visual 与帧泵结论继续有效，但当前发布配置的高分屏
+bitmap-scaling 视觉质量需要补一次实机烟测。
+
+2026-09-30 还用当前 Stage Visual ABI 1 Show DLL（SHA-256
+`1CA811AE12B508903426F89F8A3B7E4B84261C9DEC4538173519F8E465E35519`）重建了 custom
+Release bundle；DLL 与 Show 仓库产物逐字节一致，默认 composed 启动、窗口响应、正常
+退出和 DPI-unaware manifest 门槛通过，未强制清理。仓库内 `.kfe` 的本次 Engine 重链
+产生了新的 PE/PDB identity，精确哈希与 `engine.lock.json` 不同且锁文件未自动修改，
+因此该样本是开发态 release 烟测，不冒充严格锁定的 Phase 7 Release Candidate。
 
 ## 锁定的 Engine 三模式
 
@@ -235,7 +244,7 @@ schema v4 前的一次预检在旧 Windows 安全窗口尚未处理时捕获到 
 | 项目 | 状态 |
 | --- | --- |
 | Windows 11 / NVIDIA / 1080p60 | 自动与人工门禁通过 |
-| 100%、125%、150% 单屏 DPI | Phase 2 自动门禁与用户观察通过 |
+| 100%、125%、150% 单屏 DPI | PMv2 历史配置通过；当前 DPI-unaware 的 96-DPI 自动契约已于 2026-09-30 通过，高分屏 bitmap-scaling 视觉需补测 |
 | 单 HWND、Alpha 孔、Flutter 覆盖、缩放、焦点、中文 IME | 通过 |
 | 720p60 fixture 到固定 1080p Stage，再缩放到 preview | 真实 Show probe 通过 |
 | 最小化/恢复、模拟 session/power/display 消息、Show 重建 | Phase 4 自动门禁通过 |
@@ -251,7 +260,7 @@ schema v4 前的一次预检在旧 Windows 安全窗口尚未处理时捕获到 
 | Windows 10 | 延期扩展兼容项；当前主机不可用 |
 | Intel Iris Xe / 1130G7 活动真实 Stage 路径 | 2026-09-29 用户现场确认通过 |
 | AMD、Microsoft Basic Render/WARP | 延期扩展兼容项；不由 Intel/NVIDIA 结果外推 |
-| 真实高分屏或跨 DPI 移动 | 2026-09-29 用户现场确认通过；未附新的自动报告 |
+| 真实高分屏或跨 DPI 移动 | 2026-09-29 PMv2 配置由用户现场确认通过；恢复 DPI-unaware 后需补 bitmap-scaling 视觉烟测 |
 | 真实显示器热插拔、睡眠/恢复 | 所有者决定暂缓；模拟消息结果不改写为实机通过 |
 | graphics device removal | 延期扩展兼容项 |
 | 物理双屏和 Cast 至少各一次模式切换 | 2026-09-29 用户确认已在实际使用与 Pure K 投屏验收中通过 |
@@ -286,24 +295,28 @@ $flutterSdkRoot = $engineDoctor.flutterSdk.root
 $workspaceRoot = Join-Path (Get-Location) '.kfe'
 ```
 
-每个 175%/200% 档位都启动新进程，第一次不要使用 `-SkipBuild`：
+当前 Runner 已按产品决定恢复 `dpiAwareness=false`。在 175%/200% 档位都启动新进程，
+第一次不要使用 `-SkipBuild`，并要求进程报告虚拟化的 100% / 96 DPI：
 
 ```powershell
 .\tool\windows_compositor\run_synthetic_compositor_probe.ps1 `
   -FlutterSdkRoot $flutterSdkRoot `
   -WorkspaceRoot $workspaceRoot `
   -LocalEngine host_debug_kirakara_v4 `
-  -ExpectedScalePercent 175 `
+  -ExpectedScalePercent 100 `
   -KeepOpen
 ```
 
-200% 时把参数改为 `200`。有两台不同 DPI 显示器时再加 `-RequireMixedDpi`；探针会移动
-同一个 HWND 到另一显示器再移回，单屏或相同 DPI 环境必须明确失败/跳过，不能算通过。
+系统显示缩放仍分别设置为 175%/200%，但命令参数保持 `100`。探针会移动同一个 HWND
+到另一显示器再移回，并要求其 DPI-unaware 上下文和 96-DPI client space 不变；
+`-RequireMixedDpi` 只有在系统仍向该进程暴露不同 monitor scale 时才可使用，否则应明确
+记录为不可自动判定，并以实机视觉检查为准。
 留窗期间人工检查：透明孔只显示 Stage、孔外无 Stage 泄露、圆角正确、普通面板/对话框/
 抽屉/全屏预览控件始终在 Stage 上方；反复拖动缩放无白闪和控件消失；鼠标、焦点、
 Unicode 输入及系统中文 IME 候选/提交正常。
 
-必须保存报告中的 `windowDpi`、每个 monitor 的 DPI/scale/bounds、mixed-DPI move/restore
+必须保存报告中的 `windowDpi=96`、`windowDpiAwareness=0`、每个 monitor 的
+DPI/scale/bounds、move/restore
 结果、HWND、surface size、`compositionTreeCommitCount`、`surfaceResizeCount`、
 `stagePresentDelta` 和 `flutterPresentDelta`。静止 Flutter 的 Stage-only 样本仍应为
 Stage 前进且 Flutter delta 为 0；所有 HRESULT、device removal 和资源失败计数应为 0。

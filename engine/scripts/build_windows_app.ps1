@@ -143,7 +143,7 @@ try {
       -ExpectedPath (Join-Path $icuDirectory 'icudtl.dat') `
       -ActualPath (Join-Path $bundle 'data\icudtl.dat') `
       -Label 'icudtl.dat'
-    Assert-WindowsAppPerMonitorV2 `
+    Assert-WindowsAppDpiAwarenessDisabled `
       -Lock $lock `
       -Executable (Join-Path $bundle 'kirakara_app.exe') `
       -WindowsSdkPath $WindowsSdkPath

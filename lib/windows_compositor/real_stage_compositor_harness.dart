@@ -886,7 +886,10 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
             backend['visibleInteractiveTopLevelWindowCount'] == 1 &&
                 _counter(backend, 'visibleTopLevelWindowCount') >= 1 &&
                 _counter(backend, 'topLevelWindow') != 0,
-        'windowIsPerMonitorV2': backend['windowIsPerMonitorV2'] == true,
+        'windowDpiAwarenessDisabled':
+            backend['windowIsPerMonitorV2'] == false &&
+                _counter(backend, 'windowDpiAwareness') == 0 &&
+                _counter(backend, 'windowDpi') == 96,
         'sessionNotificationsRegistered':
             backend['sessionNotificationsRegistered'] == true,
         'stageAttachedAndActive':

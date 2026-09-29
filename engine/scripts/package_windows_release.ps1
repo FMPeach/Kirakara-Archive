@@ -170,7 +170,7 @@ Assert-MatchingFile `
   -ExpectedPath $showDll `
   -ActualPath (Join-Path $bundle 'libshow_host.dll') `
   -Label 'Release Show host DLL'
-Assert-WindowsAppPerMonitorV2 `
+Assert-WindowsAppDpiAwarenessDisabled `
   -Lock $lock `
   -Executable $executable `
   -WindowsSdkPath $WindowsSdkPath

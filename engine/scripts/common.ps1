@@ -1006,7 +1006,7 @@ function Assert-WindowsSdkVersion {
   }
 }
 
-function Assert-WindowsAppPerMonitorV2 {
+function Assert-WindowsAppDpiAwarenessDisabled {
   param(
     [Parameter(Mandatory = $true)]$Lock,
     [Parameter(Mandatory = $true)][string]$Executable,
@@ -1044,8 +1044,8 @@ function Assert-WindowsAppPerMonitorV2 {
       throw "Windows App manifest has no dpiAwareness element: $executablePath"
     }
     $value = $dpiAwareness.InnerText.Trim()
-    if ($value -cne 'PerMonitorV2') {
-      throw "Windows App manifest must embed PerMonitorV2, got '$value': $executablePath"
+    if ($value -cne 'false') {
+      throw "Windows App manifest must disable DPI awareness with 'false', got '$value': $executablePath"
     }
   } finally {
     if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {

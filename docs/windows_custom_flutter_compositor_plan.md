@@ -52,14 +52,21 @@
   Flutter，且 Flutter 短暂卡顿不阻塞 Stage producer。屏幕关闭样本则明确返回
   `STATUS_GRAPHICS_PRESENT_OCCLUDED`，探针按设计失败且未进入轮询。100% DPI 下的
   Alpha 透明孔、圆角、半透明遮罩、独立页面、窗口缩放、焦点、Unicode 输入和原生
-  中文 IME 组合/候选/提交均已完成实机复测。125% 测试发现并修复 Runner 显式禁用
-  DPI awareness 的历史设置：现已恢复 Per-Monitor V2，同时保持约 `1600×900` 的原有
-  物理启动占用；120 DPI 自动门槛通过，用户初步未见阻断性视觉问题。150% / 144 DPI
-  完整自动门槛和留窗人工观察也已通过。用户明确决定不再用当前 1080p 单屏模拟
+  中文 IME 组合/候选/提交均已完成实机复测。125% 与 150% 的 Per-Monitor V2 样本曾
+  完整通过，但 2026-09-30 按产品决定恢复原有 `dpiAwareness=false`，由 Windows 对最终
+  HWND 做 bitmap scaling；旧 PMv2 样本仅作为历史证据，当前构建与运行时门槛改为要求
+  `windowDpi=96`、awareness `0`。用户明确决定不再用当前 1080p 单屏模拟
   175%～200%，而是在功能完成后用真实高分屏复测；不同 DPI 多屏迁移也因当前只有一个
   显示器而无法执行。这两项当时作为未验证的 Phase 7 实机兼容门槛保留；后续真实
   高分屏或跨 DPI 移动已由用户现场确认通过。详见
   `docs/windows_compositor/phase2_synthetic_dcomp.md`。真实 Show 管线仍未修改。
+- 2026-09-30 当前发布策略已复验：最终 EXE 的嵌入 manifest 精确为
+  `dpiAwareness=false`；synthetic 报告 awareness `0` / window DPI `96`，双 Visual、
+  resize、遮罩、页面与静止帧泵门槛全通过。真实 Show 在未设置 backend 环境变量时
+  自动选择 `composed / custom-engine-default`，两秒样本 Show/Stage/Flutter 为
+  `120 / 120 / 0`；显式 `external_texture` A/B 也再次通过。注入经 ABI 校验且哈希匹配
+  Show 仓库的 DLL 后，custom Release bundle 也通过启动、响应和正常退出烟测；本地重链
+  Engine 的非确定性哈希未写回锁文件，因此不冒充严格 RC 产物。
 - 首次人工拖动窗口发现旧 resize 路径会在重建 surface 时提交空 DComp root，造成白闪。
   已改为保留同一 target/Visual tree 并原位 `ResizeBuffers`；修复后自动缩放/恢复门槛
   通过，tree commit 全程保持 1；用户实机复测确认白闪和缩放后整窗 Stage 穿透均已
@@ -498,12 +505,13 @@ release 启动/响应对照、三模式 ABI/哈希校验和 stock Engine 单测�
 HWND、尺寸或 DComp tree，且显示期间 Stage 仍独立推进。100% DPI 下的 Alpha、圆角、
 遮罩、独立页面、有限动画停止、焦点/Unicode 输入、原生中文 IME 组合/候选/提交和
 连续缩放已经实机复测；空 DComp root 导致的白闪改为原位 `ResizeBuffers` 后，用户确认
-  白闪与控件消失均已修复。探针现会枚举所有显示器的实际 DPI；在多屏环境会优先选择
-  不同 DPI 的显示器自动移动过去再移回，并核对 DPI、HWND、尺寸、DComp tree 和 Stage
+  白闪与控件消失均已修复。探针会枚举进程可见的显示器 DPI；在多屏环境若能分辨
+  不同 DPI 则优先选择该目标，随后自动移动过去再移回，并核对 DPI、HWND、尺寸、DComp tree 和 Stage
   推进。单屏样本明确记录为 skipped；严格档位与 mixed-DPI 负向门槛已证明错误环境不会
-  被误报为通过。Runner 已恢复 Per-Monitor V2，125% 新进程准确报告 `120 DPI`，并在
-  保持原有物理窗口占用后通过完整自动门槛，用户初步反馈问题不大；150% / 144 DPI
-  的完整自动门槛和留窗人工观察也已通过。用户于 2026-09-28 明确决定停止在当前
+  被误报为通过。125% 与 150% 的 Per-Monitor V2 样本曾通过；2026-09-30 按产品决定
+  恢复 `dpiAwareness=false`，当前探针改为要求虚拟化的 96 DPI 和 awareness `0`，并在
+  多屏移动时保持该契约。旧 PMv2 实测保留为历史证据，不代表当前发布配置。用户于
+  2026-09-28 明确决定停止在当前
   1080p 单屏上模拟 175%～200%，待功能完成后用真实高分屏复测；混合 DPI 迁移也需要
   第二台显示器。这些未验证项转入 Phase 7 实机兼容矩阵，不能据此宣称兼容性已经通过，
   但不再阻塞 Phase 2 的实现提交。
@@ -517,6 +525,10 @@ HWND、尺寸或 DComp tree，且显示期间 Stage 仍独立推进。100% DPI �
 完成结论（2026-09-28）：在当前可用的 100%、125% 和 150% 单屏环境，三项退出条件
 均已满足，Phase 2 可以原子提交。175%～200% 真正高分屏和不同 DPI 多屏迁移是用户
 明确接受的延后实机门槛，保留到 Phase 7，不得把“延后”写成“通过”。
+
+后续策略变更（2026-09-30）：上述 DPI 结论针对当时的 PMv2 配置。当前产品恢复
+`dpiAwareness=false`；合成器独立帧泵和覆盖关系不变，但高分屏 bitmap scaling 的视觉
+质量需按当前发布配置重新烟测。
 
 ### Phase 3：接入真实 Show Stage 纹理
 
@@ -660,7 +672,9 @@ Portable/Installer 为生产 LAN 监听触发 Windows Firewall 授权；普通 A
 当前主机证明 Windows 11 23H2 / RTX 4060 Ti 活动路径。随后由仓库所有者补充确认：
 Intel Iris Xe / 1130G7 非 NVIDIA 活动路径、真实 Show 约 30 分钟稳态、真实高分屏或
 跨 DPI 移动、物理双屏和 Cast 的至少一次模式切换均通过。该批结果是现场人工验收，
-未附加新的自动报告或 ETL，不应改写为自动门禁证据。Windows 10、AMD、WARP、完整
+未附加新的自动报告或 ETL，不应改写为自动门禁证据；其中 DPI 结果来自 PMv2 配置，
+恢复 `dpiAwareness=false` 后需补当前 bitmap-scaling 视觉烟测。Windows 10、AMD、WARP、
+完整
 175%/200% 档位、graphics device removal、触屏/RDP/第三方富文本仍作为扩展兼容矩阵；
 真实睡眠/恢复和显示器热插拔由所有者明确暂缓。项目级许可证和生产签名身份仍是正式
 公开发布事项，但不阻塞本阶段的内部 Release Candidate 验收。

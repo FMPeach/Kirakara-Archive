@@ -21,14 +21,13 @@ swapchain 执行 `ResizeBuffers`，并把 Stage 恢复推迟到新尺寸 Flutter
 100% DPI 下的透明孔、圆角、半透明遮罩、独立页面、有限动画、窗口缩放、焦点、
 Unicode 输入和原生中文 IME 组合/候选/提交已经完成实机视觉检查；遮罩和独立页面显示
 500 ms 时 Stage 分别继续 Present `+30` 和 `+31`，HWND、surface 尺寸和 DComp tree
-均未改变。125% 首次实测同时暴露出 Runner manifest 曾显式关闭 DPI awareness；Windows
-因此把 `1920×1080 / 120 DPI` 虚拟成 `1536×864 / 96 DPI`。现已恢复 Flutter 模板的
-Per-Monitor V2，并按目标显示器 DPI 反算启动逻辑尺寸，使原有约 `1600×900` 物理窗口
-占用保持不变。125% 新进程准确报告 `120 DPI`，完整自动门槛通过，用户初步反馈
-“问题不大”；不把该反馈扩大解释为全部视觉项已验证。150% / 144 DPI 随后通过完整
-自动门槛和留窗人工观察。自动探针还会在
-多显示器环境优先选择不同 DPI 的目标显示器，移动过去后再
-移回，逐段核对窗口 DPI、HWND、surface 尺寸、DComp tree 和 Stage 推进；当前单显示器
+均未改变。125% 和 150% 首次实测期间曾临时启用 Per-Monitor V2，分别通过 120/144 DPI
+自动门槛；这些结果保留为历史技术证据。2026-09-30 按产品决定恢复原有
+`dpiAwareness=false`：Flutter 与 DComp 使用 Windows 虚拟化的 96-DPI client space，
+最终 HWND 由系统 bitmap scaling。当前构建、打包和运行时门槛均要求 manifest 为
+`false`、awareness 为 `0`、window DPI 为 `96`，避免发布物意外回到 PMv2。自动探针仍会
+在多显示器环境移动过去后再移回，逐段核对 DPI-unaware 契约、HWND、surface 尺寸、
+DComp tree 和 Stage 推进；当前单显示器
 样本明确记录为 `single_monitor` 跳过，不会冒充迁移成功。用户于 2026-09-28 明确决定
 不再用当前 1080p 单屏模拟 175% 和 200%，而是在功能完成后用真实高分屏复测；混合 DPI
 迁移也需要当前环境没有的第二台显示器。这些项目转入 Phase 7 实机兼容矩阵，明确保持
@@ -63,8 +62,9 @@ top-level HWND
   新尺寸 Flutter 帧 Present 后才恢复 Stage producer，避免空根和未定义上层缓冲被合成。
 - 资源释放顺序为：停止并 join Stage 线程，解除 EGL surface，清空 Visual content/
   root 并 Commit，再逆序释放 swapchain、context、device 和事件句柄。
-- backend 未设置，或为 `stock` / `external_texture` 时，不准备定制 view，继续使用
-  上游 Flutter surface 和现有 Stage external texture。
+- 定制 Engine 且 backend 未设置时默认使用真实 `composed` 路径；官方/stock Engine
+  没有版本化 export 时继续使用上游 Flutter surface 和现有 Stage external texture。
+  显式 `stock` / `external_texture` 仍可强制 A/B 回退，`synthetic` 仅用于本页探针。
 
 Runner 通过单一版本化导出 `FlutterDesktopKirakaraCompositorGetApi` 做握手。ABI、
 patchset version/revision、Engine revision、结构大小或函数表不完全匹配时，启动会给出
@@ -90,10 +90,10 @@ occluded 是明确的生命周期状态，恢复策略属于 Phase 4；Phase 2 �
 `run_synthetic_compositor_probe.ps1` 验证并记录：
 
 - 精确 Engine/patchset 元数据与 capability bits；
-- 目标 HWND 的运行时 DPI awareness context 必须精确为 Per-Monitor V2，不能只靠
-  100% 下看似正常的 DPI 数值或源码 manifest 声明；
-- 当前窗口 DPI、缩放百分比，以及每台显示器的边界、主屏标记、DPI 和缩放百分比；
-  每个样本都把实际值写进 JSON，避免仅靠文件名或人工记忆判断缩放档位；
+- 目标 HWND 的运行时 DPI awareness 必须为 `DPI_AWARENESS_UNAWARE (0)`，且窗口 DPI
+  必须为虚拟化的 `96`，不能只靠源码 manifest 声明；
+- 当前窗口的虚拟化 DPI、缩放百分比，以及进程可见的每台显示器边界、主屏标记、DPI
+  和缩放百分比；每个样本都把报告值写进 JSON，避免仅靠文件名或人工记忆判断；
 - 当前进程恰好一个可见顶层内容 HWND，且 Engine 诊断绑定到非零目标 HWND；不可见
   的 Windows IME 辅助窗口单独计数，不冒充 Stage/Flutter 内容窗口；
 - 初始化 HRESULT、Stage Present HRESULT、compositor clock NTSTATUS；
@@ -106,8 +106,8 @@ occluded 是明确的生命周期状态，恢复策略属于 Phase 4；Phase 2 �
 - resize 前后顶层 HWND 不变、composition tree commit 计数保持为 1，Stage 随后继续推进；
 - 自动打开/关闭半透明遮罩与不透明独立页面，验证 HWND、surface 尺寸和 DComp tree
   均不变化，并验证它们显示期间 Stage producer 继续推进；
-- 如果存在多台显示器，优先选择与当前窗口 DPI 不同的目标显示器，自动移动过去再移回；
-  两段都要求顶层 HWND 与 DComp tree 不变、Stage 持续推进，最终尺寸和 DPI 精确恢复；
+- 如果存在多台显示器，自动移动过去再移回；两段都要求窗口保持 96 DPI、顶层 HWND 与
+  DComp tree 不变、Stage 持续推进，最终尺寸精确恢复；
   单显示器环境必须在报告中明确记为 skipped；
 - 等待交互相关的有限 Flutter 动画完全结束后，再采两秒静止样本，要求 Stage 继续推进
   且 Flutter Present 重新归零，防止页面/遮罩切换遗留持续帧泵；
@@ -147,11 +147,12 @@ test-only stall 仅在 `KIRAKARA_COMPOSITOR_TEST_MODE=1` 时开放，且单次�
 | 有限动画 | 通过；动画结束后重跑门槛，Stage `+120 / 2 s`、Flutter `+0` |
 | 焦点与基本输入 | 通过；输入框焦点、鼠标点击及 `KiraKara 测试 123` Unicode 输入可见 |
 | 原生中文 IME | 通过；`ceshi` 组合串、候选窗和空格提交“测试”均正常 |
-| DPI awareness | 通过；Runner 已从显式禁用改回 Per-Monitor V2，运行时 HWND context 也必须报告 awareness `2` 且精确匹配 PMv2；125% 进程准确看到 `1920×1080 / 120 DPI`，启动物理窗口仍约 `1600×900` |
-| 最终 EXE manifest 门槛 | 通过；构建脚本使用锁定 SDK `mt.exe` 解析资源 `#1`，official debug 正向通过，无 `dpiAwareness` 的系统 EXE 负向样本按设计拒绝 |
-| DPI 矩阵 | 100% 自动与视觉通过；125% 自动通过、用户初步未见阻断问题；150% 自动与留窗人工观察通过；175%～200% 真正高分屏与混合 DPI 仍未验证，按用户决定转入 Phase 7 实机矩阵 |
+| DPI awareness（历史 Phase 2 样本） | 当时通过 Per-Monitor V2 门槛；125% 进程准确看到 `1920×1080 / 120 DPI`。2026-09-30 按产品决定恢复 `dpiAwareness=false`，这些样本只保留为旧实现证据，不再代表当前契约 |
+| 最终 EXE manifest 门槛 | 当前要求资源 `#1` 中 `dpiAwareness` 精确为 `false`；构建与打包脚本均拒绝其他值 |
+| 当前 DPI-unaware 自动门槛 | 2026-09-30 通过；运行时 awareness `0`、window DPI `96`、scale `100%`；Stage `+120 / 2 s`、Flutter `+1`，交互后静止样本 Stage `+120 / 2 s`、Flutter `+0` |
+| DPI 矩阵 | PMv2 历史配置下 100%、125%、150% 已测；当前 DPI-unaware 配置的 96-DPI 自动契约已通过，系统 bitmap scaling 与 175%～200% 真正高分屏仍保留为人工兼容项 |
 | 跨显示器自动迁移路径 | 单屏分支通过；报告明确为 `single_monitor` skipped，实际多屏迁移分支待不同 DPI 实机验证 |
-| DPI 防误报门槛 | 通过；100% 环境会拒绝 `-ExpectedScalePercent 125`，单 DPI 环境会拒绝 `-RequireMixedDpi`；后者还要求自动迁移确实到达不同 DPI 并恢复 |
+| DPI 防误报门槛 | 当前要求 `-ExpectedScalePercent 100`、awareness `0` 和 window DPI `96`；`-RequireMixedDpi` 只在系统向 DPI-unaware 进程暴露不同 monitor scale 时可用，否则明确失败 |
 
 对应的忽略目录报告：
 
@@ -185,6 +186,7 @@ test-only stall 仅在 `KIRAKARA_COMPOSITOR_TEST_MODE=1` 时开放，且单次�
 - `build/diagnostics/synthetic-compositor-v2-pmv2-runtime-gate-100.json`（100% 下新增运行时 HWND PMv2 防回归门槛，通过）
 - `build/diagnostics/synthetic-compositor-v2-phase2-150-pmv2.json`（150% / 144 DPI 完整自动门槛，通过）
 - `build/diagnostics/synthetic-compositor-v2-phase2-150-visual.json`（150% 保持打开的人工复核窗口，自动门槛通过）
+- `build/diagnostics/synthetic-compositor-dpi-unaware-20260930.json`（当前 `dpiAwareness=false` 自动门槛，通过）
 - `build/diagnostics/phase2-v2-alpha-overlay-topmost-a.png`（半透明遮罩视觉证据）
 - `build/diagnostics/phase2-v2-input-unicode-sendinput.png`（焦点与 Unicode 输入证据）
 - `build/diagnostics/phase2-v2-ime-composition.png`（中文 IME 组合串和候选窗证据）
@@ -227,21 +229,22 @@ Set-Location 'D:\Kirakara-App-ascii'
   -KeepOpen
 ```
 
-每个缩放档位应增加 `-ExpectedScalePercent`，让脚本核对实际窗口 DPI。例如切换到
-125% 后运行：
+当前产品恢复 DPI-unaware 模式，自动门槛只应使用
+`-ExpectedScalePercent 100`，核对进程始终看到虚拟化后的 96 DPI：
 
 ```powershell
 .\tool\windows_compositor\run_synthetic_compositor_probe.ps1 `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
   -LocalEngine host_debug_kirakara_v4 `
-  -ExpectedScalePercent 125 `
+  -ExpectedScalePercent 100 `
   -SkipBuild
 ```
 
-跨两台不同缩放显示器的样本还必须加 `-RequireMixedDpi`；该开关会检查枚举结果中
-至少有两个不同缩放值，并要求自动移动样本确实到达不同 DPI 的显示器后恢复原 DPI，
-不能用同 DPI 双屏、单屏或仅枚举而未迁移冒充混合 DPI。
+跨显示器时，探针仍会移动同一个 HWND 后移回，并要求窗口 DPI 全程保持虚拟化的 96、
+HWND 与 DComp tree 不变且 Stage 继续推进。`-RequireMixedDpi` 仅用于诊断：如果 Windows
+没有向 DPI-unaware 进程暴露不同的显示器缩放值，它会明确失败，不能代替真实高分屏上的
+人工 bitmap-scaling 检查。
 
 检查并记录：
 
@@ -252,8 +255,10 @@ Set-Location 'D:\Kirakara-App-ascii'
 5. 输入框可获得/切换焦点，中文 IME、键盘和鼠标输入正常。
 6. 连续调整窗口大小，确认不再闪白，也不出现整窗 Stage 穿透；透明孔、边框和 Stage
    不错位、不残留旧尺寸画面。
-7. 已在 100%、125%、150% DPI 检查；175%、200% 改在真正高分屏上执行。连接不同
-   DPI 的第二台显示器后，跨显示器移动并重复缩放、遮罩和输入测试。
+7. PMv2 历史配置已在 100%、125%、150% 检查；当前 DPI-unaware 配置需在真正高分屏
+   上重新观察 bitmap scaling。连接不同 DPI 的第二台显示器后，跨显示器移动并重复
+   缩放、遮罩和输入测试。
 
-当前硬件可执行的自动门槛与人工矩阵已经通过，因此 Phase 2 实现可以提交。175%、
-200% 真正高分屏和混合 DPI 项仍是 Phase 7 的硬性实机门槛；在完成前只能标为“未验证”。
+Phase 2 的双 Visual、Alpha、覆盖关系与独立帧泵结论不受 DPI 策略切换影响。当前
+DPI-unaware 自动门槛已于 2026-09-30 重新通过；175%、200% 真正高分屏上的 bitmap scaling
+和混合 DPI 视觉质量仍需实机复核，在完成前只能标为“未验证”。

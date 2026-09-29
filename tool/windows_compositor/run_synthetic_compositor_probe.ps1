@@ -363,7 +363,7 @@ if ($report.passed -ne $true) {
 if ($PSBoundParameters.ContainsKey('ExpectedScalePercent')) {
   $actualScale = [int]$report.backend.windowScalePercent
   if ($actualScale -ne $ExpectedScalePercent) {
-    throw "Synthetic compositor window scale mismatch. Expected $ExpectedScalePercent%, got $actualScale%. Report: $absoluteReport"
+    throw "Synthetic compositor virtualized window scale mismatch. Expected $ExpectedScalePercent%, got $actualScale%. DPI awareness is intentionally disabled, so the supported expectation is 100%. Report: $absoluteReport"
   }
 }
 if ($RequireMixedDpi) {
@@ -377,12 +377,14 @@ if ($RequireMixedDpi) {
   }
   if (
     $report.monitorMoveSample.skipped -eq $true -or
-    [int]$report.monitorMoveSample.targetBackend.windowDpi -eq
+    [int]$report.monitorMoveSample.originalMonitorDpi -eq
+      [int]$report.monitorMoveSample.targetMonitorDpi -or
+    [int]$report.monitorMoveSample.targetBackend.windowDpi -ne
       [int]$report.backend.windowDpi -or
     [int]$report.monitorMoveSample.restoredBackend.windowDpi -ne
       [int]$report.backend.windowDpi
   ) {
-    throw "Mixed-DPI monitor migration did not reach a different DPI and return to the original DPI. Report: $absoluteReport"
+    throw "Mixed-DPI monitor migration did not reach a physically different-DPI monitor while preserving the DPI-unaware 96-DPI window contract. Report: $absoluteReport"
   }
 }
 

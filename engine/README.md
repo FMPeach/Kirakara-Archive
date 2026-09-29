@@ -306,7 +306,8 @@ All modes use the same pinned Flutter SDK. `official`, `local/stock` and
 `local/patched` are explicit A/B selections; no DLL is patched or hooked after
 linking. Every App build also extracts resource `#1` from the final executable
 with the locked Windows SDK `mt.exe` and requires the embedded DPI awareness to
-be exactly `PerMonitorV2`, including official and local stock bundles. The
+be exactly `false`, including official and local stock bundles. This preserves
+the product's established DPI-unaware, Windows-bitmap-scaled behavior. The
 verifier writes reports below the ignored
 `build/diagnostics/engine` directory. Locked sizes and SHA-256 values identify
 the exact accepted artifact set, and `-RequireLockedHashes` is the gate.
@@ -504,20 +505,20 @@ percentage, and the interactive footer displays the measured window scale. Use
 `-KeepOpen` for the visual Alpha, page, resize, native IME and mixed-DPI
 checklist in the Phase 2 report.
 
-The Runner manifest must remain `PerMonitorV2`; a DPI-unaware process reports
-virtualized monitor bounds and cannot validate this matrix. Startup converts the
-historical 1600x900 physical target into monitor-relative logical dimensions, so
-enabling real DPI does not enlarge the initial window while Flutter and DComp
-still receive the actual scale. The runtime report also checks the target HWND's
-awareness context directly; a manifest-only or 100%-only false positive fails.
+The Runner manifest intentionally keeps `dpiAwareness` set to `false`. Flutter
+and DComp therefore receive the DPI-virtualized 96-DPI client space and Windows
+bitmap-scales the final HWND, matching the application's historical behavior.
+The build and runtime gates check both the embedded manifest and the HWND
+awareness context, so a manifest-only or 100%-display false positive fails.
 
-Use `-ExpectedScalePercent 100|125|150|175|200` to bind a run to the
-measured window DPI. Add `-RequireMixedDpi` for cross-monitor runs; it rejects
-single-monitor and same-scale multi-monitor environments. When multiple
-monitors are available, the harness automatically prefers a different-DPI
-target, moves the same HWND there and back, and checks DPI transitions, restored
-geometry, the single DComp tree and Stage progress. A single-monitor run records
-that sample as explicitly skipped instead of treating it as a pass.
+Use `-ExpectedScalePercent 100` to assert the virtualized window contract. The
+harness still moves the same HWND to another monitor and back when multiple
+monitors are present, checking restored geometry, the single DComp tree and
+Stage progress while window DPI remains 96. `-RequireMixedDpi` is retained as a
+diagnostic-only gate: it additionally requires Windows to expose distinct
+monitor scales to the process and otherwise fails explicitly. Visual quality
+and bitmap scaling on a genuinely high-DPI or mixed-DPI machine remain manual
+acceptance items.
 
 ## Phase 3 real Show Stage probe
 

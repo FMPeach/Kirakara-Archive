@@ -126,7 +126,11 @@ Show API 或同步结构失配都会清晰报错并停止，不会静默落入�
 2026-09-28 的基础真实探针报告为本机忽略目录中的
 `build/diagnostics/real-stage-compositor-20260928-165313.json`；2026-09-29 的失配 EOF
 与生命周期合并复验为
-`build/diagnostics/real-stage-lifecycle-eof-mismatch-20260929-101755.json`。关键数据：
+`build/diagnostics/real-stage-lifecycle-eof-mismatch-20260929-101755.json`。2026-09-30
+恢复 DPI-unaware 并启用产品默认 composed 路径后的联合复验为
+`build/diagnostics/real-stage-default-composed-dpi-unaware-20260930.json`：backend 为
+`composed`、selection 为 `custom-engine-default`、awareness 为 `0`、window DPI 为
+`96`，全部门槛通过。关键数据：
 
 | 门槛 | 实测 |
 | --- | ---: |
@@ -168,6 +172,9 @@ Show 时钟实现。
   Flutter Present；inactive 750 ms 为 0 callback / 0 Present；
 - v3 定制 debug Engine 在同步修正后强制 `external_texture`：60 callback、60 advanced
   acquire、60 带新 acquire 的 Flutter Present；inactive 750 ms 同样为 0 / 0。
+- 2026-09-30 当前 v4 定制 debug Engine 在 DPI-unaware 配置下再次强制
+  `external_texture`：61 callback、60 advanced acquire、60 Present；hidden/inactive
+  样本均为 0，Show 重建后继续通过。
 
 两者都满足 Phase 0 冻结的 cadence 一致性门槛。60 Hz producer 与 60 Hz Flutter
 调度之间的相位合并仍然存在于 external texture 回退路径，这正是保留 A/B 而不把

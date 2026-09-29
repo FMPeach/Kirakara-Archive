@@ -17,12 +17,16 @@ int _counter(Map<String, Object?> values, String key) {
   return value.toInt();
 }
 
-bool _monitorInventoryContainsDpi(Object? value, int dpi) {
+bool _monitorInventoryIsSane(Object? value) {
   if (value is! List<Object?> || value.isEmpty) {
     return false;
   }
-  return value.any((entry) {
-    return entry is Map<Object?, Object?> && entry['dpi'] == dpi;
+  return value.every((entry) {
+    if (entry is! Map<Object?, Object?>) {
+      return false;
+    }
+    final dpi = entry['dpi'];
+    return dpi is num && dpi >= 96 && dpi <= 480;
   });
 }
 
@@ -146,13 +150,17 @@ class _SyntheticCompositorHarnessState
           .whereType<Map<Object?, Object?>>()
           .toList(growable: false);
       final originalMonitorIndex = _counter(backend, 'currentMonitorIndex');
+      final originalMonitor = monitorEntries.firstWhere(
+        (monitor) => monitor['index'] == originalMonitorIndex,
+      );
+      final originalMonitorDpi = (originalMonitor['dpi']! as num).toInt();
       Map<String, Object?> monitorMoveSample;
       var monitorMoveSucceeded = true;
       if (monitorEntries.length > 1) {
         Map<Object?, Object?>? targetMonitor;
         for (final monitor in monitorEntries) {
           if (monitor['index'] != originalMonitorIndex &&
-              monitor['dpi'] != backend['windowDpi']) {
+              monitor['dpi'] != originalMonitorDpi) {
             targetMonitor = monitor;
             break;
           }
@@ -161,6 +169,7 @@ class _SyntheticCompositorHarnessState
           (monitor) => monitor['index'] != originalMonitorIndex,
         );
         final targetMonitorIndex = (targetMonitor['index']! as num).toInt();
+        final targetMonitorDpi = (targetMonitor['dpi']! as num).toInt();
         final moveBefore = await _readMap('getDiagnostics');
         await _compositorChannel.invokeMethod<void>(
           'moveWindowToMonitorForTest',
@@ -186,9 +195,13 @@ class _SyntheticCompositorHarnessState
                 targetMonitorIndex &&
             _counter(restoredBackend, 'currentMonitorIndex') ==
                 originalMonitorIndex &&
-            _counter(targetBackend, 'windowDpi') == targetMonitor['dpi'] &&
+            _counter(targetBackend, 'windowDpi') == 96 &&
             _counter(restoredBackend, 'windowDpi') ==
                 _counter(backend, 'windowDpi') &&
+            _counter(targetBackend, 'windowDpiAwareness') == 0 &&
+            _counter(restoredBackend, 'windowDpiAwareness') == 0 &&
+            targetBackend['windowIsPerMonitorV2'] == false &&
+            restoredBackend['windowIsPerMonitorV2'] == false &&
             _counter(moveBefore, 'topLevelWindow') ==
                 _counter(targetDiagnostics, 'topLevelWindow') &&
             _counter(moveBefore, 'topLevelWindow') ==
@@ -209,7 +222,9 @@ class _SyntheticCompositorHarnessState
         monitorMoveSample = <String, Object?>{
           'skipped': false,
           'originalMonitorIndex': originalMonitorIndex,
+          'originalMonitorDpi': originalMonitorDpi,
           'targetMonitorIndex': targetMonitorIndex,
+          'targetMonitorDpi': targetMonitorDpi,
           'before': moveBefore,
           'targetBackend': targetBackend,
           'targetDiagnostics': targetDiagnostics,
@@ -439,20 +454,17 @@ class _SyntheticCompositorHarnessState
                 _counter(after, 'topLevelWindow') != 0 &&
                 _counter(backend, 'topLevelWindow') ==
                     _counter(after, 'topLevelWindow'),
-        'windowDpiIsSane': _counter(backend, 'windowDpi') >= 96 &&
-            _counter(backend, 'windowDpi') <= 480,
-        'windowIsPerMonitorV2': backend['windowIsPerMonitorV2'] == true &&
-            _counter(backend, 'windowDpiAwareness') == 2,
+        'windowDpiIsVirtualized': _counter(backend, 'windowDpi') == 96,
+        'windowDpiAwarenessDisabled':
+            backend['windowIsPerMonitorV2'] == false &&
+                _counter(backend, 'windowDpiAwareness') == 0,
         'monitorInventoryMatches': backend['monitors'] is List<Object?> &&
             (backend['monitors']! as List<Object?>).length ==
                 _counter(backend, 'monitorCount') &&
             _counter(backend, 'currentMonitorIndex') >= 0 &&
             _counter(backend, 'currentMonitorIndex') <
                 _counter(backend, 'monitorCount') &&
-            _monitorInventoryContainsDpi(
-              backend['monitors'],
-              _counter(backend, 'windowDpi'),
-            ),
+            _monitorInventoryIsSane(backend['monitors']),
         'compositorActive': after['active'] == true,
         'inPlaceResizeCapability':
             (_counter(after, 'capabilities') & (1 << 5)) != 0,
