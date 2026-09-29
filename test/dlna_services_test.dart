@@ -153,15 +153,24 @@ void main() {
       expect(device.modelName, 'Myou Media Renderer');
       expect(
         device.avTransport.controlUrl,
-        Uri.parse('http://192.168.254.7:49152/control/avtransport'),
+        Uri.parse(
+          'http://192.168.254.7:49152/'
+          '_urn:schemas-upnp-org:service:AVTransport_control',
+        ),
       );
       expect(
         device.renderingControl?.controlUrl,
-        Uri.parse('http://192.168.254.7:49152/control/rendering'),
+        Uri.parse(
+          'http://192.168.254.7:49152/'
+          '_urn:schemas-upnp-org:service:RenderingControl_control',
+        ),
       );
       expect(
         device.connectionManager?.controlUrl,
-        Uri.parse('http://192.168.254.7:49152/control/connection'),
+        Uri.parse(
+          'http://192.168.254.7:49152/'
+          '_urn:schemas-upnp-org:service:ConnectionManager_control',
+        ),
       );
       expect(logs.single, contains('source=manual-url'));
       expect(
@@ -173,7 +182,7 @@ void main() {
       expect(
         logs.single,
         contains(
-          r'avTransport="http://192.168.254.7:49152/control/avtransport"',
+          r'avTransport="http://192.168.254.7:49152/_urn:schemas-upnp-org:service:AVTransport_control"',
         ),
       );
     });
@@ -674,15 +683,15 @@ const _pureKDescription = '''
     <serviceList>
       <service>
         <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
-        <controlURL>/control/avtransport</controlURL>
+        <controlURL>_urn:schemas-upnp-org:service:AVTransport_control</controlURL>
       </service>
       <service>
         <serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType>
-        <controlURL>/control/rendering</controlURL>
+        <controlURL>_urn:schemas-upnp-org:service:RenderingControl_control</controlURL>
       </service>
       <service>
         <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
-        <controlURL>/control/connection</controlURL>
+        <controlURL>_urn:schemas-upnp-org:service:ConnectionManager_control</controlURL>
       </service>
     </serviceList>
   </device>
@@ -700,7 +709,7 @@ const _pureKDescriptionWithoutUdn = '''
     <serviceList>
       <service>
         <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
-        <controlURL>/control/avtransport</controlURL>
+        <controlURL>_urn:schemas-upnp-org:service:AVTransport_control</controlURL>
       </service>
     </serviceList>
   </device>

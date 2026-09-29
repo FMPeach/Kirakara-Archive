@@ -87,7 +87,7 @@ class DlnaDeviceDescriptionParser {
       services.add(
         DlnaServiceEndpoint(
           serviceType: serviceType,
-          controlUrl: baseUri.resolve(controlUrl),
+          controlUrl: _resolveDeviceUrl(baseUri, controlUrl),
         ),
       );
     }
@@ -127,7 +127,23 @@ class DlnaDeviceDescriptionParser {
         .where((icon) => icon.url.isNotEmpty)
         .toList()
       ..sort((left, right) => right.area.compareTo(left.area));
-    return icons.isEmpty ? null : baseUri.resolve(icons.first.url);
+    return icons.isEmpty ? null : _resolveDeviceUrl(baseUri, icons.first.url);
+  }
+
+  static Uri _resolveDeviceUrl(Uri baseUri, String value) {
+    try {
+      return baseUri.resolve(value);
+    } on FormatException {
+      // Several MStar/Myou renderers expose paths such as
+      // `_urn:schemas-upnp-org:service:AVTransport_control`. The colon is
+      // legal once the value is an absolute HTTP path, but makes Dart parse
+      // the first segment as an invalid URI scheme. `./` preserves normal
+      // relative resolution while disambiguating it as a path.
+      if (!value.startsWith('/') && value.contains(':')) {
+        return baseUri.resolve('./$value');
+      }
+      rethrow;
+    }
   }
 
   static XmlElement? _directElement(XmlElement parent, String localName) {
