@@ -60,10 +60,12 @@ class _TopBar extends StatelessWidget {
               color: KiraColors.cream,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Icon(
-              Icons.graphic_eq,
-              color: KiraColors.red,
-              size: 30,
+            clipBehavior: Clip.antiAlias,
+            child: Image.asset(
+              'assets/branding/app_icon.png',
+              fit: BoxFit.cover,
+              filterQuality: FilterQuality.high,
+              semanticLabel: 'Kirakara app icon',
             ),
           ),
           const SizedBox(width: 15),

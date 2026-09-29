@@ -46,6 +46,14 @@ void main() {
           widget.semanticLabel == 'Kira Karaoke';
     });
     expect(wordmark, findsOneWidget);
+    final appIcon = find.byWidgetPredicate((widget) {
+      return widget is Image &&
+          widget.image is AssetImage &&
+          (widget.image as AssetImage).assetName ==
+              'assets/branding/app_icon.png' &&
+          widget.semanticLabel == 'Kirakara app icon';
+    });
+    expect(appIcon, findsOneWidget);
     expect(find.byTooltip('设置'), findsOneWidget);
     expect(find.text('投屏'), findsOneWidget);
     expect(find.text('主控'), findsNothing);

@@ -30,4 +30,5 @@ flutter:
   uses-material-design: true
   assets:
     - html/
+    - assets/branding/app_icon.png
     - assets/branding/wordmark.png
