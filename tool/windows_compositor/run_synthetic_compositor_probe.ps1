@@ -27,6 +27,98 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$syntheticTarget = 'lib/windows_compositor_synthetic_main.dart'
+
+function Get-SyntheticBundleFileRecords {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Bundle
+  )
+
+  $records = @()
+  foreach ($relativePath in @(
+      'kirakara_app.exe',
+      'flutter_windows.dll',
+      'data\icudtl.dat',
+      'data\flutter_assets\kernel_blob.bin'
+    )) {
+    $path = Join-Path $Bundle $relativePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      throw "Synthetic compositor App bundle is incomplete: $path"
+    }
+    $item = Get-Item -LiteralPath $path
+    $records += [ordered]@{
+      path = $relativePath.Replace('\', '/')
+      length = [long]$item.Length
+      sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+    }
+  }
+  return $records
+}
+
+function Write-SyntheticBundleIdentity {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+
+    [Parameter(Mandatory = $true)]
+    [object]$Identity
+  )
+
+  $json = $Identity | ConvertTo-Json -Depth 6
+  [IO.File]::WriteAllText(
+    $Path,
+    $json + [Environment]::NewLine,
+    [Text.UTF8Encoding]::new($false)
+  )
+}
+
+function Assert-SyntheticBundleIdentity {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Path,
+
+    [Parameter(Mandatory = $true)]
+    [object]$Expected
+  )
+
+  $rerun = 'Rerun without -SkipBuild to rebuild the synthetic probe.'
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    throw "Synthetic compositor bundle identity stamp is missing. $rerun"
+  }
+  try {
+    $actual = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+  } catch {
+    throw "Synthetic compositor bundle identity stamp is invalid. $rerun"
+  }
+  foreach ($property in @(
+      'schemaVersion',
+      'target',
+      'localEngine',
+      'frameworkRevision',
+      'engineRevision'
+    )) {
+    if ([string]$actual.$property -ne [string]$Expected.$property) {
+      throw "Synthetic compositor bundle identity mismatch ($property). $rerun"
+    }
+  }
+  $actualFiles = @($actual.files)
+  $expectedFiles = @($Expected.files)
+  if ($actualFiles.Count -ne $expectedFiles.Count) {
+    throw "Synthetic compositor bundle identity file count mismatch. $rerun"
+  }
+  for ($index = 0; $index -lt $expectedFiles.Count; $index++) {
+    $actualFile = $actualFiles[$index]
+    $expectedFile = $expectedFiles[$index]
+    if (
+      [string]$actualFile.path -ne [string]$expectedFile.path -or
+      [long]$actualFile.length -ne [long]$expectedFile.length -or
+      [string]$actualFile.sha256 -ne [string]$expectedFile.sha256
+    ) {
+      throw "Synthetic compositor bundle identity mismatch ($($expectedFile.path)). $rerun"
+    }
+  }
+}
 
 if ($SoakSeconds -gt 0 -and $SoakSeconds -lt 30) {
   throw 'SoakSeconds must be zero or between 30 and 14400 seconds.'
@@ -109,7 +201,7 @@ if (-not $SkipBuild) {
   Push-Location $repositoryRoot
   try {
     & $flutter build windows --debug `
-      --target lib/windows_compositor_synthetic_main.dart `
+      --target $syntheticTarget `
       "--local-engine=$LocalEngine" `
       "--local-engine-host=$LocalEngine" `
       "--local-engine-src-path=$($layout.OutputRoot)"
@@ -124,10 +216,15 @@ if (-not $SkipBuild) {
 $bundle = Join-Path $repositoryRoot 'build\windows\x64\runner\Debug'
 $executable = Join-Path $bundle 'kirakara_app.exe'
 $bundleDll = Join-Path $bundle 'flutter_windows.dll'
-foreach ($required in @($executable, $bundleDll)) {
-  if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
-    throw "Synthetic compositor App bundle is incomplete: $required"
-  }
+$bundleIdentityPath = Join-Path $bundle '.kirakara-synthetic-probe.json'
+$bundleFiles = Get-SyntheticBundleFileRecords -Bundle $bundle
+$bundleIdentity = [ordered]@{
+  schemaVersion = 1
+  target = $syntheticTarget
+  localEngine = $LocalEngine
+  frameworkRevision = $lock.flutter.frameworkRevision
+  engineRevision = $lock.flutter.engineRevision
+  files = $bundleFiles
 }
 $engineHash = (Get-FileHash -LiteralPath $engineDll -Algorithm SHA256).Hash
 $bundleHash = (Get-FileHash -LiteralPath $bundleDll -Algorithm SHA256).Hash
@@ -138,6 +235,15 @@ Assert-MatchingFile `
   -ExpectedPath (Join-Path $engineOutput 'icudtl.dat') `
   -ActualPath (Join-Path $bundle 'data\icudtl.dat') `
   -Label 'Synthetic compositor icudtl.dat'
+if ($SkipBuild) {
+  Assert-SyntheticBundleIdentity `
+    -Path $bundleIdentityPath `
+    -Expected $bundleIdentity
+} else {
+  Write-SyntheticBundleIdentity `
+    -Path $bundleIdentityPath `
+    -Identity $bundleIdentity
+}
 
 $startInfo = [Diagnostics.ProcessStartInfo]::new()
 $startInfo.FileName = $executable
@@ -265,6 +371,7 @@ $report.overlaySample | Format-List | Out-Host
 $report.pageSample | Format-List | Out-Host
 $report.monitorMoveSample | Format-List | Out-Host
 $report.postInteractionStaticSample | Format-List | Out-Host
-if ($null -ne $report.soakSample) {
-  $report.soakSample | Format-List | Out-Host
+$soakSampleProperty = $report.PSObject.Properties['soakSample']
+if ($null -ne $soakSampleProperty) {
+  $soakSampleProperty.Value | Format-List | Out-Host
 }
