@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
-
-import 'package:flutter/foundation.dart';
 
 import '../lan_address_resolver.dart';
 import 'dlna_device.dart';
@@ -388,5 +387,6 @@ class DlnaDiscoveryService {
     );
   }
 
-  static void _defaultLog(String message) => debugPrint(message);
+  static void _defaultLog(String message) =>
+      developer.log(message, name: 'kirakara.dlna');
 }

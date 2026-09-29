@@ -52,6 +52,21 @@ class _OutputDialogState extends State<_OutputDialog> {
     }
   }
 
+  Future<void> _showManualRendererDialog() async {
+    final value = await showDialog<String>(
+      context: context,
+      builder: (_) => const _ManualDlnaRendererDialog(),
+    );
+    if (!mounted || value == null) return;
+    await _run(() async {
+      final device = await widget.castService.addManualRenderer(value);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已添加 DLNA 设备：${device.friendlyName}')),
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -90,8 +105,8 @@ class _OutputDialogState extends State<_OutputDialog> {
                           active: dualActive,
                           enabled: !_busy &&
                               (dualActive ||
-                                  widget.displayManager
-                                      .hasPhysicalStageDisplay),
+                                  widget
+                                      .displayManager.hasPhysicalStageDisplay),
                           onChanged: (value) => _run(
                             () => widget.onDualChanged(value),
                           ),
@@ -217,6 +232,18 @@ class _OutputDialogState extends State<_OutputDialog> {
           _OutputEmptyState(
             text: discovering ? '正在搜索设备…' : '未发现可用设备',
           ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 12, 4, 0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              key: const ValueKey('manual-dlna-add-button'),
+              onPressed: _busy || connecting ? null : _showManualRendererDialog,
+              icon: const Icon(Icons.add_link),
+              label: const Text('手动添加 DLNA 设备'),
+            ),
+          ),
+        ),
         if (widget.castService.lastError != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(4, 10, 4, 0),
@@ -229,6 +256,78 @@ class _OutputDialogState extends State<_OutputDialog> {
               ),
             ),
           ),
+      ],
+    );
+  }
+}
+
+class _ManualDlnaRendererDialog extends StatefulWidget {
+  const _ManualDlnaRendererDialog();
+
+  @override
+  State<_ManualDlnaRendererDialog> createState() =>
+      _ManualDlnaRendererDialogState();
+}
+
+class _ManualDlnaRendererDialogState extends State<_ManualDlnaRendererDialog> {
+  final TextEditingController _controller = TextEditingController();
+  bool _canSubmit = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final input = _controller.text.trim();
+    if (input.isEmpty) return;
+    Navigator.of(context).pop(input);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xff202126),
+      title: const Text(
+        '手动添加 DLNA 设备',
+        style: TextStyle(color: KiraColors.cream),
+      ),
+      content: SizedBox(
+        width: 480,
+        child: TextField(
+          key: const ValueKey('manual-dlna-address-field'),
+          controller: _controller,
+          autofocus: true,
+          keyboardType: TextInputType.url,
+          textInputAction: TextInputAction.done,
+          style: const TextStyle(color: KiraColors.cream),
+          decoration: const InputDecoration(
+            labelText: 'Renderer IP 或 description URL',
+            hintText:
+                '例如 192.168.254.7 或 http://192.168.254.7:49152/description.xml',
+            helperText: '跨 VLAN 时建议直接输入完整 description URL',
+          ),
+          onChanged: (input) {
+            final canSubmit = input.trim().isNotEmpty;
+            if (canSubmit != _canSubmit) {
+              setState(() => _canSubmit = canSubmit);
+            }
+          },
+          onSubmitted: (_) {
+            if (_canSubmit) _submit();
+          },
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _canSubmit ? _submit : null,
+          child: const Text('添加'),
+        ),
       ],
     );
   }

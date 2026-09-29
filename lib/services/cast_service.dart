@@ -22,7 +22,8 @@ class CastService extends ChangeNotifier {
     Duration receiverMonitorInterval = const Duration(seconds: 2),
     int receiverFailureThreshold = 3,
     int receiverStoppedThreshold = 2,
-  })  : _discoveryService = discoveryService ?? DlnaDiscoveryService(),
+  })  : _discoveryService = discoveryService ??
+            DlnaDiscoveryService(logger: (message) => debugPrint(message)),
         _controlPoint = controlPoint ?? const DlnaControlPoint(),
         _receiverMonitorInterval = receiverMonitorInterval,
         _receiverFailureThreshold = receiverFailureThreshold,
