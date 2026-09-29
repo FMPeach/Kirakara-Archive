@@ -1,3 +1,6 @@
+## 本软件暂未上线，目前暂未到可用程度，敬请期待。
+
+
 # Kirakara-App
 
 Local-first KTV host app prototype for Windows and Android tablets.
