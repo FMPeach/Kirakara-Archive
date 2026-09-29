@@ -23,8 +23,8 @@ stock tree 并重新得到锁定 patched tree。
 获取 `.kfe/sdk`、checkout 锁定 revision、完成 Windows precache 并运行成功；第二次在
 无代理环境中 1.397 秒复用，没有再次 clone、precache 或下载。随后同一隔离环境中的
 真实 `flutterw pub get` 在 11.354 秒内复用 debug Engine 并完成依赖解析。该结论不替代
-计划要求的第二位协作者从全新 clone 独立复现；后者仍同时是 Phase 7 和 Phase 8 未完成
-的发布门槛。
+计划要求的第二位协作者从全新 clone 独立复现；Phase 7 已按所有者确认的核心实机范围
+完成，该独立复现现在只作为 Phase 8 和总计划的未完成门槛。
 
 在此基础上，当前主机又从同一提交 `d708cf7` 建立三份互不共享 `.kfe` 的真正 clean
 clone，分别把 `flutterw run -d windows`、`flutterw pub get` 和未指定模式的
@@ -273,5 +273,6 @@ App build 目录，不进入普通 Git。提交前还会检查 Git tracked 文�
 
 协作者应记录实际加载 DLL 的 SHA-256、ABI/patchset/Engine revision、第一次阶段输出、
 第二次廉价复用输出、仓库外环境/SDK/Git 配置前后差异以及清理边界。若共享已有 `.kfe`，
-只能算入口排列回归，不能算独立复现。第二位协作者复现完成前，Phase 7/8 和总计划仍
-不能宣称完全结束。
+只能算入口排列回归，不能算独立复现。当前可用的三台外部机器都曾安装 Flutter，仓库
+所有者决定暂不验收；第二位协作者复现完成前，Phase 8 和总计划仍不能宣称完全结束，
+但 Phase 7 不因此回退。

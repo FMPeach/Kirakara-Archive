@@ -57,8 +57,8 @@
   物理启动占用；120 DPI 自动门槛通过，用户初步未见阻断性视觉问题。150% / 144 DPI
   完整自动门槛和留窗人工观察也已通过。用户明确决定不再用当前 1080p 单屏模拟
   175%～200%，而是在功能完成后用真实高分屏复测；不同 DPI 多屏迁移也因当前只有一个
-  显示器而无法执行。这两项作为未验证的 Phase 7 实机兼容门槛保留，不表述为已通过，
-  但不再阻塞 Phase 2 原子提交。详见
+  显示器而无法执行。这两项当时作为未验证的 Phase 7 实机兼容门槛保留；后续真实
+  高分屏或跨 DPI 移动已由用户现场确认通过。详见
   `docs/windows_compositor/phase2_synthetic_dcomp.md`。真实 Show 管线仍未修改。
 - 首次人工拖动窗口发现旧 resize 路径会在重建 surface 时提交空 DComp root，造成白闪。
   已改为保留同一 target/Visual tree 并原位 `ResizeBuffers`；修复后自动缩放/恢复门槛
@@ -85,9 +85,9 @@
   display 消息、快速导航、Show 同进程重建和 Stage 活跃退出；最小化 900 ms 只剩 1
   个边界帧，模拟 lock/suspend 的 Stage 增量均为 0，恢复分别重新前进 47/51 帧，
   最终两秒 Stage
-  `+120` 而 Flutter `+0`。真实锁屏、睡眠、热插拔、混合 DPI 和 device removal 仍是
-  Phase 7 实机门槛，明确未宣告通过；session notification 注册状态已由运行时门槛
-  确认。详见
+  `+120` 而 Flutter `+0`。真实锁屏、睡眠、热插拔、混合 DPI 和 device removal 当时
+  保留为 Phase 7 实机门槛；最终验收中高/混合 DPI 已通过，睡眠/热插拔由所有者延期，
+  device removal 留作扩展兼容项。session notification 注册状态已由运行时门槛确认。详见
   `docs/windows_compositor/phase4_lifecycle_recovery.md`。
 - Phase 5 的当前环境实现与自动门禁已完成：composed backend 现在以
   `requestedActive && windowAvailable && geometryVisible` 决定实际预览 activity，
@@ -99,7 +99,8 @@
   30/20/15 fps 可选预览 cadence 与静态 frame scheduler 聚焦测试通过，且不改变物理
   Stage/Cast。锁定的上游 Windows compositor 没有 dirty-rect Present 接口，因此没有
   伪称局部 damage 已实现；本阶段的可证收益是 Stage-only 更新不产生 Flutter frame。
-  Iris Xe 长时间热测试、真实遮挡、物理双屏/Cast 和不同 GPU 保留 Phase 7。详见
+  Iris Xe 长时间热测试、真实高分屏、物理双屏/Cast 和不同 GPU 当时保留 Phase 7；
+  最终核心实机验收已覆盖 Iris Xe / 1130G7 稳态、高/混合 DPI、物理双屏和 Cast。详见
   `docs/windows_compositor/phase5_vfr_damage_thermal.md`。
 - Phase 6 的当前环境实现与自动门禁已完成：独立 Engine patch 仅在
   `OpenClipboard` 返回 `ERROR_ACCESS_DENIED` 时用临时 16 ms 消息窗口 timer 异步
@@ -109,14 +110,16 @@
   Bilibili 外链页增加显式粘贴并只清理该字段，Widget 测试确认光标与焦点可继续输入。
   Engine 19 项剪贴板聚焦测试和 365 项全量门禁通过既定判定；v4 synthetic、真实
   Stage 及官方/定制 external texture A/B 均未退化。真实触屏、RDP、第三方富文本和
-  Windows 10 留在 Phase 7。详见 `docs/windows_clipboard/phase6_reliability.md`。
-- Phase 7 当前环境可可靠执行的发布候选门禁已完成：custom Engine
-  debug/profile/release 三模式及 AOT patched SDK 全部锁定；官方/custom Release
-  对称正常关闭；三模式 ABI 错配明确拒绝；Portable、无 UAC 当前用户安装包和补丁
-  源码包可确定性重建，并通过解包运行、安装、运行、卸载与会话数据排除。Windows 10、
-  Intel/AMD 活动路径、真实高分屏/混合 DPI、物理双屏/Cast、真实睡眠/热插拔/device
-  removal、1130G7 热态、第二位协作者复现、生产签名身份和项目级发布许可证仍未完成，
-  因此 Phase 7 及总计划不能宣称全部完成。详见
+  Windows 10 最终保留为 Phase 7 完成后的扩展兼容项。详见
+  `docs/windows_clipboard/phase6_reliability.md`。
+- Phase 7 已按仓库所有者确认的核心验收范围完成：custom Engine debug/profile/release
+  三模式及 AOT patched SDK 全部锁定；官方/custom Release 对称正常关闭；三模式 ABI
+  错配明确拒绝；Portable、无 UAC 当前用户安装包和补丁源码包可确定性重建，并通过
+  解包运行、安装、运行、卸载与会话数据排除。2026-09-29 的补充实机验收确认 Intel
+  Iris Xe / 1130G7 非 NVIDIA 活动路径、真实 Show 约 30 分钟稳态、真实高分屏/跨 DPI
+  移动、物理双屏与 Cast 模式切换通过。真实睡眠/恢复和显示器热插拔由所有者决定暂缓；
+  Windows 10、AMD/WARP、触屏/RDP/第三方富文本、生产签名和项目级许可证作为后续扩展
+  兼容或公开发布事项，不再阻塞 Phase 7。详见
   `docs/windows_compositor/phase7_compatibility_release.md`。
 - Phase 7 发布输入随后进一步收紧：普通构建默认使用仓库内既有 Show DLL 并保持
   external texture 兼容，不再硬编码本机 Show checkout；真实 composed probe/发布必须
@@ -552,9 +555,9 @@ Engine 的 external texture A/B 均通过。标题门槛验证标题 KRL 真实�
 
 完成结论（2026-09-28）：在当前单屏环境，三项 Phase 3 退出条件均已满足并有自动
 计数/运输状态证据。composed preview 的两种视频主时钟音视频 EOF 失配已于
-2026-09-29 补测通过；物理双屏和 Cast 并行实机下的失配 EOF、不同 GPU，以及真实
-热插拔/睡眠/device removal 属于后续 Phase 7 门槛，明确保持未验证，不能据当前通过
-结果宣称兼容矩阵完成。
+2026-09-29 补测通过；后续核心实机验收补充覆盖了 Iris Xe、物理双屏和 Cast 模式切换。
+物理 Stage/Cast 并行时的刻意失配 EOF、真实热插拔/睡眠/device removal 仍未验证或已
+明确延期，不能据当前结果宣称完整兼容矩阵完成。
 
 ### Phase 4：生命周期与失败恢复
 
@@ -590,8 +593,8 @@ CTest；这些策略只影响可选预览 consumer，不反压物理 Stage 或 C
 Damage 边界经锁定上游源码确认：当前 Windows `Compositor::Present` 不接收 dirty
 rectangle，OpenGL present 路径会整帧 blit + swap。没有为宣称局部 damage 而引入额外
 高风险补丁；Flutter 自身真正产生帧时保留上游行为，Stage-only 路径则完全不调度
-Flutter。Iris Xe 1130G7 长时间热负载、真实遮挡、物理双屏/Cast、Intel/AMD 和
-Windows 10 仍需 Phase 7 实机，不能由 RTX 4060 Ti 自动报告外推。
+Flutter。后续核心实机验收已覆盖 Iris Xe 1130G7 约 30 分钟稳态及物理双屏/Cast；
+AMD、Windows 10 和真实遮挡等扩展矩阵仍不能由 RTX 4060 Ti 或 Intel 结果外推。
 
 退出条件：
 
@@ -600,8 +603,8 @@ Windows 10 仍需 Phase 7 实机，不能由 RTX 4060 Ti 自动报告外推。
 - 超负载时丢弃过期预览帧，不能阻塞播放、物理 Stage 或 Cast。
 
 完成结论（2026-09-28）：当前单屏 Windows 11 / RTX 4060 Ti 环境的三项退出条件均
-已有自动计数证据，且 Phase 4 生命周期回归未退化。热限制与跨硬件兼容性作为明确的
-Phase 7 实机门禁保留，不阻塞 Phase 5 原子提交。
+已有自动计数证据，且 Phase 4 生命周期回归未退化。热限制与跨硬件兼容性当时保留为
+Phase 7 实机门禁；最终核心验收补充了 Iris Xe 稳态证据，其余矩阵延期。
 
 ### Phase 6：剪贴板可靠性与交互体验
 
@@ -620,7 +623,7 @@ Phase 7 实机门禁保留，不阻塞 Phase 5 原子提交。
 完成结论（2026-09-28）：当前 Windows 11 实机的三项退出条件均已满足。定制
 Engine 对 120 ms 外部占用的标准 Clipboard 调用成功恢复，官方 Engine 的标准
 Unicode/快捷键/菜单行为保持可用；实现和测试未引入监听、持久化或内容日志。
-触摸屏、RDP、第三方富文本来源和 Windows 10 作为明确的 Phase 7 实机门禁保留，
+触摸屏、RDP、第三方富文本来源和 Windows 10 最终作为 Phase 7 之后的扩展兼容项保留，
 不从当前自动测试推断为已通过。
 
 ### Phase 7：兼容性门禁与发布打包
@@ -654,12 +657,13 @@ Portable/Installer 为生产 LAN 监听触发 Windows Firewall 授权；普通 A
 完整 Portable/Installer schema v4 门禁已通过：正常退出、没有强制清理，提示和规则增量均
 为 0；A/B 四归档 SHA-256 逐项一致且 `sourceDirty=false`。
 
-当前主机仍只证明 Windows 11 23H2 / RTX 4060 Ti 活动路径。UHD 770 和虚拟 4K 设备
-虽然能枚举，但没有作为真实 Stage 呈现目标，不能算 Intel/4K 通过。Windows 10、AMD、
-Intel 活动路径、WARP、175%/200% 真正高分屏、混合 DPI、物理双屏/Cast、真实睡眠/
-热插拔/device removal、Iris Xe 热态、触屏/RDP/第三方富文本仍需实机。第二位协作者
-复现也尚未发生；项目级许可证和生产签名身份需所有者提供。当前阶段因此是“本机发布
-候选基础设施完成”，而不是完整兼容性矩阵完成。
+当前主机证明 Windows 11 23H2 / RTX 4060 Ti 活动路径。随后由仓库所有者补充确认：
+Intel Iris Xe / 1130G7 非 NVIDIA 活动路径、真实 Show 约 30 分钟稳态、真实高分屏或
+跨 DPI 移动、物理双屏和 Cast 的至少一次模式切换均通过。该批结果是现场人工验收，
+未附加新的自动报告或 ETL，不应改写为自动门禁证据。Windows 10、AMD、WARP、完整
+175%/200% 档位、graphics device removal、触屏/RDP/第三方富文本仍作为扩展兼容矩阵；
+真实睡眠/恢复和显示器热插拔由所有者明确暂缓。项目级许可证和生产签名身份仍是正式
+公开发布事项，但不阻塞本阶段的内部 Release Candidate 验收。
 
 退出条件：
 
@@ -667,8 +671,10 @@ Intel 活动路径、WARP、175%/200% 真正高分屏、混合 DPI、物理双�
 - 另一位协作者可以根据文档和补丁复现定制 DLL。
 - Flutter 升级时，不可能静默加载一个 ABI 或版本不匹配的定制 DLL。
 
-当前退出条件判定（2026-09-28）：第一项已通过，第三项已有自动运行门禁；第二项必须
-由独立协作者实际执行，不能用同一主机自证代替。因此 Phase 7 保持未完全完成状态。
+当前退出条件判定（2026-09-29）：第一项和第三项已通过。原第二项“独立协作者复现”
+归入新增 Phase 8 的独立自举验收，不再重复阻塞 Phase 7。结合上述补充实机结果和仓库
+所有者对睡眠/热插拔等低频矩阵的延期决定，Phase 7 标记为完成；这不等同于宣称所有
+Windows 版本、GPU、显示拓扑和输入环境均已认证。
 
 ### Phase 8：仓库内自举与项目隔离的定制 Engine
 
@@ -806,7 +812,8 @@ ABI/patchset version、GN 参数、目标架构、构建模式、MSVC/Windows SD
 - 删除 App 仓库后，不在仓库外遗留 Kirakara Engine 源码、构建产物、项目级缓存、
   ready stamp、后台进程或持久配置。
 - 第二位协作者能够仅凭普通官方 Flutter/Windows 编译前置条件和本仓库，从 clean clone
-  完成以上流程；该复现证据同时补齐 Phase 7 尚未完成的独立构建门槛。
+  完成以上流程。该证据是 Phase 8 的独立验收门槛；Phase 7 已按所有者确认的核心实机
+  范围单独完成。
 
 当前退出条件判定（2026-09-29）：当前主机能够执行的实现、真实中文路径三模式构建、
 运行门禁、二次复用、故障恢复、并发、隔离、清理边界和聚焦 Unicode 工具测试均已通过。
@@ -814,8 +821,9 @@ ABI/patchset version、GN 参数、目标架构、构建模式、MSVC/Windows SD
 `pub get` 和首次默认 release `build windows` 都从空 `.kfe` 冷自举成功，实际加载的 DLL
 与各自 ready stamp 一致，ABI 2 / patchset 4 / Engine revision 门禁通过；相同命令第二次
 没有 fetch、sync、GN、Ninja 或 Engine build。至少一轮仍必须由第二位协作者从 clean clone
-复现，同一主机的三份证据不能替代该门槛。因此 Phase 8 保持未完全完成，其协作者复现
-完成前 Phase 7 的协作者门槛和总计划也保持未完成。另已确认 stock Flutter 3.44.4 的
+复现，同一主机的三份证据不能替代该门槛。当前可用的三台外部机器都曾安装 Flutter，
+仓库所有者决定暂不进行该验收，因此 Phase 8 和总计划保持未完成；这不回退已完成的
+Phase 7。另已确认 stock Flutter 3.44.4 的
 `flutter analyze` 在中文 workspace URI 上存在 LSP `Content-Length` 字符数/字节数缺陷；
 直接 `dart analyze` 通过，且 Phase 8 规定的三个 Windows 自举入口不受影响。本计划不通过
 修改官方 SDK 或创建路径 alias 掩盖该独立工具问题。
