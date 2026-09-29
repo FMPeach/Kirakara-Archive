@@ -36,6 +36,17 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 . (Join-Path $PSScriptRoot 'release_contract.ps1')
 
+function Get-FirewallNotificationProcessIds {
+  return @(
+    Get-CimInstance Win32_Process -Filter "Name = 'PickerHost.exe'" |
+      Where-Object {
+        $_.CommandLine -match '(?i)FirewallNotificationDialogServer'
+      } |
+      ForEach-Object { [int]$_.ProcessId } |
+      Sort-Object -Unique
+  )
+}
+
 if ($RequireLockedArtifacts -and $Engine -ne 'local') {
   throw '-RequireLockedArtifacts applies only to a local Release Engine.'
 }
@@ -166,6 +177,8 @@ $process.StartInfo.FileName = $executable
 $process.StartInfo.WorkingDirectory = $bundle
 $process.StartInfo.UseShellExecute = $false
 $process.StartInfo.CreateNoWindow = $false
+$process.StartInfo.EnvironmentVariables['KIRAKARA_SMOKE_LAN_LOOPBACK'] = '1'
+$firewallNotificationsBefore = @(Get-FirewallNotificationProcessIds)
 $startedAt = (Get-Date).ToUniversalTime()
 $inputIdle = $false
 $mainWindowHandle = 0
@@ -249,6 +262,17 @@ try {
   $process.Dispose()
 }
 
+# Firewall notifications are spawned out of process by a system service. Give
+# that bounded startup consequence time to materialize, then reject any new
+# dialog without dismissing it or changing firewall policy.
+Start-Sleep -Milliseconds 750
+$firewallNotificationsAfter = @(Get-FirewallNotificationProcessIds)
+$newFirewallNotifications = @(
+  $firewallNotificationsAfter |
+    Where-Object { $_ -notin $firewallNotificationsBefore }
+)
+$firewallPromptGatePassed = $newFirewallNotifications.Count -eq 0
+
 $passed = (
   [string]::IsNullOrWhiteSpace($failure) -and
   $inputIdle -and
@@ -256,10 +280,11 @@ $passed = (
   $responding -and
   -not $exitedDuringObservation -and
   $closeRequested -and
-  ($gracefulExit -or ($forcedCleanup -and $AllowForcedCleanup))
+  ($gracefulExit -or ($forcedCleanup -and $AllowForcedCleanup)) -and
+  $firewallPromptGatePassed
 )
 $report = [ordered]@{
-  schemaVersion = 2
+  schemaVersion = 3
   generatedAt = (Get-Date).ToUniversalTime().ToString('o')
   startedAt = $startedAt.ToString('o')
   engine = $Engine
@@ -291,6 +316,11 @@ $report = [ordered]@{
   forcedCleanup = $forcedCleanup
   allowForcedCleanup = [bool]$AllowForcedCleanup
   lockedArtifactGate = [bool]$RequireLockedArtifacts
+  lanServerIsolation = 'loopback-process-override'
+  firewallNotificationsBefore = $firewallNotificationsBefore
+  firewallNotificationsAfter = $firewallNotificationsAfter
+  newFirewallNotifications = $newFirewallNotifications
+  firewallPromptGatePassed = $firewallPromptGatePassed
   exitCode = $exitCode
   failure = $failure
   passed = $passed

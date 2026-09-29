@@ -394,6 +394,15 @@ timeout fails by default and kills only the exact child process it launched.
 `-AllowForcedCleanup` is for explicitly documenting an already reproduced
 shutdown defect; the forced cleanup remains visible in the report.
 
+Only the smoke child receives `KIRAKARA_SMOKE_LAN_LOOPBACK=1`. This makes the
+App's otherwise unchanged LAN request server bind to `127.0.0.1`, so launching
+a newly extracted or installed executable does not request a Windows Firewall
+exception. Normal App launches still bind to all IPv4 interfaces and advertise
+the detected LAN address. Schema 3 also snapshots system-owned
+`PickerHost.exe FirewallNotificationDialogServer` process IDs before and after
+the child: any new notification fails the smoke. The script never dismisses a
+security dialog and never reads or changes firewall rules, profiles, or policy.
+
 Verify that stock DLLs remain stock and every custom build rejects a mismatched
 ABI before testing the exact locked metadata:
 
@@ -438,7 +447,9 @@ types; an unclassified file fails packaging. This stays correct regardless of
 which mode was built last. Settings, databases, session state and logs are
 excluded. The default gate extracts and smokes the Portable package, verifies
 every installer payload hash, installs without UAC to an isolated directory,
-smokes that installation and exercises its guarded uninstaller.
+smokes that installation and exercises its guarded uninstaller. Both runtime
+smokes use the process-scoped loopback override and must report no newly spawned
+Windows Firewall notification.
 `-SkipRuntimeSmoke` is only for a deterministic rebuild comparison, not release
 acceptance.
 

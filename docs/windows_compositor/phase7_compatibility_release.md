@@ -11,6 +11,7 @@ Phase 7 在当前 Windows 11 / NVIDIA 主机上能可靠完成的自动门禁已
 - 可重复生成的 Portable、当前用户安装包、补丁源码包和独立 Engine 产物包；
 - Portable 解包运行、安装、运行、卸载和隐私排除的自动门禁。
 - 真实 Show DLL 的 Stage Visual ABI、协议、能力位、设备绑定导出与 bundle 哈希门禁。
+- 发布烟测专用的 loopback LAN 隔离，以及“不新增 Windows 防火墙安全提示”的自动门禁。
 
 仍必须在其他实体硬件完成 Windows 10、Intel/AMD、真实高分屏、混合 DPI、物理
 双屏/Cast、真实睡眠/热插拔/device removal 和长时间热负载；还需要另一位协作者按
@@ -58,7 +59,7 @@ SDK 中另一份不匹配产物掩盖本地 Engine 缺件。
 `CloseMainWindow` 因而使用旧句柄。
 
 `smoke_windows_app.ps1` 现在在关闭前调用 `Process.Refresh()`、重新记录关闭目标 HWND，
-并把关闭耗时写入 schema v2 报告。修正后：
+并把关闭耗时写入报告。修正后：
 
 | 构建 | 正常关闭 | 强制清理 | 退出码 | 关闭等待 |
 | --- | --- | --- | --- | --- |
@@ -78,8 +79,21 @@ SDK 中另一份不匹配产物掩盖本地 Engine 缺件。
 退出语义。新门禁默认仍禁止强制清理；只有调用者明确选择该诊断开关时才允许记录已知
 缺陷。
 
+后续发布候选烟测暴露了另一个测试环境副作用：每个新解压或新安装路径中的 App 都会按
+生产语义把点歌 LAN 服务绑定到全部 IPv4 接口，Windows 因而为新 executable path 启动
+`PickerHost.exe FirewallNotificationDialogServer`。这些安全提示在无人值守烟测结束后仍然
+存在，还会遮挡 DirectComposition 稳态探针。只读进程清单确认遗留实例的创建时间与此前
+Portable/Installer 烟测一一对应；这不是 compositor device-loss 或计时器问题。
+
+schema v3 烟测只给它启动的子进程设置 `KIRAKARA_SMOKE_LAN_LOOPBACK=1`，由 App 将
+`LanServer` 注入绑定到 `127.0.0.1`。普通启动不设置该变量，默认仍绑定 `0.0.0.0` 并公布
+探测到的 LAN 地址，点歌语义没有改变。脚本还在启动前和退出后的有限 750 ms 等待后读取
+`FirewallNotificationDialogServer` PID 集合；任何新增实例都会使报告和发布门禁失败。
+脚本不会关闭既有或新增安全窗口，也不会读取、添加或修改防火墙规则、profile 或策略。
+当前 custom Debug/Release 集成烟测均正常退出，前后 9 个既有 PID 完全一致，新增为 0。
+
 提交前 Flutter 回归没有新增 compositor/clipboard 问题：`flutter analyze` 为 68 条
-仓库既有 info、0 warning、0 error；完整 `flutter test` 为 94 通过、1 个既有失败。
+仓库既有 info、0 warning、0 error；完整 `flutter test` 为 98 通过、1 个既有失败。
 唯一失败仍是 `bilibili_resolver_test.dart` 期待已经从实际质量列表移除的 `qn=6`，与
 本阶段 Windows 脚本、Engine 锁和发布包无关，未在此提交中顺手修改业务断言。
 
@@ -155,6 +169,11 @@ ZIP entry 按路径排序并使用固定时间戳。相同输入连续打包两�
 3. 安装到隔离的临时目录，启动并正常关闭；
 4. 用带产品标记与精确路径检查的卸载器删除该测试安装；
 5. 确认测试安装目录已经消失。
+
+Portable 与 Installer 两次启动都必须使用仅对子进程生效的 loopback 隔离，并在 schema v3
+报告中满足 `firewallPromptGatePassed=true`、`newFirewallNotifications=[]`。因此发布验证
+不会要求用户授权一个临时 executable path 的入站访问，也不会留下新的 Windows 安全
+提示；这项隔离不进入安装结果或普通 App 进程。
 
 `-SkipRuntimeSmoke` 只用于重复性对照，不能用于发布候选验收。运行包中不包含 PDB；
 PDB 只存在于 Engine 输出和单独的 Engine Release 资产，并由候选契约记录大小和
@@ -323,8 +342,10 @@ HRESULT 必须保持健康。RSS 三点只作为趋势数据，不用单个阈�
 窗口必须真实可见且不被系统安全桌面或其他窗口完全遮挡；`0xc01e0006`
 （`STATUS_GRAPHICS_PRESENT_OCCLUDED`）会明确失败，不能作为热态通过。2026-09-29 当前主机的
 30 秒负例在前台 `PickerHost / Windows 安全中心` 存在时正确失败，并写出 0/15/30 秒三点，
-因此只验证了失败门禁和报告结构，没有计入 RTX 4060 Ti 稳态通过。待交互桌面恢复后需先
-用 30 秒样本通过，再运行完整 1800 秒；Iris Xe 目标机仍必须另跑，不能由本机替代。
+因此只验证了失败门禁和报告结构，没有计入 RTX 4060 Ti 稳态通过。只读追查已确认这些
+窗口来自旧版发布烟测触发的防火墙授权；修正后的 smoke 不再产生新实例，但现有系统安全
+窗口必须由用户自行处理，自动化不得替用户批准或关闭。待交互桌面恢复后需先用 30 秒样本
+通过，再运行完整 1800 秒；Iris Xe 目标机仍必须另跑，不能由本机替代。
 
 有界门禁通过后，可再用 synthetic `-KeepOpen` 做人工视觉观察；同时按实际业务方式播放
 真实节目、物理 Stage/Cast 时另做一轮。冷机、15 分钟和 30 分钟各记录分辨率/刷新率、

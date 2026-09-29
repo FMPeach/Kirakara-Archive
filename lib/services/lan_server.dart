@@ -18,15 +18,18 @@ class LanServer {
     required SearchService searchService,
     required PlaybackService playbackService,
     required BilibiliAccountService bilibiliAccountService,
+    InternetAddress? bindAddress,
   })  : _queueService = queueService,
         _searchService = searchService,
         _playbackService = playbackService,
-        _bilibiliAccountService = bilibiliAccountService;
+        _bilibiliAccountService = bilibiliAccountService,
+        _bindAddress = bindAddress ?? InternetAddress.anyIPv4;
 
   final QueueService _queueService;
   final SearchService _searchService;
   final PlaybackService _playbackService;
   final BilibiliAccountService _bilibiliAccountService;
+  final InternetAddress _bindAddress;
   HttpServer? _server;
   String? _lanIp;
 
@@ -38,8 +41,10 @@ class LanServer {
 
   Future<void> start({int port = 7391}) async {
     if (_server != null) return;
-    _lanIp = await LanAddressResolver.detectIpv4();
-    _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
+    _lanIp = _bindAddress.address == InternetAddress.anyIPv4.address
+        ? await LanAddressResolver.detectIpv4()
+        : _bindAddress.address;
+    _server = await HttpServer.bind(_bindAddress, port);
     _server!.listen(_handleRequest);
   }
 

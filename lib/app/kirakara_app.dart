@@ -29,11 +29,13 @@ class KirakaraApp extends StatefulWidget {
     required this.databasePath,
     this.cacheDirectoryPath,
     this.settingsFilePath,
+    this.lanServerBindAddress,
   });
 
   final String databasePath;
   final String? cacheDirectoryPath;
   final String? settingsFilePath;
+  final InternetAddress? lanServerBindAddress;
 
   @override
   State<KirakaraApp> createState() => _KirakaraAppState();
@@ -111,6 +113,7 @@ class _KirakaraAppState extends State<KirakaraApp> {
       searchService: searchService,
       playbackService: playbackService,
       bilibiliAccountService: bilibiliAccountService,
+      bindAddress: widget.lanServerBindAddress,
     );
     stageRenderer = KirakaraStageRenderer(showService: kirakaraShowService);
     // 热插拔：插入第二屏后自动开双屏

@@ -151,6 +151,11 @@
   令 DComp 从首帧返回 `STATUS_GRAPHICS_PRESENT_OCCLUDED`，30 秒负例按预期失败并留下
   0/15/30 秒报告；这验证失败门禁，不算热态通过。桌面恢复后的 30 秒校准、RTX 4060 Ti
   1800 秒样本及 Iris Xe 实机仍待执行。
+- 只读进程追查确认当前 9 个 `PickerHost / Windows 安全中心` 实例均为旧版发布烟测触发的
+  `FirewallNotificationDialogServer`，而不是 compositor 崩溃。Phase 7 的 GUI smoke 已升级
+  为 schema v3：仅对测试子进程把 LAN 点歌服务绑定到 loopback，普通 App 仍保持全部 IPv4
+  接口；烟测前后审计安全提示 PID，任何新增实例都令门禁失败，不自动操作安全窗口或修改
+  防火墙。custom Debug/Release 实测均正常退出，9 个既有 PID 前后不变且新增为 0。
 
 ## 为什么要做这件事
 
@@ -634,6 +639,12 @@ ABI 和错误结构大小都明确返回 version mismatch，只有 ABI 2、patch
 settings、会话数据库和日志；解包运行、逐文件哈希校验、隔离安装、运行和卸载均通过。
 同一输入连续两次生成的四份 ZIP 哈希逐项一致，PDB 只进入单独 Engine Release 资产，
 不进入运行包或普通 Git。
+
+发布烟测随后升级为 schema v3：仅测试子进程使用 loopback LAN 绑定，避免新路径的
+Portable/Installer 为生产 LAN 监听触发 Windows Firewall 授权；普通 App 默认监听语义不变。
+脚本对比启动前后 `FirewallNotificationDialogServer` PID，新增安全提示是硬失败，不会被
+自动关闭或用防火墙规则掩盖。custom Debug/Release 当前实测前后 9 个既有 PID 完全一致，
+新增为 0；完整发布候选仍须经过 Portable 与 Installer 两次相同门禁。
 
 当前主机仍只证明 Windows 11 23H2 / RTX 4060 Ti 活动路径。UHD 770 和虚拟 4K 设备
 虽然能枚举，但没有作为真实 Stage 呈现目标，不能算 Intel/4K 通过。Windows 10、AMD、

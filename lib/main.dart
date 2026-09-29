@@ -27,11 +27,15 @@ Future<void> main() async {
     defaultCacheDirectory,
     settingsFilePath,
   );
+  final smokeLanLoopback = Platform.isWindows &&
+      Platform.environment['KIRAKARA_SMOKE_LAN_LOOPBACK'] == '1';
   runApp(
     KirakaraApp(
       databasePath: p.join(settingsDir, 'kirakara_index.db'),
       cacheDirectoryPath: cacheDirectory,
       settingsFilePath: settingsFilePath,
+      lanServerBindAddress:
+          smokeLanLoopback ? InternetAddress.loopbackIPv4 : null,
     ),
   );
 }

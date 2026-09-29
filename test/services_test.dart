@@ -556,6 +556,35 @@ void main() {
     expect(song.containsKey('durationSeconds'), isFalse);
   });
 
+  test('LAN server supports a loopback-isolated smoke binding', () async {
+    final search = _testSearch();
+    final queue = QueueService();
+    final playback = PlaybackService(queueService: queue);
+    final account = BilibiliAccountService(
+      sessionFilePath: '${Directory.systemTemp.path}${Platform.pathSeparator}'
+          'kirakara_bilibili_loopback_test_$pid.json',
+    );
+    final server = LanServer(
+      queueService: queue,
+      searchService: search,
+      playbackService: playback,
+      bilibiliAccountService: account,
+      bindAddress: InternetAddress.loopbackIPv4,
+    );
+    addTearDown(playback.disposeService);
+    addTearDown(account.dispose);
+    addTearDown(server.stop);
+
+    await server.start(port: 0);
+
+    expect(server.localUri!.host, InternetAddress.loopbackIPv4.address);
+    final client = HttpClient();
+    addTearDown(client.close);
+    final response = await (await client.getUrl(server.localUri!)).close();
+    expect(response.statusCode, HttpStatus.ok);
+    await response.drain<void>();
+  });
+
   test('playback cache scopes a custom root to the current app session',
       () async {
     final cacheRoot =
