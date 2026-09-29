@@ -878,6 +878,7 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
       final finalShow = _map(settledAfter['show'], 'Show diagnostics');
       final gates = <String, bool>{
         'backendMetadataMatches': backend['backend'] == 'composed' &&
+            backend['backendSelection'] == 'custom-engine-default' &&
             backend['abiVersion'] == 2 &&
             backend['patchsetVersion'] == 4 &&
             backend['patchsetRevision'] == 'windows-dcomp-stage-visual',

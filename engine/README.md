@@ -521,9 +521,13 @@ that sample as explicitly skipped instead of treating it as a pass.
 
 ## Phase 3 real Show Stage probe
 
-The real probe selects `composed`, loads two bounded Show fixtures, and validates
-the NT-handle/keyed-mutex latest-frame path without changing the physical Stage
-or Cast APIs:
+The real probe clears any caller backend override and requires the patched
+Engine to select `composed` by default. It loads two bounded Show fixtures and
+validates the NT-handle/keyed-mutex latest-frame path without changing the
+physical Stage or Cast APIs. An explicit `external_texture` or `stock` value
+still overrides the production default for A/B testing, while an official or
+local stock Engine without the versioned compositor export remains on the
+compatibility backend:
 
 The Engine consumer first probes `AcquireSync` with a zero timeout. If the
 producer has already published the descriptor but cross-device GPU work is

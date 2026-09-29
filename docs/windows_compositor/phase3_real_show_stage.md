@@ -112,11 +112,14 @@ Stage Visual，原位 Resize Flutter swapchain，并在新尺寸 Flutter 上层�
 - `composed`：没有 Flutter texture ID，Widget 绘制透明孔并报告 geometry；
 - `externalTexture`：继续创建现有 `Texture(textureId: ...)`。
 
-`KIRAKARA_COMPOSITOR_BACKEND=composed` 是显式开发/发布选择。若定制 ABI、patchset、
-导出、Show API 或同步结构不匹配，attach 会返回清晰错误并停止，不会静默落入回退
-掩盖实现 Bug。官方/stock Engine 没有 compositor channel 时，App 才按能力检测走
-既有 external texture。A/B 脚本会显式设置 `external_texture`，不会依赖调用者残留的
-环境变量。
+未设置 `KIRAKARA_COMPOSITOR_BACKEND` 时，Runner 会检查已加载 Engine 的版本化
+Kirakara compositor export：定制 Engine 默认选择 `composed`，官方/stock Engine
+没有该 export 时继续使用既有 external texture。只要 export 存在，ABI、patchset、
+Show API 或同步结构失配都会清晰报错并停止，不会静默落入回退掩盖实现 Bug。
+`composed`、`external_texture`、`stock` 仍可作为显式开发/A/B 覆盖；A/B 脚本始终
+显式设置 `external_texture`，不会依赖调用者残留的环境变量。真实 Stage 探针会主动
+清除调用者的 backend 环境变量，并要求报告中的 `backendSelection` 为
+`custom-engine-default`，从而直接验证产品默认路径。
 
 ## 自动验证结果
 

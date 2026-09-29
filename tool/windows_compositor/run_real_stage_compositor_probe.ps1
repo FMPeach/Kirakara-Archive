@@ -284,7 +284,10 @@ $startInfo = [Diagnostics.ProcessStartInfo]::new()
 $startInfo.FileName = $executable
 $startInfo.WorkingDirectory = $bundle
 $startInfo.UseShellExecute = $false
-$startInfo.Environment['KIRAKARA_COMPOSITOR_BACKEND'] = 'composed'
+# The production contract selects composed automatically when the versioned
+# custom Engine export is present. Remove any caller override so this probe
+# catches a release that accidentally defaults back to external_texture.
+$null = $startInfo.Environment.Remove('KIRAKARA_COMPOSITOR_BACKEND')
 $startInfo.Environment['KIRAKARA_COMPOSITOR_TEST_MODE'] = '1'
 $startInfo.Environment['KIRAKARA_COMPOSITOR_FIXTURE_ROOT'] = $fixtureDirectory
 $startInfo.Environment['KIRAKARA_COMPOSITOR_EOF_MISMATCH_ROOT'] = if (

@@ -430,6 +430,7 @@ class _SyntheticCompositorHarnessState
           _counter(pageBefore, 'stagePresentCount');
       final gates = <String, bool>{
         'backendMetadataMatches': backend['backend'] == 'synthetic' &&
+            backend['backendSelection'] == 'environment' &&
             backend['abiVersion'] == 2 &&
             backend['patchsetVersion'] == 4 &&
             backend['patchsetRevision'] == 'windows-dcomp-stage-visual',

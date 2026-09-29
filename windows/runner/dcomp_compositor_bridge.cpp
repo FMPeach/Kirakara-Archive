@@ -66,6 +66,13 @@ std::string ReadBackendEnvironment() {
   return value;
 }
 
+bool LoadedEngineHasKirakaraCompositorApi() {
+  const HMODULE engine_module = ::GetModuleHandleW(L"flutter_windows.dll");
+  return engine_module &&
+         ::GetProcAddress(engine_module,
+                          KIRAKARA_FLUTTER_COMPOSITOR_EXPORT_NAME) != nullptr;
+}
+
 std::wstring Utf8ToWide(const std::string &value) {
   if (value.empty()) {
     return {};
@@ -1117,6 +1124,8 @@ struct DcompCompositorBridge::Impl {
                 DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE;
         result->Success(EncodableValue(flutter::EncodableMap{
             {EncodableValue("backend"), EncodableValue(backend)},
+            {EncodableValue("backendSelection"),
+             EncodableValue(backend_selection)},
             {EncodableValue("abiVersion"),
              EncodableValue(static_cast<int32_t>(api.abi_version))},
             {EncodableValue("patchsetVersion"),
@@ -1399,6 +1408,7 @@ struct DcompCompositorBridge::Impl {
 
   KirakaraFlutterCompositorApi api{};
   std::string backend;
+  std::string backend_selection;
   flutter::FlutterEngine *flutter_engine{};
   FlutterDesktopViewRef view{};
   HWND window{};
@@ -1433,9 +1443,15 @@ DcompCompositorBridge::DcompCompositorBridge()
 DcompCompositorBridge::~DcompCompositorBridge() { Shutdown(); }
 
 bool DcompCompositorBridge::PrepareNextView(HWND top_level_window,
-                                            std::string *error) {
-  const std::string backend = ReadBackendEnvironment();
-  if (backend.empty() || backend == "stock" || backend == "external_texture") {
+                                             std::string *error) {
+  const std::string configured_backend = ReadBackendEnvironment();
+  const bool explicitly_selected = !configured_backend.empty();
+  const std::string backend = explicitly_selected
+                                  ? configured_backend
+                                  : (LoadedEngineHasKirakaraCompositorApi()
+                                         ? "composed"
+                                         : "external_texture");
+  if (backend == "stock" || backend == "external_texture") {
     return true;
   }
   if (backend != "synthetic" && backend != "composed") {
@@ -1445,6 +1461,8 @@ bool DcompCompositorBridge::PrepareNextView(HWND top_level_window,
   }
   enabled_ = true;
   impl_->backend = backend;
+  impl_->backend_selection =
+      explicitly_selected ? "environment" : "custom-engine-default";
   if (!top_level_window || !::IsWindow(top_level_window)) {
     *error = "The " + backend +
              " DirectComposition backend requires a valid top-level HWND.";
