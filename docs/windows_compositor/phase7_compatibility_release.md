@@ -8,8 +8,9 @@ Phase 7 在当前 Windows 11 / NVIDIA 主机上能可靠完成的自动门禁已
 - 锁定的 v4 custom Engine debug/profile/release 三模式产物；
 - 官方 Release 与 custom Release 对称的正常启动、窗口响应和优雅退出证据；
 - 运行时 ABI、结构大小、patchset 版本和 Engine revision 的硬失败门禁；
-- 可重复生成的 Portable、当前用户安装包和补丁源码包；
+- 可重复生成的 Portable、当前用户安装包、补丁源码包和独立 Engine 产物包；
 - Portable 解包运行、安装、运行、卸载和隐私排除的自动门禁。
+- 真实 Show DLL 的 Stage Visual ABI、协议、能力位、设备绑定导出与 bundle 哈希门禁。
 
 仍必须在其他实体硬件完成 Windows 10、Intel/AMD、真实高分屏、混合 DPI、物理
 双屏/Cast、真实睡眠/热插拔/device removal 和长时间热负载；还需要另一位协作者按
@@ -26,6 +27,14 @@ Phase 7 在当前 Windows 11 / NVIDIA 主机上能可靠完成的自动门禁已
 | debug | `host_debug_kirakara_v4` | `40EF7DF5832A7EBD56FEBEE4BBF293B5397F23F8EFFD409B384E0C2D2F18FEA6` |
 | profile | `host_profile_kirakara_v4` | `8038006253B0CDFC6AC8FB48C7E587ACE5AEAA5099DFFD471BED9F44024F52D6` |
 | release | `host_release_kirakara_v4` | `03665D466DE8C3F20A1BB1ABF32348281B1E5BF35C61F537FB53F09A700B0532` |
+
+上表保留 Phase 7 外部工作区的历史候选，继续用于 stock/custom A/B。Phase 8 的真实中文
+路径构建另外锁定 `projectBootstrap.releaseCandidate`：同一
+`host_release_kirakara_v4` 的 DLL 为
+`DB07763F1551A8FD68346D30A547050975E14E73A79B1A239587F063CD70B0F8`，并精确锁定
+import library、PDB、ICU、`gen_snapshot`、patched SDK 与仓库内 Dart SDK。外部历史候选
+的旧 `gen_snapshot.exe` 在 `D:\仓库\Kirakara-App` 读取 AOT 输入时会把中文路径错误解码，
+所以不能冒充仓库本地 Unicode-safe 候选；两份契约分别保留，不静默覆盖历史 A/B 证据。
 
 profile/release 除 Windows DLL、import library、PDB 和 ICU 外，还锁定
 `gen_snapshot.exe`、`flutter_patched_sdk/platform_strong.dill` 与
@@ -105,7 +114,8 @@ SDK 中另一份不匹配产物掩盖本地 Engine 缺件。
 ```powershell
 .\engine\scripts\package_windows_release.ps1 `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
-  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine'
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -ShowHostDll 'D:\仓库\Kirakara Show\build\bin\libshow_host.dll'
 ```
 
 脚本在忽略的 `build/releases` 目录生成：
@@ -114,7 +124,10 @@ SDK 中另一份不匹配产物掩盖本地 Engine 缺件。
 2. `*-installer.zip`：逐文件验证 SHA-256 后安装到
    `%LOCALAPPDATA%\Programs\Kirakara` 的当前用户安装包，不要求 UAC；
 3. `*-patch-source.zip`：锁文件、补丁、获取/应用/构建/校验脚本和阶段文档；
-4. `*-release-index.json`：三个归档的大小、SHA-256、测试报告位置、签名和许可证状态。
+4. `*-engine-artifacts.zip`：严格候选的 DLL、import library、PDB、ICU、AOT 工具和
+   patched Dart SDK，作为 Release 资产保存，不进入运行包或普通 Git；
+5. `*-release-index.json`：四个归档的相对路径、大小、SHA-256、测试报告位置、Show
+   协议、Engine 候选契约、签名和许可证状态。
 
 运行冒烟报告写入所选输出目录的 `diagnostics/` 子目录，发布索引保存相对路径。这样
 第二位协作者可用独立的 `-OutputDirectory` 重建同一提交，不会与已有全局报告重名，
@@ -128,8 +141,14 @@ SDK 中另一份不匹配产物掩盖本地 Engine 缺件。
 包；当前 ZIP 内容扫描为零匹配。每个运行文件、`release-manifest.json` 和
 `SHA256SUMS.txt` 都有哈希。
 
-ZIP entry 按路径排序并使用固定时间戳。相同输入连续打包两次时，Portable、安装包和
-补丁源码包的 SHA-256 分别逐项完全一致。默认门禁还会：
+打包前必须显式提供当前 Show 产物。脚本在创建 staging 目录前验证错误 ABI/结构大小
+返回 version mismatch、ABI 1、能力 `0xF`、`nt-keyed-latest-v1`、零保留位、全部函数
+指针与 `show_host_set_stage_d3d_device` 导出，再要求 Release bundle 的 DLL 与该输入
+逐字节一致。仓库内历史 DLL 只保留 external texture 兼容性，缺少 Stage Visual 导出，
+作为 composed 发布输入会明确失败，不能等到用户机器上崩溃。
+
+ZIP entry 按路径排序并使用固定时间戳。相同输入连续打包两次时，Portable、安装包、
+补丁源码包和 Engine 产物包的 SHA-256 分别逐项完全一致。默认门禁还会：
 
 1. 解压 Portable，核对锁定 DLL/ICU，启动并正常关闭；
 2. 解压安装包，校验全部 payload 哈希；
@@ -137,9 +156,19 @@ ZIP entry 按路径排序并使用固定时间戳。相同输入连续打包两�
 4. 用带产品标记与精确路径检查的卸载器删除该测试安装；
 5. 确认测试安装目录已经消失。
 
-`-SkipRuntimeSmoke` 只用于重复性对照，不能用于发布候选验收。包中不包含 PDB；
-Release PDB 保留在外部 Engine 输出或版本化 Release 资产，并由锁文件记录大小和
+`-SkipRuntimeSmoke` 只用于重复性对照，不能用于发布候选验收。运行包中不包含 PDB；
+PDB 只存在于 Engine 输出和单独的 Engine Release 资产，并由候选契约记录大小和
 SHA-256。DLL、PDB、ZIP 和 Engine 源码都不进入普通 Git 历史。
+
+2026-09-29 的仓库本地完整门禁位于
+`build/diagnostics/release-show-gate-final-clean-a-20260929/`，重复性对照位于
+`release-show-gate-final-clean-b-20260929/`：release index schema 3、四个归档逐项 SHA-256
+一致，Portable/Installer 的 `lockedArtifactGate=true`，启动/正常退出/安装/卸载全部
+通过；Show SHA-256 为
+`1CA811AE12B508903426F89F8A3B7E4B84261C9DEC4538173519F8E465E35519`。四个 ZIP
+的条目名隐私扫描为零命中，补丁源码包包含 wrapper、release contract 与 Show ABI
+校验器，Engine 包包含候选契约规定的 10 个产物和独立 manifest。使用历史 Show DLL
+的负向打包在创建输出目录前因缺少版本化导出而明确拒绝。
 
 当前安装包是未签名的本地门禁产物。没有所有者签名证书时，脚本不会生成或信任一个
 伪装成生产身份的自签名证书，也不会修改系统信任存储。
@@ -238,6 +267,7 @@ Stage 前进且 Flutter delta 为 0；所有 HRESULT、device removal 和资源�
   -FlutterSdkRoot $flutterSdkRoot `
   -WorkspaceRoot $workspaceRoot `
   -LocalEngine host_debug_kirakara_v4 `
+  -ShowHostDll '<当前 Show build\bin\libshow_host.dll>' `
   -TimeoutSeconds 120 `
   -LifecycleProbe `
   -ExitWhileActive

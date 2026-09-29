@@ -49,9 +49,31 @@ endfunction()
 set(FLUTTER_MANAGED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/flutter")
 add_subdirectory(${FLUTTER_MANAGED_DIR})
 
-set(KIRAKARA_SHOW_HOST_DLL
-  "D:/仓库/Kirakara Show/build/bin/libshow_host.dll"
-  CACHE FILEPATH "Path to the Kirakara Show host DLL")
+set(_KIRAKARA_BUNDLED_SHOW_HOST_DLL
+  "${CMAKE_CURRENT_SOURCE_DIR}/runner/libshow_host.dll")
+if(DEFINED ENV{KIRAKARA_SHOW_HOST_DLL}
+    AND NOT "$ENV{KIRAKARA_SHOW_HOST_DLL}" STREQUAL "")
+  file(TO_CMAKE_PATH "$ENV{KIRAKARA_SHOW_HOST_DLL}"
+    _KIRAKARA_SHOW_HOST_DLL_FROM_ENVIRONMENT)
+  set(KIRAKARA_SHOW_HOST_DLL
+    "${_KIRAKARA_SHOW_HOST_DLL_FROM_ENVIRONMENT}"
+    CACHE FILEPATH "Path to the Kirakara Show host DLL" FORCE)
+else()
+  # KIRAKARA_SHOW_HOST_DLL is a process-only build override. Do not let its
+  # prior value survive in CMakeCache.txt after the caller restores the
+  # environment; ordinary builds must return to the tracked compatibility DLL.
+  set(KIRAKARA_SHOW_HOST_DLL
+    "${_KIRAKARA_BUNDLED_SHOW_HOST_DLL}"
+    CACHE FILEPATH "Path to the Kirakara Show host DLL" FORCE)
+endif()
+get_filename_component(KIRAKARA_SHOW_HOST_DLL
+  "${KIRAKARA_SHOW_HOST_DLL}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+if(NOT EXISTS "${KIRAKARA_SHOW_HOST_DLL}")
+  message(FATAL_ERROR
+    "Kirakara Show host DLL is missing: ${KIRAKARA_SHOW_HOST_DLL}. "
+    "Set process environment KIRAKARA_SHOW_HOST_DLL to a verified Show build.")
+endif()
+message(STATUS "Kirakara Show host DLL: ${KIRAKARA_SHOW_HOST_DLL}")
 
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
@@ -91,11 +113,9 @@ if(PLUGIN_BUNDLED_LIBRARIES)
     COMPONENT Runtime)
 endif()
 
-if(EXISTS "${KIRAKARA_SHOW_HOST_DLL}")
-  install(FILES "${KIRAKARA_SHOW_HOST_DLL}"
-    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-    COMPONENT Runtime)
-endif()
+install(FILES "${KIRAKARA_SHOW_HOST_DLL}"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)
 
 # Copy the native assets provided by the build.dart from all packages.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/windows/")

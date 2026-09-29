@@ -27,11 +27,18 @@ param(
 
   [string]$ReportPath,
 
+  [switch]$RequireLockedArtifacts,
+
   [switch]$AllowForcedCleanup
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+. (Join-Path $PSScriptRoot 'release_contract.ps1')
+
+if ($RequireLockedArtifacts -and $Engine -ne 'local') {
+  throw '-RequireLockedArtifacts applies only to a local Release Engine.'
+}
 
 $lock = Get-EngineLock
 $flutterRoot = Resolve-UnresolvedPath $FlutterSdkRoot
@@ -76,13 +83,23 @@ if ($Engine -eq 'local') {
   $engineDirectory = Get-EngineOutputDirectory `
     -Layout $layout `
     -LocalEngine $build.localEngine
-  Assert-UsableEngineArtifacts `
-    -Layout $layout `
-    -Lock $lock `
-    -Build $build `
-    -Mode $Mode `
-    -Variant $LocalVariant `
-    -OutputDirectory $engineDirectory
+  if ($RequireLockedArtifacts) {
+    $artifactContract = Get-KirakaraReleaseArtifactContract `
+      -Lock $lock `
+      -Layout $layout `
+      -Build $build
+    Assert-LockedEngineArtifacts `
+      -Build $artifactContract `
+      -OutputDirectory $engineDirectory
+  } else {
+    Assert-UsableEngineArtifacts `
+      -Layout $layout `
+      -Lock $lock `
+      -Build $build `
+      -Mode $Mode `
+      -Variant $LocalVariant `
+      -OutputDirectory $engineDirectory
+  }
 } else {
   if ($LocalVariant -ne 'stock') {
     throw '-LocalVariant patched applies only to -Engine local.'
@@ -273,6 +290,7 @@ $report = [ordered]@{
   shutdownWaitMilliseconds = $shutdownWaitMilliseconds
   forcedCleanup = $forcedCleanup
   allowForcedCleanup = [bool]$AllowForcedCleanup
+  lockedArtifactGate = [bool]$RequireLockedArtifacts
   exitCode = $exitCode
   failure = $failure
   passed = $passed

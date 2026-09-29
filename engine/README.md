@@ -4,8 +4,9 @@ This directory contains the reproducibility contract for the custom Windows
 Flutter Engine. The normal App workflow is repository-local: source, `out/`,
 DLLs, symbols and downloaded toolchains live below the ignored `.kfe/`
 directory and must never be committed or added to a source package. Phase 7
-release artifacts can instead be produced from the preserved external-workspace
-flow later in this document.
+release artifacts can be produced either from the preserved external workspace
+or from the separately reviewed repository-local Release candidate described
+later in this document.
 
 The root `builds` entries preserve the completely stock Phase 1 artifacts for
 Flutter 3.44.4. `patchset` separately locks the ordered Phase 2/3 compositor and
@@ -74,6 +75,13 @@ source tree, toolchain, GN arguments, exports, ABI and artifacts. Offline reuse
 therefore works only when the matching ready stamp and every referenced source,
 cache and output file are already present. A partial download, failed build or
 missing stamp is never passed to Flutter.
+
+Development fingerprints cover the build-relevant lock contract but exclude
+exact reviewed output hashes under `projectBootstrap.releaseCandidate` and the
+historical `builds[*].artifacts` lists. Relocking a distribution candidate
+therefore does not rebuild debug/profile/release Engines. Changing a revision,
+source tree, patch, GN target/argument, ABI, toolchain identity or build script
+still invalidates the corresponding ready stamp.
 
 Interrupted managed Git checkouts are resumed only when their origin matches
 the lock and they have no tracked edits. A clone that stopped before creating
@@ -407,12 +415,16 @@ candidates:
 ```powershell
 .\engine\scripts\package_windows_release.ps1 `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
-  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine'
+  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -ShowHostDll 'D:\仓库\Kirakara Show\build\bin\libshow_host.dll'
 ```
 
 The ignored `build/releases` directory receives deterministic Portable,
-per-user installer and patch-source ZIPs plus a release index with SHA-256
-values. Runtime smoke reports live in a `diagnostics/` child of the selected
+per-user installer, patch-source and Engine-artifact ZIPs plus a release index
+with SHA-256 values. The Engine archive contains the exact reviewed DLL, import
+library, PDB, ICU, AOT tools and patched Dart SDK files for publication as a
+Release asset; it must not be committed to Git or copied into the runtime ZIP.
+Runtime smoke reports live in a `diagnostics/` child of the selected
 output directory and the index records relative paths, so independent or
 repeat builds using `-OutputDirectory` do not collide with an earlier run or
 leak a builder-local absolute path. Runtime selection maps CMake's last
@@ -425,8 +437,16 @@ excluded. The default gate extracts and smokes the Portable package, verifies
 every installer payload hash, installs without UAC to an isolated directory,
 smokes that installation and exercises its guarded uninstaller.
 `-SkipRuntimeSmoke` is only for a deterministic rebuild comparison, not release
-acceptance. PDBs stay outside the runtime ZIP and remain identified by
-`engine.lock.json`.
+acceptance.
+
+`-ShowHostDll` is mandatory. Before any staging directory is created, the
+packager loads that DLL and requires the versioned Stage Visual export, wrong
+ABI/structure rejection, ABI 1, all four capabilities, protocol
+`nt-keyed-latest-v1`, zero reserved fields, every function pointer and the D3D
+device-binding export. The selected file must exactly match the Release bundle;
+its hash and protocol metadata are written to both manifests. The tracked
+`windows/runner/libshow_host.dll` intentionally remains the legacy
+external-texture compatibility DLL and fails this composed-release gate.
 
 The installer candidate is intentionally unsigned until the owner supplies a
 production signing identity. The repository also needs an owner-selected
@@ -498,6 +518,7 @@ physical Stage, or Cast.
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
   -LocalEngine host_debug_kirakara_v4 `
+  -ShowHostDll 'D:\仓库\Kirakara Show\build\bin\libshow_host.dll' `
   -TimeoutSeconds 90
 ```
 
@@ -507,6 +528,13 @@ program generations, pause/resume, replay, natural EOF, reload, detach and
 reattach. The report rejects callback/schema errors, handle duplication or
 resource-open failures, stale frames, failed HRESULTs and device removal. It
 uses one duration-derived EOF wait and no recurring timer or active polling.
+The Show input is resolved from the explicit parameter, the process-only
+`KIRAKARA_SHOW_HOST_DLL` build variable, or a sibling `Kirakara Show` checkout,
+in that order. The same ABI gate used for release packaging runs before build;
+the resolved path is passed to CMake only for that child build and the caller's
+environment is restored. With no override, CMake forcibly returns to the
+tracked compatibility DLL instead of retaining a previous machine path in its
+cache. Dart runtime loading always uses the DLL installed beside the App EXE.
 
 Preserve and test the compatibility backend independently with both the
 official Engine and the patched Engine:

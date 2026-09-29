@@ -601,15 +601,11 @@ class KirakaraShowFFI {
     if (Platform.isWindows) {
       final exeDir = Directory(Platform.resolvedExecutable).parent;
 
-      // 1. Next to the Flutter exe (debug/release build output)
+      // Prefer the runtime bundle selected and validated by the Windows build.
       final exePath = '${exeDir.path}\\libshow_host.dll';
       if (File(exePath).existsSync()) return exePath;
 
-      // 2. Fallback: kirakara-show build directory
-      const showPath = r'D:\仓库\Kirakara Show\build\bin\libshow_host.dll';
-      if (File(showPath).existsSync()) return showPath;
-
-      // 3. Last resort: PATH
+      // Last resort for explicitly managed deployments.
       return 'libshow_host.dll';
     }
     throw UnsupportedError('KirakaraShowFFI is only supported on Windows');

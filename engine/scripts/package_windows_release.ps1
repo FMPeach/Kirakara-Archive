@@ -6,6 +6,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$WorkspaceRoot,
 
+  [Parameter(Mandatory = $true)]
+  [string]$ShowHostDll,
+
   [string]$OutputDirectory,
 
   [string]$WindowsSdkPath = 'C:\Program Files (x86)\Windows Kits\10',
@@ -15,6 +18,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+. (Join-Path $PSScriptRoot 'release_contract.ps1')
 
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -118,6 +122,14 @@ function Remove-VerifiedTemporaryDirectory {
 $repository = Get-AppRepositoryRoot
 $lock = Get-EngineLock
 $flutterRoot = Resolve-UnresolvedPath $FlutterSdkRoot
+$showDll = Resolve-UnresolvedPath $ShowHostDll
+if (-not (Test-Path -LiteralPath $showDll -PathType Leaf)) {
+  throw "Show host DLL is missing: $showDll"
+}
+$showDll = (Resolve-Path -LiteralPath $showDll).Path
+$showAbi = & (Join-Path $PSScriptRoot `
+  'verify_show_host_stage_visual_abi.ps1') `
+  -ShowHostDll $showDll
 $layout = Get-EngineWorkspaceLayout $WorkspaceRoot
 Assert-ExternalEngineWorkspace $layout
 Assert-AppliedPatchset -Lock $lock -Layout $layout
@@ -129,10 +141,16 @@ Assert-MatchingTextFile `
   -Label 'Kirakara compositor ABI header'
 
 $build = Get-BuildLock -Lock $lock -Mode release -Variant patched
+$artifactContract = Get-KirakaraReleaseArtifactContract `
+  -Lock $lock `
+  -Layout $layout `
+  -Build $build
 $engineDirectory = Get-EngineOutputDirectory `
   -Layout $layout `
   -LocalEngine $build.localEngine
-Assert-LockedEngineArtifacts -Build $build -OutputDirectory $engineDirectory
+Assert-LockedEngineArtifacts `
+  -Build $artifactContract `
+  -OutputDirectory $engineDirectory
 
 $bundle = Join-Path $repository 'build\windows\x64\runner\Release'
 if (-not (Test-Path -LiteralPath $bundle -PathType Container)) {
@@ -148,6 +166,10 @@ Assert-MatchingFile `
   -ExpectedPath (Join-Path $engineDirectory 'icudtl.dat') `
   -ActualPath (Join-Path $bundle 'data\icudtl.dat') `
   -Label 'Release icudtl.dat'
+Assert-MatchingFile `
+  -ExpectedPath $showDll `
+  -ActualPath (Join-Path $bundle 'libshow_host.dll') `
+  -Label 'Release Show host DLL'
 Assert-WindowsAppPerMonitorV2 `
   -Lock $lock `
   -Executable $executable `
@@ -189,16 +211,21 @@ $sourceRoot = Join-Path $staging $sourceName
 $portableArchive = Join-Path $output "$packageId-portable.zip"
 $installerArchive = Join-Path $output "$installerName.zip"
 $sourceArchive = Join-Path $output "$sourceName.zip"
+$engineArtifactsName = "$packageId-engine-artifacts"
+$engineArtifactsRoot = Join-Path $staging $engineArtifactsName
+$engineArchive = Join-Path $output "$engineArtifactsName.zip"
 $releaseIndexPath = Join-Path $output "$packageId-release-index.json"
 
-foreach ($path in $portableArchive, $installerArchive, $sourceArchive, $releaseIndexPath) {
+foreach ($path in $portableArchive, $installerArchive, $sourceArchive,
+    $engineArchive, $releaseIndexPath) {
   if (Test-Path -LiteralPath $path) {
     throw "Release artifact already exists; preserve it or choose another output directory: $path"
   }
 }
 
 try {
-  New-Item -ItemType Directory -Path $portableRoot, $installerRoot, $sourceRoot `
+  New-Item -ItemType Directory `
+    -Path $portableRoot, $installerRoot, $sourceRoot, $engineArtifactsRoot `
     -Force | Out-Null
 
   $installManifest = Join-Path $repository 'build\windows\x64\install_manifest.txt'
@@ -321,11 +348,21 @@ try {
         Get-FileHash -LiteralPath (Join-Path $portableRoot 'flutter_windows.dll') `
           -Algorithm SHA256).Hash
     }
+    showHost = [ordered]@{
+      file = 'libshow_host.dll'
+      dllSha256 = [string]$showAbi.dllSha256
+      dllSize = [int64]$showAbi.dllSize
+      stageVisualAbiVersion = [uint32]$showAbi.abiVersion
+      capabilities = [uint64]$showAbi.capabilities
+      protocolRevision = [string]$showAbi.protocolRevision
+    }
     symbols = [ordered]@{
       includedInRuntimePackage = $false
       file = 'flutter_windows.dll.pdb'
-      size = ($build.artifacts | Where-Object path -eq 'flutter_windows.dll.pdb').size
-      sha256 = ($build.artifacts | Where-Object path -eq 'flutter_windows.dll.pdb').sha256
+      size = ($artifactContract.artifacts |
+          Where-Object path -eq 'flutter_windows.dll.pdb').size
+      sha256 = ($artifactContract.artifacts |
+          Where-Object path -eq 'flutter_windows.dll.pdb').sha256
     }
     mutableStateExcluded = @('settings/**', '*.log', '*.dmp', '*.etl')
     fileCount = @($runtimeFiles).Count
@@ -386,11 +423,17 @@ try {
     $sourceCandidates += Get-ChildItem -LiteralPath $sourceDirectory -File -Recurse |
       Where-Object {
         $_.FullName -notmatch '[\\/](\.work|artifacts|reports|out)[\\/]' -and
-        $_.Extension -in '.ps1', '.patch', '.json', '.md', '.h', '.txt', '.gclient'
+        $_.Extension -in '.ps1', '.psm1', '.patch', '.json', '.md', '.h',
+          '.txt', '.gclient'
       }
   }
-  $sourceCandidates += Get-Item `
-    -LiteralPath (Join-Path $repository 'docs\windows_custom_flutter_compositor_plan.md')
+  foreach ($relativeSource in @(
+      'flutterw.ps1',
+      'flutterw.cmd',
+      'docs\windows_custom_flutter_compositor_plan.md'
+    )) {
+    $sourceCandidates += Get-Item -LiteralPath (Join-Path $repository $relativeSource)
+  }
   foreach ($sourceFile in $sourceCandidates | Sort-Object FullName -Unique) {
     $null = Copy-RelativeFile `
       -SourceRoot $repository `
@@ -415,6 +458,37 @@ try {
     -DestinationPath $sourceArchive `
     -EntryPrefix $sourceName
 
+  $engineArtifactFiles = foreach ($artifact in @($artifactContract.artifacts)) {
+    $sourcePath = Join-Path $engineDirectory ([string]$artifact.path)
+    $relative = Copy-RelativeFile `
+      -SourceRoot $engineDirectory `
+      -SourcePath $sourcePath `
+      -DestinationRoot $engineArtifactsRoot
+    [ordered]@{
+      path = $relative.Replace('\', '/')
+      size = [int64]$artifact.size
+      sha256 = [string]$artifact.sha256
+    }
+  }
+  [ordered]@{
+    schemaVersion = 1
+    sourceCommit = $head
+    engineRevision = $lock.flutter.engineRevision
+    patchsetVersion = $lock.patchset.version
+    artifactContract = if ($layout.Kind -eq 'repository-local') {
+      'projectBootstrap.releaseCandidate'
+    } else {
+      'patchset.builds.release'
+    }
+    files = @($engineArtifactFiles)
+  } | ConvertTo-Json -Depth 6 | Set-Content `
+    -LiteralPath (Join-Path $engineArtifactsRoot 'ENGINE-ARTIFACTS.json') `
+    -Encoding utf8
+  New-DeterministicZip `
+    -SourceDirectory $engineArtifactsRoot `
+    -DestinationPath $engineArchive `
+    -EntryPrefix $engineArtifactsName
+
   $portableSmokeReport = $null
   $installerSmokeReport = $null
   if (-not $SkipRuntimeSmoke) {
@@ -434,6 +508,7 @@ try {
       -Mode release `
       -BundlePath $portableBundle `
       -ObserveSeconds 3 `
+      -RequireLockedArtifacts `
       -ReportPath $portableSmokeReport
 
     $installerVerification = Join-Path $verification 'installer'
@@ -454,6 +529,7 @@ try {
       -Mode release `
       -BundlePath $installedBundle `
       -ObserveSeconds 3 `
+      -RequireLockedArtifacts `
       -ReportPath $installerSmokeReport
     & (Join-Path $installedBundle 'Uninstall-Kirakara.ps1') `
       -InstallRoot $installedBundle `
@@ -463,16 +539,17 @@ try {
     }
   }
 
-  $artifacts = foreach ($artifact in $portableArchive, $installerArchive, $sourceArchive) {
+  $artifacts = foreach ($artifact in $portableArchive, $installerArchive,
+      $sourceArchive, $engineArchive) {
     $item = Get-Item -LiteralPath $artifact
     [ordered]@{
-      path = $item.FullName
+      path = [IO.Path]::GetRelativePath($output, $item.FullName).Replace('\', '/')
       size = $item.Length
       sha256 = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash
     }
   }
   $releaseIndex = [ordered]@{
-    schemaVersion = 2
+    schemaVersion = 3
     packageId = $packageId
     sourceCommit = $head
     sourceDirty = $dirty
@@ -485,6 +562,16 @@ try {
     } else { $null }
     productionSigningStatus = 'not-signed-owner-identity-required'
     projectLicenseStatus = 'not-declared-owner-action-required'
+    engineArtifactContract = if ($layout.Kind -eq 'repository-local') {
+      'projectBootstrap.releaseCandidate'
+    } else {
+      'patchset.builds.release'
+    }
+    showHost = [ordered]@{
+      dllSha256 = [string]$showAbi.dllSha256
+      stageVisualAbiVersion = [uint32]$showAbi.abiVersion
+      protocolRevision = [string]$showAbi.protocolRevision
+    }
     artifacts = @($artifacts)
     passed = $true
   }
@@ -504,4 +591,5 @@ try {
 Write-Host "Portable archive: $portableArchive"
 Write-Host "Installer archive: $installerArchive"
 Write-Host "Patch source archive: $sourceArchive"
+Write-Host "Engine artifacts archive: $engineArchive"
 Write-Host "Release index: $releaseIndexPath"

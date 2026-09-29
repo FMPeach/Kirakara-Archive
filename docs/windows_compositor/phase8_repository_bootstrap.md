@@ -38,6 +38,13 @@ PowerShell 把 Flutter 短参数 `-d` 误绑定为 common parameter，以及锁�
 MSVC 14.51，`MSB8052` 计数为 0。当前主机的 clean-clone 门禁因此已经完成；第二位协作者
 复现仍是不能由同机自证替代的剩余发布门槛。
 
+Phase 7 之后的发布边界也已补齐：普通 clean clone 不再依赖机器上的 Show checkout，默认
+构建确定性携带仓库内既有 external-texture 兼容 DLL；真实 composed probe 和发布打包则
+必须选择通过版本化 Stage Visual ABI 门禁的当前 Show DLL。仓库本地 Unicode-safe
+Release Engine 已作为独立 `projectBootstrap.releaseCandidate` 锁定并通过四归档打包、
+Portable/Installer 运行及无 UAC 安装卸载。历史外部候选仍保留用于 A/B，不被新候选
+覆盖。二进制、PDB 与 ZIP 只留在 `.kfe`/`build` 或后续 Release 资产，不进入 Git。
+
 ## 仓库入口与模式选择
 
 日常 Windows 开发只使用：
@@ -108,6 +115,9 @@ tree、补丁栈及哈希、ABI/patchset 版本、GN/Ninja 配置、MSVC/Windows
 脚本和 wrapper 内容。普通 Dart、资源或业务代码不在指纹中。ready stamp 还锁定本次
 开发构建的实际产物集合、大小与非 PDB 文件哈希；PDB 只做存在和大小门禁，避免链接器
 identity 的非确定性导致锁文件被自动改写。Phase 7 发布候选的精确哈希门禁保持不变。
+指纹使用剔除所有精确产物列表和 `projectBootstrap.releaseCandidate` 后的规范化构建锁；
+因此只更新人工审核的发布哈希不会令三种开发模式失效，而 revision、source tree、补丁、
+GN target/参数、ABI、工具链或构建脚本变化仍会改变指纹。聚焦测试同时验证这两个方向。
 
 同一仓库身份映射到一个 Windows named mutex。锁外先做廉价复用检查；需要准备时取得
 互斥锁并再次检查，因此同时启动的第二个进程会等待第一个完成，然后复验并复用，不会
@@ -170,14 +180,17 @@ VS Code task 和 launch 示例调用相同的 `flutterw` 入口；Dart 调试器
 | clean clone 的实际运行 DLL 与 ABI | 通过；bundle/loaded/Engine SHA-256 一致，ABI 2、patchset 4、锁定 Engine revision |
 | clean clone 的 App 工具链隔离 | 通过；VS 2026 / MSVC 14.51，三轮 `MSB8052` 均为 0 |
 | clean clone 的第二次相同命令 | 通过；无 fetch/sync/GN/Ninja/Engine build，并复用各自 verified ready stamp |
+| 默认 Show 构建输入隔离 | 通过；撤销进程覆盖后 CMake cache 和 Debug bundle 都恢复仓库内兼容 DLL |
+| 当前 Show Stage Visual ABI | 通过；ABI 1、能力 `0xF`、协议、保留位、函数表和 D3D device binding 均匹配 |
+| 仓库本地严格 Release 打包 | 通过；四个归档、locked smoke、安装/卸载与隐私扫描均通过 |
 
 当前仓库本地开发 DLL（开发态 ready stamp 的实际哈希，不改写 Phase 7 release lock）：
 
 | 模式 | `flutter_windows.dll` SHA-256 | 大小 |
 | --- | --- | ---: |
-| debug | `157E5D44A8952820F51CFC1DACF221020E87835E41FCFEBA249BCEB460CE95CB` | 45,583,872 |
-| profile | `92AC7EBF75B94772D20964B2621690B9E90F1BAF97268B72459CA80D7906FC99` | 21,899,776 |
-| release | `81341FC046001EFCCE04F6D2862FD94FD042661976E06A5383C3F7BF2F8F119E` | 21,316,608 |
+| debug | `4D3DA24999D235B38BCE2948A7C271C9B57BB6A703496A0190575E514C2190B1` | 45,583,872 |
+| profile | `A135150C9BF3C7A3ECF01A0EDB23784FDF4E37A12ACF173F1BDE0EB74465BD26` | 21,899,776 |
+| release | `DB07763F1551A8FD68346D30A547050975E14E73A79B1A239587F063CD70B0F8` | 21,316,608 |
 
 三份独立 clean clone 的最终证据：
 
@@ -196,7 +209,7 @@ clean clone 使用 Windows 默认 CRLF checkout，主工作区保留 LF；指纹
 
 关键报告：
 
-- `build/diagnostics/engine/project-bootstrap-tests-20260929-084450.json`；
+- `build/diagnostics/engine/project-bootstrap-tests-20260929-095102.json`；
 - `build/diagnostics/engine/flutterw-local-sdk-fallback-20260929-044316.json`；
 - `build/diagnostics/engine/flutterw-local-sdk-fallback-20260929-044440.json`；
 - `build/diagnostics/engine/project-engine-reuse-20260929-044304.json`；
@@ -212,15 +225,22 @@ clean clone 使用 Windows 默认 CRLF checkout，主工作区保留 LF；指纹
 - `.kfe/logs/verify-debug-20260929-064833-44113229.json` 与对应 ABI 报告；
 - `.kfe/logs/verify-profile-20260929-083013-98db71f9.json` 与对应 ABI 报告；
 - `.kfe/logs/verify-release-20260929-083210-4d8e825b.json` 与对应 ABI 报告；
+- `.kfe/logs/verify-debug-20260929-092207-3f2f6f48.json`、
+  `verify-profile-20260929-092409-8edd0da2.json`、
+  `verify-release-20260929-092609-e224dd75.json` 与各自 ABI 报告；
 - `build/diagnostics/engine/clean-clone-evidence/debug-run-final-summary.json`；
 - `build/diagnostics/engine/clean-clone-evidence/pub-get-final-summary.json`；
 - `build/diagnostics/engine/clean-clone-evidence/release-build-final-summary.json`；
-- `build/diagnostics/engine/clean-clone-evidence/debug-run-toolchain-restore-integration.json`。
+- `build/diagnostics/engine/clean-clone-evidence/debug-run-toolchain-restore-integration.json`；
+- `build/diagnostics/real-stage-lifecycle-20260929-094629.json`；
+- `build/diagnostics/release-show-gate-final-clean-a-20260929/` 下的 release index 与两份
+  smoke 报告，以及 `release-show-gate-final-clean-b-20260929/` 的确定性打包对照。
 
 Engine 聚焦回归为 compositor API 6、剪贴板 19、关键调度 2、上游 compositor 25 和
-两个隔离 adapter 测试全部通过。synthetic 复验中 platform thread stall 750 ms 时
-Stage 推进 45 帧而 Flutter present 增量为 0；交互后的静止 2 秒样本 Stage 推进 120
-帧且 Flutter present 增量为 0，所有 Stage HRESULT/device-removal 计数正常。
+两个隔离 adapter 测试全部通过。最终真实 Show 复验中，交互后的静止 2 秒样本 Stage
+submit/present 各推进 120 帧而 Flutter present 增量为 0；750 ms 观察窗 Stage 继续推进
+45 帧且 Flutter present 增量仍为 0。最小化/恢复、会话/电源信号、快速导航、Show 重建
+及 active 状态退出全部通过，所有 Stage HRESULT/device-removal 计数正常。
 
 锁定 SDK 的 `dart analyze` 在真实中文路径保持仓库既有 68 条 info、0 warning、0 error。
 同版本 stock `flutter analyze`（包括绕过 wrapper 直接调用官方 SDK）会因 Flutter tool 以

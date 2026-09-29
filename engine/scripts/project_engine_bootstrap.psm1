@@ -608,7 +608,6 @@ function Get-KirakaraBootstrapFingerprint {
 
   $relativeFiles = [System.Collections.Generic.List[string]]::new()
   foreach ($path in @(
-      'engine/engine.lock.json',
       'engine/include/kirakara_flutter_compositor_api.h',
       'engine/scripts/common.ps1',
       'engine/scripts/fetch_engine.ps1',
@@ -664,9 +663,23 @@ function Get-KirakaraBootstrapFingerprint {
     ).Hash
   }
   $build = Get-BuildLock -Lock $Lock -Mode $Mode -Variant patched
+  # Exact Release artifact hashes describe a reviewed distribution candidate,
+  # not an Engine build input. Hash a canonical copy of the lock with those
+  # output-only fields removed so relocking a candidate cannot invalidate all
+  # three development ready stamps. Every current and future non-artifact lock
+  # field remains covered without maintaining a second hand-written schema.
+  $buildLock = $Lock | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+  $buildLock.projectBootstrap.PSObject.Properties.Remove('releaseCandidate')
+  foreach ($collection in @($buildLock.builds, $buildLock.patchset.builds)) {
+    foreach ($lockedBuild in @($collection)) {
+      $lockedBuild.PSObject.Properties.Remove('artifacts')
+    }
+  }
+  $buildLockJson = $buildLock | ConvertTo-Json -Depth 30 -Compress
   $inputs = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     mode = $Mode
+    buildLockSha256 = Get-KirakaraSha256Text -Text $buildLockJson
     frameworkRevision = [string]$Lock.flutter.frameworkRevision
     engineRevision = [string]$Lock.flutter.engineRevision
     engineSourceTree = [string]$Lock.flutter.engineSourceTree

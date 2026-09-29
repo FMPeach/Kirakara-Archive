@@ -16,6 +16,7 @@ if ($null -eq $bootstrapModule) {
   throw "Could not locate imported bootstrap module: $modulePath"
 }
 . (Join-Path $PSScriptRoot 'common.ps1')
+. (Join-Path $PSScriptRoot 'release_contract.ps1')
 
 function Assert-Equal {
   param(
@@ -231,6 +232,64 @@ foreach ($mode in 'debug', 'profile', 'release') {
 }
 if (@($fingerprints.Values | Sort-Object -Unique).Count -ne 3) {
   throw 'Build-mode fingerprints must be distinct.'
+}
+$releaseOnlyLock = $lock | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+$releaseOnlyLock.projectBootstrap.releaseCandidate.artifacts[0].sha256 = 'A' * 64
+$releaseOnlyLock.patchset.builds[2].artifacts[0].sha256 = 'B' * 64
+$releaseOnlyLock.builds[2].artifacts[0].sha256 = 'C' * 64
+foreach ($mode in 'debug', 'profile', 'release') {
+  $releaseOnlyFingerprint = Get-KirakaraBootstrapFingerprint `
+    -Lock $releaseOnlyLock `
+    -Mode $mode
+  Assert-Equal -Expected $fingerprints[$mode] `
+    -Actual $releaseOnlyFingerprint.value `
+    -Label "$mode release-candidate fingerprint isolation"
+}
+$buildInputLock = $lock | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+$buildInputLock.patchset.version = [uint32]$buildInputLock.patchset.version + 1
+$changedBuildFingerprint = Get-KirakaraBootstrapFingerprint `
+  -Lock $buildInputLock `
+  -Mode debug
+if ($changedBuildFingerprint.value -eq $fingerprints.debug) {
+  throw 'A build-relevant lock change did not invalidate the Engine fingerprint.'
+}
+$fingerprintIsolation = [ordered]@{
+  releaseCandidateDoesNotInvalidate = $true
+  buildInputInvalidates = $true
+}
+
+$releaseBuild = Get-BuildLock -Lock $lock -Mode release -Variant patched
+$repositoryReleaseContract = Get-KirakaraReleaseArtifactContract `
+  -Lock $lock `
+  -Layout ([pscustomobject]@{ Kind = 'repository-local' }) `
+  -Build $releaseBuild
+Assert-Equal -Expected ([string]$lock.projectBootstrap.releaseCandidate.localEngine) `
+  -Actual ([string]$repositoryReleaseContract.localEngine) `
+  -Label 'repository-local Release contract'
+$externalReleaseContract = Get-KirakaraReleaseArtifactContract `
+  -Lock $lock `
+  -Layout ([pscustomobject]@{ Kind = 'external' }) `
+  -Build $releaseBuild
+Assert-Equal -Expected ([string]$releaseBuild.artifacts[0].sha256) `
+  -Actual ([string]$externalReleaseContract.artifacts[0].sha256) `
+  -Label 'external Release contract'
+$debugBuild = Get-BuildLock -Lock $lock -Mode debug -Variant patched
+$wrongModeMessage = $null
+try {
+  $null = Get-KirakaraReleaseArtifactContract `
+    -Lock $lock `
+    -Layout ([pscustomobject]@{ Kind = 'repository-local' }) `
+    -Build $debugBuild
+} catch {
+  $wrongModeMessage = $_.Exception.Message
+}
+if ($wrongModeMessage -notmatch 'cannot be selected') {
+  throw "A non-Release artifact contract was not rejected: $wrongModeMessage"
+}
+$releaseContractChecks = [ordered]@{
+  repositoryLocalUsesCandidate = $true
+  externalUsesHistoricalLock = $true
+  nonReleaseRejected = $true
 }
 $toolFingerprints = [ordered]@{}
 foreach ($toolName in 'Gn', 'Ninja') {
@@ -778,6 +837,8 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $absoluteReport) `
   invocationCases = @($caseReports)
   rejectionCases = @($failureReports)
   fingerprints = $fingerprints
+  fingerprintIsolation = $fingerprintIsolation
+  releaseContractChecks = $releaseContractChecks
   toolFingerprints = $toolFingerprints
   toolchainEnvironmentRestore = $toolchainEnvironmentRestore
   ephemeralInvalidation = $ephemeralInvalidation

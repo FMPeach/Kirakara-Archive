@@ -118,6 +118,12 @@
   removal、1130G7 热态、第二位协作者复现、生产签名身份和项目级发布许可证仍未完成，
   因此 Phase 7 及总计划不能宣称全部完成。详见
   `docs/windows_compositor/phase7_compatibility_release.md`。
+- Phase 7 发布输入随后进一步收紧：普通构建默认使用仓库内既有 Show DLL 并保持
+  external texture 兼容，不再硬编码本机 Show checkout；真实 composed probe/发布必须
+  显式选择或解析当前 Show DLL，并在构建/打包前验证 Stage Visual ABI 1、能力 `0xF`、
+  `nt-keyed-latest-v1`、保留位、函数表和设备绑定导出。仓库本地 Unicode-safe Release
+  Engine 以独立候选锁定，四归档打包、Portable/Installer locked smoke、无 UAC 安装卸载
+  与旧 Show 明确拒绝均已通过。二进制、PDB 和 ZIP 仍只在忽略目录或 Release 资产中。
 - Phase 8 在当前主机可可靠执行的实现与自动门禁已完成：根目录 `flutterw.ps1` /
   `flutterw.cmd` 会在被忽略的 `.kfe/` 内准备锁定源码、补丁、三模式输出、缓存、日志、
   互斥锁和 ready stamp，并自动注入 local-Engine 参数。debug/profile/release Engine、
@@ -133,7 +139,9 @@
   DLL 加载、ABI、二次廉价复用、隔离与清理边界门禁；该过程还修复了全新 vpython 缓存、
   PowerShell 短参数 `-d` 和 Engine 工具链环境泄漏三个只在干净入口暴露的问题。第二位
   协作者复现仍未完成。旧的双击构建/启动批处理也已移除固定盘符与裸 `flutter` 调用，
-  统一从自身位置解析仓库并经过同一个 `flutterw.cmd` 门禁；因此 Phase 8 和总计划仍不能
+  统一从自身位置解析仓库并经过同一个 `flutterw.cmd` 门禁。精确发布候选哈希不属于开发
+  Engine 构建输入；指纹排除候选/产物哈希，但继续覆盖 revision、源码树、补丁、GN、ABI、
+  工具链和构建脚本，避免 relock 造成无意义的三模式失效。因此 Phase 8 和总计划仍不能
   宣称全部完成。详见
   `docs/windows_compositor/phase8_repository_bootstrap.md`。
 
@@ -781,6 +789,16 @@ ABI/patchset version、GN 参数、目标架构、构建模式、MSVC/Windows SD
 `flutter analyze` 在中文 workspace URI 上存在 LSP `Content-Length` 字符数/字节数缺陷；
 直接 `dart analyze` 通过，且 Phase 8 规定的三个 Windows 自举入口不受影响。本计划不通过
 修改官方 SDK 或创建路径 alias 掩盖该独立工具问题。
+
+Phase 7 之后新增的发布闭环也已在本机验证：仓库内 Release 候选从真实中文路径生成，
+当前 Show DLL 经过独立 ABI gate 后进入 bundle，Portable 与当前用户安装包都以严格候选
+哈希启动并正常退出，Engine DLL/PDB/AOT/Dart 产物进入单独 Release 归档而不进入 Git。
+默认 clean-clone 构建仍只携带既有 external-texture 兼容 DLL，真实 composed 输入必须由
+调用者显式提供或由探针从相邻 Show checkout 解析，且进程覆盖撤销后 CMake cache 会恢复
+默认值。最终两轮四归档打包逐项 SHA-256 一致；真实 Show 复验中 2 秒 Stage
+submit/present 各推进 120 帧而 Flutter present 增量为 0，750 ms 观察窗 Stage 继续推进
+45 帧且 Flutter present 增量仍为 0，生命周期门禁全部通过。以上补强不替代第二位协作者
+或剩余实体硬件矩阵。
 
 ## 必要的可观测能力
 

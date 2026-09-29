@@ -38,13 +38,11 @@ void main() {
     expect(complete.isValid, isTrue);
   });
 
-  final showDll = File(
-    r'D:\仓库\Kirakara Show\build\bin\libshow_host.dll',
-  );
+  final showDll = _findShowHostDll();
   test(
     'Windows FFI transports the versioned overlay struct',
     () {
-      final ffi = KirakaraShowFFI(dllPath: showDll.path);
+      final ffi = KirakaraShowFFI(dllPath: showDll!.path);
       try {
         expect(
           ffi.setStageOverlayState(
@@ -62,6 +60,21 @@ void main() {
         ffi.dispose();
       }
     },
-    skip: !Platform.isWindows || !showDll.existsSync(),
+    skip: !Platform.isWindows || showDll == null,
   );
+}
+
+File? _findShowHostDll() {
+  if (!Platform.isWindows) return null;
+  final overridePath =
+      Platform.environment['KIRAKARA_SHOW_HOST_DLL']?.trim() ?? '';
+  if (overridePath.isNotEmpty) {
+    final override = File(overridePath);
+    if (override.existsSync()) return override;
+  }
+  final sibling = File(
+    '${Directory.current.parent.path}'
+    r'\Kirakara Show\build\bin\libshow_host.dll',
+  );
+  return sibling.existsSync() ? sibling : null;
 }

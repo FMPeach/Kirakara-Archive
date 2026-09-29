@@ -10,7 +10,7 @@ param(
 
   [string]$FixtureRoot = (Join-Path $env:TEMP 'kira_fixtures'),
 
-  [string]$ShowHostDll = 'D:\仓库\Kirakara Show\build\bin\libshow_host.dll',
+  [string]$ShowHostDll,
 
   [string]$TitleKrl = (Join-Path $PSScriptRoot 'fixtures\title_probe.krl'),
 
@@ -34,6 +34,33 @@ $repositoryRoot = [IO.Path]::GetFullPath(
   (Join-Path $PSScriptRoot '..\..')
 )
 . (Join-Path $repositoryRoot 'engine\scripts\common.ps1')
+
+function Resolve-ShowHostDll {
+  param([string]$ExplicitPath)
+
+  $candidates = [Collections.Generic.List[string]]::new()
+  if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+    $candidates.Add($ExplicitPath)
+  } else {
+    $environmentPath = [Environment]::GetEnvironmentVariable(
+      'KIRAKARA_SHOW_HOST_DLL', 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($environmentPath)) {
+      $candidates.Add($environmentPath)
+    }
+    $candidates.Add((Join-Path (Split-Path -Parent $repositoryRoot) `
+      'Kirakara Show\build\bin\libshow_host.dll'))
+  }
+  foreach ($candidate in $candidates) {
+    $resolved = Resolve-UnresolvedPath $candidate
+    if (Test-Path -LiteralPath $resolved -PathType Leaf) {
+      return (Resolve-Path -LiteralPath $resolved).Path
+    }
+  }
+  throw (
+    'A current Show host DLL is required for the real composed Stage probe. ' +
+    'Pass -ShowHostDll or set the process-only KIRAKARA_SHOW_HOST_DLL variable. ' +
+    "Checked: $($candidates -join ', ')")
+}
 
 $lock = Get-EngineLock
 $flutterRoot = Resolve-UnresolvedPath $FlutterSdkRoot
@@ -65,7 +92,10 @@ if ($sdkEngineRevision -ne $lock.flutter.engineRevision) {
 }
 
 $fixtureDirectory = Resolve-UnresolvedPath $FixtureRoot
-$showDll = Resolve-UnresolvedPath $ShowHostDll
+$showDll = Resolve-ShowHostDll -ExplicitPath $ShowHostDll
+$showAbi = & (Join-Path $repositoryRoot `
+  'engine\scripts\verify_show_host_stage_visual_abi.ps1') `
+  -ShowHostDll $showDll
 $titleKrlPath = Resolve-UnresolvedPath $TitleKrl
 $requiredFixtures = @(
   'v1.mp4', 'l1.krl', 'vocal1.wav', 'inst1.wav',
@@ -125,18 +155,27 @@ if (-not $SkipBuild) {
   Invalidate-StaleFlutterEphemeralEngine `
     -EngineOutputDirectory $engineOutput `
     -AppRoot $repositoryRoot
-  Push-Location $repositoryRoot
+  $priorShowHostDll = [Environment]::GetEnvironmentVariable(
+    'KIRAKARA_SHOW_HOST_DLL', 'Process')
   try {
-    & $flutter build windows --debug `
-      --target lib/windows_compositor_real_stage_main.dart `
-      "--local-engine=$LocalEngine" `
-      "--local-engine-host=$LocalEngine" `
-      "--local-engine-src-path=$($layout.OutputRoot)"
-    if ($LASTEXITCODE -ne 0) {
-      throw "Real Stage compositor App build failed (exit $LASTEXITCODE)."
+    [Environment]::SetEnvironmentVariable(
+      'KIRAKARA_SHOW_HOST_DLL', $showDll, 'Process')
+    Push-Location $repositoryRoot
+    try {
+      & $flutter build windows --debug `
+        --target lib/windows_compositor_real_stage_main.dart `
+        "--local-engine=$LocalEngine" `
+        "--local-engine-host=$LocalEngine" `
+        "--local-engine-src-path=$($layout.OutputRoot)"
+      if ($LASTEXITCODE -ne 0) {
+        throw "Real Stage compositor App build failed (exit $LASTEXITCODE)."
+      }
+    } finally {
+      Pop-Location
     }
   } finally {
-    Pop-Location
+    [Environment]::SetEnvironmentVariable(
+      'KIRAKARA_SHOW_HOST_DLL', $priorShowHostDll, 'Process')
   }
 }
 
@@ -205,7 +244,9 @@ if (-not $process.Start()) {
 Write-Host "Real Stage compositor App started as PID $($process.Id)."
 
 if ($KeepOpen) {
-  Write-Host "Interactive probe left open. Report will be written to $absoluteReport"
+  Write-Host (
+    "Interactive probe left open. Show host $($showAbi.dllSha256); " +
+    "report will be written to $absoluteReport")
   return
 }
 
@@ -225,6 +266,17 @@ if (-not (Test-Path -LiteralPath $absoluteReport -PathType Leaf)) {
 }
 
 $report = Get-Content -Raw -LiteralPath $absoluteReport | ConvertFrom-Json
+$report | Add-Member -NotePropertyName showHostArtifact -NotePropertyValue (
+  [pscustomobject][ordered]@{
+    dllSha256 = [string]$showAbi.dllSha256
+    dllSize = [int64]$showAbi.dllSize
+    abiVersion = [uint32]$showAbi.abiVersion
+    capabilities = [uint64]$showAbi.capabilities
+    protocolRevision = [string]$showAbi.protocolRevision
+  }) -Force
+$report | ConvertTo-Json -Depth 16 | Set-Content `
+  -LiteralPath $absoluteReport `
+  -Encoding utf8
 if ($report.passed -ne $true) {
   $report | ConvertTo-Json -Depth 14 | Write-Host
   throw "Real Stage compositor runtime gates failed. Report: $absoluteReport"
