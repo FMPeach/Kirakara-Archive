@@ -59,13 +59,17 @@ class LanAddressResolver {
   ];
 
   static Future<String?> detectIpv4() async {
+    return (await detectIpv4Candidate())?.address;
+  }
+
+  static Future<LanAddressCandidate?> detectIpv4Candidate() async {
     try {
       final interfaces = await NetworkInterface.list(
         type: InternetAddressType.IPv4,
         includeLoopback: false,
         includeLinkLocal: false,
       );
-      return selectIpv4(
+      return selectIpv4Candidate(
         interfaces.expand(
           (interface) => interface.addresses.map(
             (address) => LanAddressCandidate(
@@ -81,27 +85,31 @@ class LanAddressResolver {
   }
 
   static String? selectIpv4(Iterable<LanAddressCandidate> candidates) {
-    final ranked = <({String address, String name, int score})>[];
+    return selectIpv4Candidate(candidates)?.address;
+  }
+
+  static LanAddressCandidate? selectIpv4Candidate(
+    Iterable<LanAddressCandidate> candidates,
+  ) {
+    final ranked = <({LanAddressCandidate candidate, int score})>[];
     for (final candidate in candidates) {
       final score = rankCandidate(
         interfaceName: candidate.interfaceName,
         address: candidate.address,
       );
       if (score < 0) continue;
-      ranked.add((
-        address: candidate.address,
-        name: candidate.interfaceName,
-        score: score,
-      ));
+      ranked.add((candidate: candidate, score: score));
     }
     ranked.sort((left, right) {
       final scoreOrder = right.score.compareTo(left.score);
       if (scoreOrder != 0) return scoreOrder;
-      final nameOrder = left.name.compareTo(right.name);
+      final nameOrder = left.candidate.interfaceName.compareTo(
+        right.candidate.interfaceName,
+      );
       if (nameOrder != 0) return nameOrder;
-      return left.address.compareTo(right.address);
+      return left.candidate.address.compareTo(right.candidate.address);
     });
-    return ranked.isEmpty ? null : ranked.first.address;
+    return ranked.isEmpty ? null : ranked.first.candidate;
   }
 
   /// Returns a deterministic preference score, or -1 for a rejected adapter.

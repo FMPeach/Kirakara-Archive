@@ -36,8 +36,13 @@ class DlnaDeviceDescriptionParser {
       throw const FormatException('MediaRenderer has no AVTransport service');
     }
 
-    final udn = (_directText(renderer, 'UDN') ?? '').trim();
+    final declaredUdn = (_directText(renderer, 'UDN') ?? '').trim();
     final usnId = (usn ?? '').split('::').first.trim();
+    final udn = declaredUdn.isNotEmpty
+        ? declaredUdn
+        : usnId.toLowerCase().startsWith('uuid:')
+            ? usnId
+            : '';
     final id = udn.isNotEmpty
         ? udn
         : usnId.isNotEmpty
@@ -47,6 +52,7 @@ class DlnaDeviceDescriptionParser {
 
     return DlnaDevice(
       id: id,
+      udn: udn,
       friendlyName: friendlyName.isEmpty ? location.host : friendlyName,
       manufacturer: (_directText(renderer, 'manufacturer') ?? '').trim(),
       modelName: (_directText(renderer, 'modelName') ?? '').trim(),

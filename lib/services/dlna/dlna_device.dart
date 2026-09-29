@@ -15,6 +15,7 @@ class DlnaDevice {
     required this.location,
     required this.localAddress,
     required this.avTransport,
+    this.udn = '',
     this.manufacturer = '',
     this.modelName = '',
     this.iconUrl,
@@ -23,6 +24,7 @@ class DlnaDevice {
   });
 
   final String id;
+  final String udn;
   final String friendlyName;
   final String manufacturer;
   final String modelName;

@@ -9,6 +9,7 @@ import 'package:kirakara_app/services/dlna/dlna_discovery_service.dart';
 import 'package:kirakara_app/services/dlna/dlna_http_client.dart';
 import 'package:kirakara_app/services/display_manager.dart';
 import 'package:kirakara_app/services/kirakara_show_service.dart';
+import 'package:kirakara_app/services/lan_address_resolver.dart';
 import 'package:kirakara_app/services/native_window_service.dart';
 import 'package:kirakara_app/services/playback_service.dart';
 import 'package:kirakara_app/services/queue_service.dart';
@@ -36,6 +37,16 @@ void main() {
 
       expect(headers['location'], 'http://192.168.1.20:1400/device.xml');
       expect(headers['usn'], 'uuid:renderer::upnp:rootdevice');
+    });
+
+    test('targets a renderer directly without changing multicast defaults', () {
+      final request = DlnaDiscoveryService.buildSearchRequest(
+        'urn:schemas-upnp-org:device:MediaRenderer:1',
+        host: '192.168.254.7:1900',
+      );
+
+      expect(request, contains('HOST: 192.168.254.7:1900\r\n'));
+      expect(request, contains('MAN: "ssdp:discover"\r\n'));
     });
   });
 
@@ -84,6 +95,7 @@ void main() {
       );
 
       expect(device.id, 'uuid:renderer-1');
+      expect(device.udn, 'uuid:renderer-1');
       expect(device.friendlyName, '客厅电视');
       expect(device.detailLabel, 'Example · Renderer X');
       expect(
@@ -106,6 +118,157 @@ void main() {
         ),
         throwsFormatException,
       );
+    });
+  });
+
+  group('explicit renderer fallback', () {
+    test('loads a complete Pure K description URL and logs its route',
+        () async {
+      final logs = <String>[];
+      final service = DlnaDiscoveryService(
+        localInterfaceResolver: () async => const LanAddressCandidate(
+          interfaceName: 'Ethernet',
+          address: '192.168.16.170',
+        ),
+        descriptionLoader: (location, localAddress) async {
+          expect(
+            location,
+            Uri.parse('http://192.168.254.7:49152/description.xml'),
+          );
+          expect(localAddress, '192.168.16.170');
+          return _pureKDescription;
+        },
+        unicastSearch: (_, __, ___) =>
+            throw StateError('manual URL must not send SSDP'),
+        logger: logs.add,
+      );
+
+      final device = await service.resolveManualRenderer(
+        '  http://192.168.254.7:49152/description.xml  ',
+      );
+
+      expect(device.friendlyName, '纯K-K08');
+      expect(device.udn, 'uuid:pure-k-k08');
+      expect(device.manufacturer, 'dolphinstar');
+      expect(device.modelName, 'Myou Media Renderer');
+      expect(
+        device.avTransport.controlUrl,
+        Uri.parse('http://192.168.254.7:49152/control/avtransport'),
+      );
+      expect(
+        device.renderingControl?.controlUrl,
+        Uri.parse('http://192.168.254.7:49152/control/rendering'),
+      );
+      expect(
+        device.connectionManager?.controlUrl,
+        Uri.parse('http://192.168.254.7:49152/control/connection'),
+      );
+      expect(logs.single, contains('source=manual-url'));
+      expect(
+        logs.single,
+        contains(r'sourceInterface="Ethernet (192.168.16.170)"'),
+      );
+      expect(logs.single, contains(r'friendlyName="纯K-K08"'));
+      expect(logs.single, contains(r'udn="uuid:pure-k-k08"'));
+      expect(
+        logs.single,
+        contains(
+          r'avTransport="http://192.168.254.7:49152/control/avtransport"',
+        ),
+      );
+    });
+
+    test('uses directed SSDP for a bare renderer IP', () async {
+      final logs = <String>[];
+      final service = DlnaDiscoveryService(
+        localInterfaceResolver: () async => const LanAddressCandidate(
+          interfaceName: 'Wi-Fi',
+          address: '192.168.16.170',
+        ),
+        unicastSearch: (target, localAddress, responseWindow) async {
+          expect(target.address, '192.168.254.7');
+          expect(localAddress, '192.168.16.170');
+          expect(responseWindow, const Duration(milliseconds: 25));
+          return [
+            DlnaSsdpResponse(
+              location: Uri.parse(
+                'http://192.168.254.7:49152/description.xml',
+              ),
+              usn: 'uuid:pure-k-k08::upnp:rootdevice',
+            ),
+          ];
+        },
+        descriptionLoader: (_, __) async => _pureKDescriptionWithoutUdn,
+        logger: logs.add,
+      );
+
+      final device = await service.resolveManualRenderer(
+        '192.168.254.7',
+        responseWindow: const Duration(milliseconds: 25),
+      );
+
+      expect(device.udn, 'uuid:pure-k-k08');
+      expect(logs.single, contains('source=ssdp-unicast'));
+    });
+
+    test('asks for a full URL when directed SSDP has no response', () async {
+      final service = DlnaDiscoveryService(
+        localInterfaceResolver: () async => const LanAddressCandidate(
+          interfaceName: 'Ethernet',
+          address: '192.168.16.170',
+        ),
+        unicastSearch: (_, __, ___) async => const [],
+        descriptionLoader: (_, __) =>
+            throw StateError('description must not be fetched'),
+        logger: (_) {},
+      );
+
+      await expectLater(
+        service.resolveManualRenderer('192.168.254.7'),
+        throwsA(
+          isA<DlnaDiscoveryException>().having(
+            (error) => error.message,
+            'message',
+            contains('完整 description URL'),
+          ),
+        ),
+      );
+    });
+
+    test('deduplicates by UDN before falling back to URL and IP', () {
+      final automatic = _device(
+        location: 'http://192.168.31.214/device.xml',
+        udn: 'uuid:renderer',
+      );
+      final manual = _device(
+        location: 'http://192.168.254.7:49152/description.xml',
+        udn: 'UUID:RENDERER',
+      );
+      final merged = DlnaDiscoveryService.deduplicateDevices([
+        automatic,
+        manual,
+      ]);
+
+      expect(merged, hasLength(1));
+      expect(merged.single.location, manual.location);
+
+      final distinctUdns = DlnaDiscoveryService.deduplicateDevices([
+        _device(location: 'http://192.168.1.20/a.xml', udn: 'uuid:a'),
+        _device(location: 'http://192.168.1.20/b.xml', udn: 'uuid:b'),
+      ]);
+      expect(distinctUdns, hasLength(2));
+
+      final sameUrlWithoutUdn = DlnaDiscoveryService.deduplicateDevices([
+        _device(location: 'http://192.168.1.30/device.xml', udn: ''),
+        _device(location: 'http://192.168.1.30/device.xml', udn: ''),
+      ]);
+      expect(sameUrlWithoutUdn, hasLength(1));
+
+      final sameIpWithoutUdn = DlnaDiscoveryService.deduplicateDevices([
+        _device(location: 'http://192.168.1.40:8000/a.xml', udn: ''),
+        _device(location: 'http://192.168.1.40:9000/b.xml', udn: ''),
+      ]);
+      expect(sameIpWithoutUdn, hasLength(1));
     });
   });
 
@@ -172,6 +335,44 @@ void main() {
   });
 
   group('CastService state machine', () {
+    test('manual renderer joins the normal list and Cast control path',
+        () async {
+      final automatic = _device(
+        location: 'http://192.168.31.214/device.xml',
+        udn: 'uuid:renderer',
+      );
+      final manual = _device(
+        location: 'http://192.168.254.7:49152/description.xml',
+        udn: 'uuid:renderer',
+      );
+      final discovery = _FakeDiscoveryService(
+        [automatic],
+        manualResult: manual,
+      );
+      final control = _FakeControlPoint();
+      final show = _FakeShowService();
+      final service = CastService(
+        discoveryService: discovery,
+        controlPoint: control,
+      );
+      addTearDown(service.dispose);
+
+      await service.enableCastMode();
+      final added = await service.addManualRenderer(
+        'http://192.168.254.7:49152/description.xml',
+      );
+      expect(added, same(manual));
+      expect(service.devices, [manual]);
+
+      await service.refreshDevices();
+      expect(service.devices, [manual]);
+
+      await service.connectToDevice(service.devices.single, show);
+      expect(service.isCasting, isTrue);
+      expect(control.lastDevice, same(manual));
+      expect(show.startCalls, 1);
+    });
+
     test('connects and disconnects without disabling wireless mode', () async {
       final device = _device();
       final discovery = _FakeDiscoveryService([device]);
@@ -356,13 +557,17 @@ class _FakeNativeWindowService extends NativeWindowService {
   Future<List<Map<String, Object?>>> getDisplays() async => displays;
 }
 
-DlnaDevice _device() {
+DlnaDevice _device({
+  String location = 'http://192.168.31.214/device.xml',
+  String udn = 'uuid:renderer',
+}) {
   return DlnaDevice(
-    id: 'uuid:renderer',
+    id: udn.isEmpty ? location : udn,
+    udn: udn,
     friendlyName: '测试电视',
     manufacturer: 'Example',
     modelName: 'Renderer',
-    location: Uri.parse('http://192.168.31.214/device.xml'),
+    location: Uri.parse(location),
     localAddress: '192.168.31.99',
     avTransport: DlnaServiceEndpoint(
       serviceType: 'urn:schemas-upnp-org:service:AVTransport:1',
@@ -372,9 +577,10 @@ DlnaDevice _device() {
 }
 
 class _FakeDiscoveryService extends DlnaDiscoveryService {
-  _FakeDiscoveryService(this.result);
+  _FakeDiscoveryService(this.result, {this.manualResult});
 
   final List<DlnaDevice> result;
+  final DlnaDevice? manualResult;
 
   @override
   Future<List<DlnaDevice>> discover({
@@ -382,11 +588,24 @@ class _FakeDiscoveryService extends DlnaDiscoveryService {
   }) async {
     return result;
   }
+
+  @override
+  Future<DlnaDevice> resolveManualRenderer(
+    String input, {
+    Duration responseWindow = const Duration(milliseconds: 1800),
+  }) async {
+    final result = manualResult;
+    if (result == null) {
+      throw StateError('No manual renderer configured for this test');
+    }
+    return result;
+  }
 }
 
 class _FakeControlPoint extends DlnaControlPoint {
   Completer<void>? connectGate;
   Object? connectError;
+  DlnaDevice? lastDevice;
   Uri? lastStreamUri;
   int stopCalls = 0;
   final List<DlnaTransportState> transportStates = [];
@@ -398,6 +617,7 @@ class _FakeControlPoint extends DlnaControlPoint {
     Uri streamUri, {
     String title = 'Kira Karaoke',
   }) async {
+    lastDevice = device;
     lastStreamUri = streamUri;
     final error = connectError;
     if (error != null) throw error;
@@ -441,3 +661,48 @@ class _FakeShowService extends KirakaraShowService {
     stopCalls++;
   }
 }
+
+const _pureKDescription = '''
+<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>
+    <friendlyName>纯K-K08</friendlyName>
+    <manufacturer>dolphinstar</manufacturer>
+    <modelName>Myou Media Renderer</modelName>
+    <UDN>uuid:pure-k-k08</UDN>
+    <serviceList>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+        <controlURL>/control/avtransport</controlURL>
+      </service>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType>
+        <controlURL>/control/rendering</controlURL>
+      </service>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
+        <controlURL>/control/connection</controlURL>
+      </service>
+    </serviceList>
+  </device>
+</root>
+''';
+
+const _pureKDescriptionWithoutUdn = '''
+<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>
+    <friendlyName>纯K-K08</friendlyName>
+    <manufacturer>dolphinstar</manufacturer>
+    <modelName>Myou Media Renderer</modelName>
+    <serviceList>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+        <controlURL>/control/avtransport</controlURL>
+      </service>
+    </serviceList>
+  </device>
+</root>
+''';

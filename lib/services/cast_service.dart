@@ -42,6 +42,7 @@ class CastService extends ChangeNotifier {
   bool _isDiscovering = false;
   CastState _state = CastState.idle;
   List<DlnaDevice> _devices = const [];
+  List<DlnaDevice> _manualDevices = const [];
   DlnaDevice? _activeDevice;
   String? _targetName;
   KirakaraShowService? _activeShowService;
@@ -68,6 +69,7 @@ class CastService extends ChangeNotifier {
     if (!_isEnabled) {
       _isEnabled = true;
       _lastError = null;
+      _devices = DlnaDiscoveryService.deduplicateDevices(_manualDevices);
       notifyListeners();
     }
     await refreshDevices();
@@ -93,16 +95,42 @@ class CastService extends ChangeNotifier {
     try {
       final devices = await _discoveryService.discover();
       if (!_isEnabled || generation != _discoveryGeneration) return;
-      _devices = devices;
+      _devices = DlnaDiscoveryService.deduplicateDevices([
+        ...devices,
+        ..._manualDevices,
+      ]);
     } catch (error) {
       if (!_isEnabled || generation != _discoveryGeneration) return;
-      _devices = const [];
+      _devices = DlnaDiscoveryService.deduplicateDevices(_manualDevices);
       _lastError = error.toString();
     } finally {
       if (_isEnabled && generation == _discoveryGeneration) {
         _isDiscovering = false;
         notifyListeners();
       }
+    }
+  }
+
+  Future<DlnaDevice> addManualRenderer(String address) async {
+    _isEnabled = true;
+    _lastError = null;
+    notifyListeners();
+    try {
+      final device = await _discoveryService.resolveManualRenderer(address);
+      _manualDevices = DlnaDiscoveryService.deduplicateDevices([
+        ..._manualDevices,
+        device,
+      ]);
+      _devices = DlnaDiscoveryService.deduplicateDevices([
+        ..._devices,
+        ..._manualDevices,
+      ]);
+      notifyListeners();
+      return device;
+    } catch (error) {
+      _lastError = error.toString();
+      notifyListeners();
+      rethrow;
     }
   }
 
