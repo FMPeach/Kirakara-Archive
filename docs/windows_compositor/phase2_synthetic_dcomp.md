@@ -201,18 +201,28 @@ Set-Location 'D:\Kirakara-App-ascii'
 .\tool\windows_compositor\run_synthetic_compositor_probe.ps1 `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
-  -LocalEngine host_debug_kirakara_v2 `
+  -LocalEngine host_debug_kirakara_v4 `
   -TimeoutSeconds 45 `
   -SkipBuild
 ```
 
 自动报告必须 `passed: true`。随后保持窗口打开做人工检查：
 
+`-SkipBuild` 不再只核对 custom Engine DLL。首次不带该参数构建 synthetic 入口时，脚本会
+在忽略的 Debug bundle 内写入目标与 EXE、Engine DLL、ICU、`kernel_blob.bin` 的身份指纹；
+缺失、损坏或被普通 `lib/main.dart` Debug 构建覆盖的 bundle 会在创建进程前明确拒绝，
+避免把 Kirakara 主程序误当作 synthetic probe。
+
+2026-09-29 实测覆盖了四条路径：缺失 stamp 被拒绝；正确 synthetic bundle 复用并通过；
+随后普通 `lib/main.dart` 构建被按 `kernel_blob.bin` 不匹配拒绝；可解析但缺字段的 stamp 被按
+`schemaVersion` 不匹配拒绝。三条负向路径的 Kirakara 进程集合均未增加，恢复正确 stamp
+后的 `-SkipBuild` 再次通过。
+
 ```powershell
 .\tool\windows_compositor\run_synthetic_compositor_probe.ps1 `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
-  -LocalEngine host_debug_kirakara_v2 `
+  -LocalEngine host_debug_kirakara_v4 `
   -SkipBuild `
   -KeepOpen
 ```
@@ -224,7 +234,7 @@ Set-Location 'D:\Kirakara-App-ascii'
 .\tool\windows_compositor\run_synthetic_compositor_probe.ps1 `
   -FlutterSdkRoot 'D:\Program Files\Flutter' `
   -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
-  -LocalEngine host_debug_kirakara_v2 `
+  -LocalEngine host_debug_kirakara_v4 `
   -ExpectedScalePercent 125 `
   -SkipBuild
 ```

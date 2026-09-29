@@ -485,11 +485,15 @@ Dart entry point and records counter gates:
   -TimeoutSeconds 45
 ```
 
-After a successful build, a repeat can use `-SkipBuild`. The target display
-must be awake and the window visible: Windows returns
-`STATUS_GRAPHICS_PRESENT_OCCLUDED` from the compositor clock when the display
-is off, and the probe deliberately reports that as a failed runtime gate rather
-than hiding it with a timer or busy loop. The probe also performs one bounded
+After a successful build, a repeat can use `-SkipBuild`. The script writes an
+ignored bundle-identity stamp containing the synthetic Dart target plus hashes
+for the executable, Engine DLL, ICU data and `kernel_blob.bin`. A missing,
+malformed or stale stamp is rejected before process creation, so a later normal
+`lib/main.dart` Debug build cannot silently launch the Kirakara App in place of
+the probe. The target display must be awake and the window visible: Windows
+returns `STATUS_GRAPHICS_PRESENT_OCCLUDED` from the compositor clock when the
+display is off, and the probe deliberately reports that as a failed runtime
+gate rather than hiding it with a timer or busy loop. The probe also performs one bounded
 window contraction and restore, requiring two successful in-place swapchain
 resizes while the top-level HWND and single DComp visual tree remain unchanged.
 It also opens and closes the test overlay and independent Flutter page, proving

@@ -252,6 +252,12 @@ analysis server 以退出码 255 拒绝截断 JSON；这是官方 Flutter 3.44.4
 没有借机修改该业务断言。并行执行 analyze/test 时曾令一个资源抢占时序测试额外失败，
 该用例单独及串行全套复跑均通过，未作为稳定回归记录。
 
+仓库所有者随后明确该中文路径属于当前机器的特殊条件，不要求继续扩展 stock Flutter 的
+兼容范围。已有 wrapper/custom Engine 的 Unicode 修复与测试继续保留；stock
+`flutter analyze` 的工具缺陷只作信息记录，不作为 Phase 8 或发布退出条件。当前全套回归
+因新增 LAN smoke 和 4 项 compositor-clock cadence 单测增至 102 通过、仍只有同一个
+`qn=6` 既有失败。
+
 开发态验证产生的 DLL/PDB、Engine 源码、缓存和 ready stamp 都留在 `.kfe` 或忽略的
 App build 目录，不进入普通 Git。提交前还会检查 Git tracked 文件集和源码包排除规则。
 

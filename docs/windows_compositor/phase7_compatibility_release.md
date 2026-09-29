@@ -90,12 +90,13 @@ schema v4 烟测只给它启动的子进程设置 `KIRAKARA_SMOKE_LAN_LOOPBACK=1
 探测到的 LAN 地址，点歌语义没有改变。脚本还在启动前和退出后的有限 750 ms 等待后读取
 `FirewallNotificationDialogServer` PID 集合，并对比精确 executable path 对应的防火墙
 application-rule ID；任何新增提示或规则都会使报告和发布门禁失败。脚本不会关闭既有或
-新增安全窗口，也不会添加、删除、启用或禁用防火墙规则、profile 或策略。进程门禁的
-schema v3 原型已确认 custom Debug/Release 均正常退出且未新增提示；schema v4 必须在新
-Portable/Installer 路径再次通过，才可作为最终证据。
+新增安全窗口，也不会添加、删除、启用或禁用防火墙规则、profile 或策略。schema v4 已在
+普通 bundle、全新解压路径及最终 Portable/Installer 路径通过：每次均正常退出、没有强制
+清理，提示与规则增量都为 0。系统三个防火墙 profile 在验证时保持启用。
 
-提交前 Flutter 回归没有新增 compositor/clipboard 问题：`flutter analyze` 为 68 条
-仓库既有 info、0 warning、0 error；完整 `flutter test` 为 98 通过、1 个既有失败。
+提交前 Flutter 回归没有新增 compositor/clipboard 问题：锁定 SDK 的
+`dart analyze lib test tool` 为 68 条仓库既有 info、0 warning、0 error；完整
+`flutter test` 在新增 4 项 cadence 单测后为 102 通过、1 个既有失败。
 唯一失败仍是 `bilibili_resolver_test.dart` 期待已经从实际质量列表移除的 `qn=6`，与
 本阶段 Windows 脚本、Engine 锁和发布包无关，未在此提交中顺手修改业务断言。
 
@@ -182,16 +183,34 @@ Portable 与 Installer 两次启动都必须使用仅对子进程生效的 loopb
 PDB 只存在于 Engine 输出和单独的 Engine Release 资产，并由候选契约记录大小和
 SHA-256。DLL、PDB、ZIP 和 Engine 源码都不进入普通 Git 历史。
 
-2026-09-29 的仓库本地完整门禁位于
-`build/diagnostics/release-show-gate-final-clean-a-20260929/`，重复性对照位于
-`release-show-gate-final-clean-b-20260929/`：release index schema 3、四个归档逐项 SHA-256
-一致，Portable/Installer 的 `lockedArtifactGate=true`，启动/正常退出/安装/卸载全部
-通过；Show SHA-256 为
-`1CA811AE12B508903426F89F8A3B7E4B84261C9DEC4538173519F8E465E35519`。四个 ZIP
-的条目名隐私扫描为零命中，补丁源码包包含 wrapper、release contract 与 Show ABI
-校验器，以及 compositor/clipboard 的采集、素材生成和探针工具；生成媒体、报告与缓存
-保持排除。Engine 包包含候选契约规定的 10 个产物和独立 manifest。使用历史 Show DLL
-的负向打包在创建输出目录前因缺少版本化导出而明确拒绝。
+防火墙隔离前的仓库本地门禁仍保留在
+`build/diagnostics/release-show-gate-final-clean-a-20260929/`，但不再作为最新候选。schema v4
+完整门禁位于 `build/diagnostics/release-firewall-schema4-a-20260929/`，重复性对照位于
+`release-firewall-schema4-b-20260929/`：源码提交为
+`1ea696f02be313f6f350ac1ba5d3ef4b5a688a65` 且 `sourceDirty=false`，release index schema 3，
+Portable/Installer 两份运行报告均为 smoke schema 4、`lockedArtifactGate=true`、正常退出、
+无强制清理、无新增安全提示、无新增 application rule，安装和卸载也通过。门禁前只读清单
+中已有 64 条历史 Kirakara 临时路径规则；脚本没有删除它们，完整门禁后总数仍为 64。
+
+A/B 四个归档的大小和 SHA-256 逐项一致：
+
+| 归档 | 字节 | SHA-256 |
+| --- | ---: | --- |
+| Portable | 83,105,072 | `596FEB13F840F665A245395500A36ED8DDBF82C10256C50F60B8A8D34525B556` |
+| Installer | 83,111,591 | `E8968DF950800965342EBC15E8E10E8CCD95D1C16F93AB9D457B01AE1A3D7B9F` |
+| Patch source | 275,910 | `0F16C32FD297D68B51E0B58BF3BD122C271B29CD0228BACDB55F6745D60F6DD4` |
+| Engine artifacts | 95,488,256 | `EE9F25543AD1C8AC22355952585890AC81081E6623C6B211DCA25976BCFC51E3` |
+
+Show SHA-256 仍为
+`1CA811AE12B508903426F89F8A3B7E4B84261C9DEC4538173519F8E465E35519`。四个 ZIP 的条目名
+隐私扫描为零命中，补丁源码包包含 wrapper、release contract、Show ABI 校验器及
+compositor/clipboard 工具；生成媒体、报告与缓存保持排除。Engine 包包含候选契约规定的
+10 个产物和独立 manifest。使用历史 Show DLL 的负向打包仍会在创建输出目录前明确拒绝。
+
+schema v4 前的一次预检在旧 Windows 安全窗口尚未处理时捕获到 Portable 正常关闭超时，
+门禁按设计强制清理并判失败；这份失败不计入候选。相同归档在安全窗口处理后连续三次正常
+退出，最终 A 的 Portable/Installer 也都正常退出。该相关性不冒充已证明的根因，负报告继续
+保留，后续稳定性测试仍把退出超时作为硬失败而不是自动重试掩盖。
 
 当前安装包是未签名的本地门禁产物。没有所有者签名证书时，脚本不会生成或信任一个
 伪装成生产身份的自签名证书，也不会修改系统信任存储。
@@ -337,18 +356,28 @@ callback/acquire/present、inactive 停止唤醒和重建结果。然后运行 s
 `-SoakSeconds` 只接受 `30..14400`，并与人工观察用的 `-KeepOpen` 互斥。脚本仅在子进程
 存活期间调用线程级 `SetThreadExecutionState` 防止系统和显示器进入空闲休眠，退出或失败
 都会恢复，不修改电源计划，也不需要 UAC。Dart harness 只做冷机、半程和终点三次采样，
-中间是两次有限 `Future.delayed`，没有轮询或常驻 timer。两段和全程都必须维持 45～75 Hz
-的 Stage cadence、wait wake 与 present 差值不超过 3、静止 Flutter present 增量不超过 3；
-HWND/尺寸/Visual Tree 不变，device removal、occluded、handle/resource failure 与所有关键
-HRESULT 必须保持健康。RSS 三点只作为趋势数据，不用单个阈值掩盖泄漏调查。
+中间是两次有限 `Future.delayed`，没有轮询或常驻 timer。synthetic producer 跟随 DComp
+compositor clock，并不承诺固定 60 Hz；harness 先合并两段真实静止样本建立 30～360 Hz
+范围内的参考时钟，再要求两半和全程保持在参考值的 ±10%（至少 5 Hz）内。wait wake 与
+present 差值不超过 3、静止 Flutter present 增量不超过 3；HWND/尺寸/Visual Tree 不变，
+device removal、occluded、handle/resource failure 与所有关键 HRESULT 必须保持健康。RSS
+三点只作为趋势数据，不用单个阈值掩盖泄漏调查。这只修正测试判据，不改变真实 Show 的
+独立约 60 fps 生产时钟。
 
 窗口必须真实可见且不被系统安全桌面或其他窗口完全遮挡；`0xc01e0006`
 （`STATUS_GRAPHICS_PRESENT_OCCLUDED`）会明确失败，不能作为热态通过。2026-09-29 当前主机的
-30 秒负例在前台 `PickerHost / Windows 安全中心` 存在时正确失败，并写出 0/15/30 秒三点，
-因此只验证了失败门禁和报告结构，没有计入 RTX 4060 Ti 稳态通过。只读追查已确认这些
-窗口来自旧版发布烟测触发的防火墙授权；修正后的 smoke 不再产生新实例，但现有系统安全
-窗口必须由用户自行处理，自动化不得替用户批准或关闭。待交互桌面恢复后需先用 30 秒样本
-通过，再运行完整 1800 秒；Iris Xe 目标机仍必须另跑，不能由本机替代。
+30 秒负例在前台 `PickerHost / Windows 安全中心` 存在时正确失败，并写出 0/15/30 秒三点。
+只读追查确认这些窗口来自旧版发布烟测触发的防火墙授权；修正后的 smoke 不再产生新实例，
+现有安全窗口由用户处理，自动化没有替用户批准或关闭。桌面恢复后的正确 synthetic 30 秒
+样本 `synthetic-compositor-soak-30s-measured-clock-20260929.json` 已通过：参考 140.680 Hz，
+前后半程为 138.924 / 138.448 Hz，Stage present/wake 都推进 4161，Flutter present 增量 0，
+RSS 增量 65,536 字节，全部 HRESULT、拓扑、遮挡及 device-removal 门为真。随后完整样本
+`synthetic-compositor-soak-1800s-measured-clock-20260929.json` 也通过：实测参考 139.430 Hz，
+前后 900 秒为 137.362 / 137.475 Hz，全程 137.419 Hz；Stage present/wake 都推进 247,354，
+Flutter present 只在前半增加 1、后半增加 0；RSS 从 272,994,304 降到 270,983,168 字节，
+差值 -2,011,136。所有 HRESULT、device removal、occlusion、handle/resource failure、HWND、
+尺寸和 Visual Tree 门都保持健康。该样本证明当前桌面的有界稳态，不替代 Iris Xe 目标机、
+真实 Show/物理 Stage/Cast、温度/功耗或视觉卡顿实测。
 
 有界门禁通过后，可再用 synthetic `-KeepOpen` 做人工视觉观察；同时按实际业务方式播放
 真实节目、物理 Stage/Cast 时另做一轮。冷机、15 分钟和 30 分钟各记录分辨率/刷新率、

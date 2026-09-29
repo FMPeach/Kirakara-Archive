@@ -146,17 +146,23 @@
   `docs/windows_compositor/phase8_repository_bootstrap.md`。
 - Phase 7 长稳态门禁新增 `-SoakSeconds` 有界模式：只在起点、半程和终点采样，使用两次
   有限等待而非轮询/timer，并检查两段及全程 Stage cadence、Flutter 静止、事件唤醒、
-  HWND/Visual Tree、HRESULT、device removal、occluded 和资源失败计数。脚本仅在子进程
-  期间临时阻止空闲休眠。2026-09-29 当前主机因前台 `PickerHost / Windows 安全中心`
-  令 DComp 从首帧返回 `STATUS_GRAPHICS_PRESENT_OCCLUDED`，30 秒负例按预期失败并留下
-  0/15/30 秒报告；这验证失败门禁，不算热态通过。桌面恢复后的 30 秒校准、RTX 4060 Ti
-  1800 秒样本及 Iris Xe 实机仍待执行。
+  HWND/Visual Tree、HRESULT、device removal、occluded 和资源失败计数。synthetic producer
+  跟随 DComp 时钟，所以门禁先用两段静止样本建立 30～360 Hz 的实测参考，再要求两半和
+  全程保持 ±10%（至少 5 Hz），不再错误假设固定 60 Hz；真实 Show 生产时钟没有改动。
+  前台安全窗口导致的 30 秒 occluded 负例仍保留。桌面恢复后的正确 synthetic 30 秒样本
+  已通过：参考 140.680 Hz、两半 138.924 / 138.448 Hz，Stage present/wake 都为 4161，
+  Flutter present 增量 0，全部运行门为真。随后 1800 秒完整样本也通过：参考 139.430 Hz、
+  两半 137.362 / 137.475 Hz、全程 137.419 Hz，Stage present/wake 都为 247,354，Flutter
+  present 增量为 1（后半为 0），RSS 差值 -2,011,136 字节，全部运行门为真。DComp 频率
+  不凭枚举列表硬归因到某一 GPU/输出；Iris Xe、真实 Show/物理 Stage/Cast 与热数据仍需
+  目标机实测。
 - 只读进程追查确认当前 9 个 `PickerHost / Windows 安全中心` 实例均为旧版发布烟测触发的
   `FirewallNotificationDialogServer`，而不是 compositor 崩溃。Phase 7 的 GUI smoke 已升级
   为 schema v4：仅对测试子进程把 LAN 点歌服务绑定到 loopback，普通 App 仍保持全部 IPv4
   接口；烟测前后审计安全提示 PID 和精确 executable path 的 application-rule ID，任何新增
-  提示或规则都令门禁失败，不自动操作安全窗口或修改防火墙。schema v3 原型的 custom
-  Debug/Release 实测均正常退出且未新增提示；v4 仍须用新 Portable/Installer 路径闭环。
+  提示或规则都令门禁失败，不自动操作安全窗口或修改防火墙。schema v4 的 bundle、全新
+  解压、Portable 与 Installer 门禁均已正常退出，提示/规则增量为 0；历史 64 条规则保持
+  原样，没有由脚本删除或修改。
 
 ## 为什么要做这件事
 
@@ -644,9 +650,9 @@ settings、会话数据库和日志；解包运行、逐文件哈希校验、隔
 发布烟测随后升级为 schema v4：仅测试子进程使用 loopback LAN 绑定，避免新路径的
 Portable/Installer 为生产 LAN 监听触发 Windows Firewall 授权；普通 App 默认监听语义不变。
 脚本对比启动前后 `FirewallNotificationDialogServer` PID 和当前 executable path 的规则 ID，
-新增安全提示或规则都是硬失败，不会被自动关闭或用防火墙配置掩盖。schema v3 原型的
-custom Debug/Release 已确认无新增提示；完整发布候选仍须经过 Portable 与 Installer 两次
-schema v4 门禁。
+新增安全提示或规则都是硬失败，不会被自动关闭或用防火墙配置掩盖。提交 `1ea696f` 的
+完整 Portable/Installer schema v4 门禁已通过：正常退出、没有强制清理，提示和规则增量均
+为 0；A/B 四归档 SHA-256 逐项一致且 `sourceDirty=false`。
 
 当前主机仍只证明 Windows 11 23H2 / RTX 4060 Ti 活动路径。UHD 770 和虚拟 4K 设备
 虽然能枚举，但没有作为真实 Stage 呈现目标，不能算 Intel/4K 通过。Windows 10、AMD、
@@ -813,6 +819,10 @@ ABI/patchset version、GN 参数、目标架构、构建模式、MSVC/Windows SD
 `flutter analyze` 在中文 workspace URI 上存在 LSP `Content-Length` 字符数/字节数缺陷；
 直接 `dart analyze` 通过，且 Phase 8 规定的三个 Windows 自举入口不受影响。本计划不通过
 修改官方 SDK 或创建路径 alias 掩盖该独立工具问题。
+
+仓库所有者已明确把中文路径视为当前机器的特殊环境，不要求继续扩展 stock Flutter 的路径
+兼容工作。已有 custom Engine/wrapper 的 Unicode 修复与真实路径证据保留，但 stock
+`flutter analyze` 的上述工具缺陷只作为信息记录，不列为 Phase 8 或发布阻塞项。
 
 Phase 7 之后新增的发布闭环也已在本机验证：仓库内 Release 候选从真实中文路径生成，
 当前 Show DLL 经过独立 ABI gate 后进入 bundle，Portable 与当前用户安装包都以严格候选
