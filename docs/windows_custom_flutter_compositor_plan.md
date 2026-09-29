@@ -128,8 +128,11 @@
   `D:\仓库\Kirakara-App`（无 junction/全局 alias）补齐 vpython、GN、Ninja、
   `shader_archiver` 和内嵌 Dart `gen_snapshot` 的 Unicode 边界：锁定源码构建的 GN/Ninja
   通过 736/736 与 396/396 项测试，主仓库和依赖补丁可精确反向/重放，三模式 Engine、
-  App build 和 GUI smoke 全部重跑通过。真正独立的三种首次入口 clean-clone 排列及第二位
-  协作者复现尚未完成，因此 Phase 8 和总计划仍不能宣称全部完成。详见
+  App build 和 GUI smoke 全部重跑通过。随后在当前主机的三份独立 clean clone 上，分别以
+  首次 debug `run`、首次 `pub get` 和首次默认 release `build windows` 完成冷自举、实际
+  DLL 加载、ABI、二次廉价复用、隔离与清理边界门禁；该过程还修复了全新 vpython 缓存、
+  PowerShell 短参数 `-d` 和 Engine 工具链环境泄漏三个只在干净入口暴露的问题。第二位
+  协作者复现仍未完成，因此 Phase 8 和总计划仍不能宣称全部完成。详见
   `docs/windows_compositor/phase8_repository_bootstrap.md`。
 
 ## 为什么要做这件事
@@ -765,12 +768,15 @@ ABI/patchset version、GN 参数、目标架构、构建模式、MSVC/Windows SD
 
 当前退出条件判定（2026-09-29）：当前主机能够执行的实现、真实中文路径三模式构建、
 运行门禁、二次复用、故障恢复、并发、隔离、清理边界和聚焦 Unicode 工具测试均已通过。
-三种“第一次命令”仍需分别在真正独立的 clean clone 中执行，且至少一轮必须由第二位
-协作者完成；共享现有 `.kfe` 的排列测试不能替代该证据。因此 Phase 8 保持未完全完成，
-其独立复现完成前 Phase 7 的协作者门槛和总计划也保持未完成。另已确认 stock Flutter
-3.44.4 的 `flutter analyze` 在中文 workspace URI 上存在 LSP `Content-Length` 字符数/字节数
-缺陷；直接 `dart analyze` 通过，且 Phase 8 规定的三个 Windows 自举入口不受影响。本计划
-不通过修改官方 SDK 或创建路径 alias 掩盖该独立工具问题。
+三种“第一次命令”也已分别在三份真正独立的 clean clone 中完成：首次 debug `run`、首次
+`pub get` 和首次默认 release `build windows` 都从空 `.kfe` 冷自举成功，实际加载的 DLL
+与各自 ready stamp 一致，ABI 2 / patchset 4 / Engine revision 门禁通过；相同命令第二次
+没有 fetch、sync、GN、Ninja 或 Engine build。至少一轮仍必须由第二位协作者从 clean clone
+复现，同一主机的三份证据不能替代该门槛。因此 Phase 8 保持未完全完成，其协作者复现
+完成前 Phase 7 的协作者门槛和总计划也保持未完成。另已确认 stock Flutter 3.44.4 的
+`flutter analyze` 在中文 workspace URI 上存在 LSP `Content-Length` 字符数/字节数缺陷；
+直接 `dart analyze` 通过，且 Phase 8 规定的三个 Windows 自举入口不受影响。本计划不通过
+修改官方 SDK 或创建路径 alias 掩盖该独立工具问题。
 
 ## 必要的可观测能力
 

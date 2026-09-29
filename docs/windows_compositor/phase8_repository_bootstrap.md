@@ -26,6 +26,18 @@ stock tree 并重新得到锁定 patched tree。
 计划要求的第二位协作者从全新 clone 独立复现；后者仍同时是 Phase 7 和 Phase 8 未完成
 的发布门槛。
 
+在此基础上，当前主机又从同一提交 `d708cf7` 建立三份互不共享 `.kfe` 的真正 clean
+clone，分别把 `flutterw run -d windows`、`flutterw pub get` 和未指定模式的
+`flutterw build windows` 作为第一次命令。三轮都完成源码获取、GN 736/736、Ninja
+396/396、目标 Engine 构建、ABI 门禁和 Flutter 子命令；需要运行证明的两轮均核对了
+Engine 输出、App bundle 与进程实际加载 DLL 的同一 SHA-256。相同命令第二次均未出现
+fetch、gclient sync、GN、Ninja 或 Engine build。clean clone 过程另外发现并修复了三个
+此前排列测试没有覆盖的问题：现代 depot_tools 的 uv-based vpython 空缓存初始化、
+PowerShell 把 Flutter 短参数 `-d` 误绑定为 common parameter，以及锁定 Engine 构建所用
+`VCToolsVersion` 泄漏到随后 App CMake 配置。最终三轮 App 均使用 Visual Studio 2026 /
+MSVC 14.51，`MSB8052` 计数为 0。当前主机的 clean-clone 门禁因此已经完成；第二位协作者
+复现仍是不能由同机自证替代的剩余发布门槛。
+
 ## 仓库入口与模式选择
 
 日常 Windows 开发只使用：
@@ -150,33 +162,56 @@ VS Code task 和 launch 示例调用相同的 `flutterw` 入口；Dart 调试器
 | debug/profile/release App build 与 GUI smoke | 三模式均加载对应 DLL、响应、正常关闭且退出码 0 |
 | 第二次命令不 fetch/sync/GN/Ninja | 通过；10.094 s / 9.830 s / 9.841 s |
 | `flutterw clean` 保留 `.kfe` | 通过；App build 被清除，三模式 stamp 与 DLL 哈希不变 |
+| 三份独立 clean clone 的第一次命令 | 通过；debug `run` / `pub get` / 默认 release `build windows` 均从空 `.kfe` 完成 |
+| clean clone 的实际运行 DLL 与 ABI | 通过；bundle/loaded/Engine SHA-256 一致，ABI 2、patchset 4、锁定 Engine revision |
+| clean clone 的 App 工具链隔离 | 通过；VS 2026 / MSVC 14.51，三轮 `MSB8052` 均为 0 |
+| clean clone 的第二次相同命令 | 通过；无 fetch/sync/GN/Ninja/Engine build，并复用各自 verified ready stamp |
 
 当前仓库本地开发 DLL（开发态 ready stamp 的实际哈希，不改写 Phase 7 release lock）：
 
 | 模式 | `flutter_windows.dll` SHA-256 | 大小 |
 | --- | --- | ---: |
-| debug | `D0E83C3A65BFFF719D097CF56478A07E1E711B8268D2A4336AE096D2DB7D28B4` | 45,583,872 |
-| profile | `9715A8C3AEABAE7BD65EFE13C2FD810969558AC0588309C9693B94BE9175427A` | 21,899,776 |
-| release | `BABA3B7BDE00465BFB46395863DF78924229EA34CC179F2DC89F67FC962F1A23` | 21,316,608 |
+| debug | `157E5D44A8952820F51CFC1DACF221020E87835E41FCFEBA249BCEB460CE95CB` | 45,583,872 |
+| profile | `92AC7EBF75B94772D20964B2621690B9E90F1BAF97268B72459CA80D7906FC99` | 21,899,776 |
+| release | `81341FC046001EFCCE04F6D2862FD94FD042661976E06A5383C3F7BF2F8F119E` | 21,316,608 |
+
+三份独立 clean clone 的最终证据：
+
+| 第一次入口 | 冷启动耗时 | 第二次耗时 | 实际 Engine / bundle / loaded DLL SHA-256 |
+| --- | ---: | ---: | --- |
+| `flutterw run -d windows` | 1412.220 s | 43.654 s（含运行检查；App build 9.3 s） | `75B7E0CA427C807B49CC9D9CD2BD9CD7C9290D2318FC30BA16C6D9803952A067` |
+| `flutterw pub get` | 1310.307 s | 14.403 s | `95EF78BE8635A81C3FDB463D8162256ABDE0640B10E3EB4BC3FF69541CC4808F`；随后 `run` 实际加载确认 |
+| `flutterw build windows` | 1353.412 s | 27.927 s（Flutter App build 15.9 s） | `DFDA92EB62138B6636B03F7237CB7447F85077834C8377B0BEBE96F4A5024308F`；Release 进程实际加载确认 |
+
+这些开发构建的 PE/PDB 和 `gen_snapshot` 不承诺跨次 bit-for-bit 一致，因此三轮 DLL 哈希
+彼此不同、也不同于 Phase 7 人工审核的 release lock；每轮都把自身实际产物写入 ready
+stamp，并在第二次入口和 bundle/load 边界复验，且没有自动改写 `engine.lock.json`。
+clean clone 使用 Windows 默认 CRLF checkout，主工作区保留 LF；指纹按工作树实际字节
+计算，所以两种 checkout 的指纹不同，但三份证据均记录同一 Git HEAD，不能据此跨工作区
+互换 ready stamp。
 
 关键报告：
 
-- `build/diagnostics/engine/project-bootstrap-tests-20260929-044234.json`；
+- `build/diagnostics/engine/project-bootstrap-tests-20260929-083752.json`；
 - `build/diagnostics/engine/flutterw-local-sdk-fallback-20260929-044316.json`；
 - `build/diagnostics/engine/flutterw-local-sdk-fallback-20260929-044440.json`；
 - `build/diagnostics/engine/project-engine-reuse-20260929-044304.json`；
-- `build/diagnostics/engine/project-app-bundles-20260929-044926.json`；
+- `build/diagnostics/engine/project-app-bundles-20260929-083630.json`；
 - `build/diagnostics/engine/flutterw-isolation-20260929-044318.json`；
 - `build/diagnostics/engine/flutterw-clean-boundary-20260929-043715.json`；
 - `build/diagnostics/engine/project-engine-unicode-paths-20260929-044327.json`；
-- `build/diagnostics/engine/app-smoke-local-patched-debug-20260929-044857.json`；
-- `build/diagnostics/engine/app-smoke-local-patched-profile-20260929-044121.json`；
-- `build/diagnostics/engine/app-smoke-local-patched-release-20260929-044142.json`；
+- `build/diagnostics/engine/app-smoke-local-patched-debug-20260929-083647.json`；
+- `build/diagnostics/engine/app-smoke-local-patched-profile-20260929-083708.json`；
+- `build/diagnostics/engine/app-smoke-local-patched-release-20260929-083729.json`；
 - `build/diagnostics/engine/patched-engine-tests-20260929-044547.json`；
 - `build/diagnostics/synthetic-compositor-20260929-044729.json`；
-- `.kfe/logs/verify-debug-20260929-042646-549bfaa0.json` 与对应 ABI 报告；
-- `.kfe/logs/verify-profile-20260929-042851-4f7ea9d4.json` 与对应 ABI 报告；
-- `.kfe/logs/verify-release-20260929-043055-ef449040.json` 与对应 ABI 报告。
+- `.kfe/logs/verify-debug-20260929-064833-44113229.json` 与对应 ABI 报告；
+- `.kfe/logs/verify-profile-20260929-083013-98db71f9.json` 与对应 ABI 报告；
+- `.kfe/logs/verify-release-20260929-083210-4d8e825b.json` 与对应 ABI 报告；
+- `build/diagnostics/engine/clean-clone-evidence/debug-run-final-summary.json`；
+- `build/diagnostics/engine/clean-clone-evidence/pub-get-final-summary.json`；
+- `build/diagnostics/engine/clean-clone-evidence/release-build-final-summary.json`；
+- `build/diagnostics/engine/clean-clone-evidence/debug-run-toolchain-restore-integration.json`。
 
 Engine 聚焦回归为 compositor API 6、剪贴板 19、关键调度 2、上游 compositor 25 和
 两个隔离 adapter 测试全部通过。synthetic 复验中 platform thread stall 750 ms 时
@@ -196,17 +231,17 @@ analysis server 以退出码 255 拒绝截断 JSON；这是官方 Flutter 3.44.4
 开发态验证产生的 DLL/PDB、Engine 源码、缓存和 ready stamp 都留在 `.kfe` 或忽略的
 App build 目录，不进入普通 Git。提交前还会检查 Git tracked 文件集和源码包排除规则。
 
-## 尚需独立验证
+## 尚需第二位协作者验证
 
-本机一次真实的源码获取、三模式构建和无系统 Flutter 的 `.kfe/sdk` 获取可以证明状态机
-和产物门禁，但不能冒充三份真正独立的 clean clone，也不能替代第二位协作者。因此
-仍需在另一份新 clone/另一位协作者环境分别记录以下首次入口：
+本机已在三份互不共享 `.kfe` 的 clean clone 中完成以下首次入口，但同一 Windows 主机、
+同一 VS/SDK 和同一网络环境不能替代独立协作者复现。因此仍需另一位协作者在新 clone 中
+至少完整执行一轮，并建议依次覆盖：
 
 1. `flutterw pub get` 作为第一次命令；
 2. `flutterw run -d windows` 作为第一次命令；
 3. `flutterw build windows` 作为第一次命令。
 
-每轮都应记录实际加载 DLL 的 SHA-256、ABI/patchset/Engine revision、第一次阶段输出、
-第二次廉价复用输出、仓库外环境/SDK/Git 配置前后差异以及清理边界。若共享同一
-`.kfe`，只能算入口排列回归，不能算三次 clean-clone 证据。第二位协作者复现完成前，
-Phase 7/8 和总计划仍不能宣称完全结束。
+协作者应记录实际加载 DLL 的 SHA-256、ABI/patchset/Engine revision、第一次阶段输出、
+第二次廉价复用输出、仓库外环境/SDK/Git 配置前后差异以及清理边界。若共享已有 `.kfe`，
+只能算入口排列回归，不能算独立复现。第二位协作者复现完成前，Phase 7/8 和总计划仍
+不能宣称完全结束。

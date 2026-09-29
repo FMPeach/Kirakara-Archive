@@ -565,7 +565,11 @@ a retry is pending.
 - Keep stock and patched build configurations available together.
 - Switch source variants only with `apply_patches.ps1`; it refuses to reverse a
   tree containing edits beyond the locked patchset.
-- A revision, patch hash or artifact hash mismatch is a hard error. Do not
-  continue by silently accepting a different binary.
+- A revision, patch hash, ready-stamp artifact hash, or reviewed release-candidate
+  artifact hash mismatch is a hard error. A fresh development build may differ
+  from the Phase 7 release lock because Windows PE/PDB outputs are not
+  bit-for-bit reproducible; it must capture a new verification report and ready
+  stamp, pass the ABI/export/source/toolchain gates, and must never silently
+  relock `engine.lock.json`.
 - Proxy values are process-scoped inputs; they are not written to the lock or
   to application settings.
