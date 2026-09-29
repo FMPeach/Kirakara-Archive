@@ -85,12 +85,14 @@ SDK 中另一份不匹配产物掩盖本地 Engine 缺件。
 存在，还会遮挡 DirectComposition 稳态探针。只读进程清单确认遗留实例的创建时间与此前
 Portable/Installer 烟测一一对应；这不是 compositor device-loss 或计时器问题。
 
-schema v3 烟测只给它启动的子进程设置 `KIRAKARA_SMOKE_LAN_LOOPBACK=1`，由 App 将
+schema v4 烟测只给它启动的子进程设置 `KIRAKARA_SMOKE_LAN_LOOPBACK=1`，由 App 将
 `LanServer` 注入绑定到 `127.0.0.1`。普通启动不设置该变量，默认仍绑定 `0.0.0.0` 并公布
 探测到的 LAN 地址，点歌语义没有改变。脚本还在启动前和退出后的有限 750 ms 等待后读取
-`FirewallNotificationDialogServer` PID 集合；任何新增实例都会使报告和发布门禁失败。
-脚本不会关闭既有或新增安全窗口，也不会读取、添加或修改防火墙规则、profile 或策略。
-当前 custom Debug/Release 集成烟测均正常退出，前后 9 个既有 PID 完全一致，新增为 0。
+`FirewallNotificationDialogServer` PID 集合，并对比精确 executable path 对应的防火墙
+application-rule ID；任何新增提示或规则都会使报告和发布门禁失败。脚本不会关闭既有或
+新增安全窗口，也不会添加、删除、启用或禁用防火墙规则、profile 或策略。进程门禁的
+schema v3 原型已确认 custom Debug/Release 均正常退出且未新增提示；schema v4 必须在新
+Portable/Installer 路径再次通过，才可作为最终证据。
 
 提交前 Flutter 回归没有新增 compositor/clipboard 问题：`flutter analyze` 为 68 条
 仓库既有 info、0 warning、0 error；完整 `flutter test` 为 98 通过、1 个既有失败。
@@ -170,10 +172,11 @@ ZIP entry 按路径排序并使用固定时间戳。相同输入连续打包两�
 4. 用带产品标记与精确路径检查的卸载器删除该测试安装；
 5. 确认测试安装目录已经消失。
 
-Portable 与 Installer 两次启动都必须使用仅对子进程生效的 loopback 隔离，并在 schema v3
-报告中满足 `firewallPromptGatePassed=true`、`newFirewallNotifications=[]`。因此发布验证
-不会要求用户授权一个临时 executable path 的入站访问，也不会留下新的 Windows 安全
-提示；这项隔离不进入安装结果或普通 App 进程。
+Portable 与 Installer 两次启动都必须使用仅对子进程生效的 loopback 隔离，并在 schema v4
+报告中同时满足 `firewallPromptGatePassed=true`、`newFirewallNotifications=[]`、
+`firewallRuleGatePassed=true` 和 `newFirewallApplicationRules=[]`。因此发布验证不会要求
+用户授权一个临时 executable path 的入站访问，也不会留下新的 Windows 安全提示或规则；
+这项隔离不进入安装结果或普通 App 进程。
 
 `-SkipRuntimeSmoke` 只用于重复性对照，不能用于发布候选验收。运行包中不包含 PDB；
 PDB 只存在于 Engine 输出和单独的 Engine Release 资产，并由候选契约记录大小和

@@ -153,9 +153,10 @@
   1800 秒样本及 Iris Xe 实机仍待执行。
 - 只读进程追查确认当前 9 个 `PickerHost / Windows 安全中心` 实例均为旧版发布烟测触发的
   `FirewallNotificationDialogServer`，而不是 compositor 崩溃。Phase 7 的 GUI smoke 已升级
-  为 schema v3：仅对测试子进程把 LAN 点歌服务绑定到 loopback，普通 App 仍保持全部 IPv4
-  接口；烟测前后审计安全提示 PID，任何新增实例都令门禁失败，不自动操作安全窗口或修改
-  防火墙。custom Debug/Release 实测均正常退出，9 个既有 PID 前后不变且新增为 0。
+  为 schema v4：仅对测试子进程把 LAN 点歌服务绑定到 loopback，普通 App 仍保持全部 IPv4
+  接口；烟测前后审计安全提示 PID 和精确 executable path 的 application-rule ID，任何新增
+  提示或规则都令门禁失败，不自动操作安全窗口或修改防火墙。schema v3 原型的 custom
+  Debug/Release 实测均正常退出且未新增提示；v4 仍须用新 Portable/Installer 路径闭环。
 
 ## 为什么要做这件事
 
@@ -640,11 +641,12 @@ settings、会话数据库和日志；解包运行、逐文件哈希校验、隔
 同一输入连续两次生成的四份 ZIP 哈希逐项一致，PDB 只进入单独 Engine Release 资产，
 不进入运行包或普通 Git。
 
-发布烟测随后升级为 schema v3：仅测试子进程使用 loopback LAN 绑定，避免新路径的
+发布烟测随后升级为 schema v4：仅测试子进程使用 loopback LAN 绑定，避免新路径的
 Portable/Installer 为生产 LAN 监听触发 Windows Firewall 授权；普通 App 默认监听语义不变。
-脚本对比启动前后 `FirewallNotificationDialogServer` PID，新增安全提示是硬失败，不会被
-自动关闭或用防火墙规则掩盖。custom Debug/Release 当前实测前后 9 个既有 PID 完全一致，
-新增为 0；完整发布候选仍须经过 Portable 与 Installer 两次相同门禁。
+脚本对比启动前后 `FirewallNotificationDialogServer` PID 和当前 executable path 的规则 ID，
+新增安全提示或规则都是硬失败，不会被自动关闭或用防火墙配置掩盖。schema v3 原型的
+custom Debug/Release 已确认无新增提示；完整发布候选仍须经过 Portable 与 Installer 两次
+schema v4 门禁。
 
 当前主机仍只证明 Windows 11 23H2 / RTX 4060 Ti 活动路径。UHD 770 和虚拟 4K 设备
 虽然能枚举，但没有作为真实 Stage 呈现目标，不能算 Intel/4K 通过。Windows 10、AMD、

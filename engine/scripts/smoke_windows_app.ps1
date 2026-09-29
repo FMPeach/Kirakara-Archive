@@ -47,6 +47,22 @@ function Get-FirewallNotificationProcessIds {
   )
 }
 
+function Get-FirewallApplicationRuleIdsForExecutable {
+  param([Parameter(Mandatory = $true)][string]$ExecutablePath)
+
+  return @(
+    Get-NetFirewallApplicationFilter |
+      Where-Object {
+        [string]::Equals(
+          $_.Program,
+          $ExecutablePath,
+          [StringComparison]::OrdinalIgnoreCase)
+      } |
+      ForEach-Object { [string]$_.InstanceID } |
+      Sort-Object -Unique
+  )
+}
+
 if ($RequireLockedArtifacts -and $Engine -ne 'local') {
   throw '-RequireLockedArtifacts applies only to a local Release Engine.'
 }
@@ -179,6 +195,9 @@ $process.StartInfo.UseShellExecute = $false
 $process.StartInfo.CreateNoWindow = $false
 $process.StartInfo.EnvironmentVariables['KIRAKARA_SMOKE_LAN_LOOPBACK'] = '1'
 $firewallNotificationsBefore = @(Get-FirewallNotificationProcessIds)
+$firewallApplicationRulesBefore = @(
+  Get-FirewallApplicationRuleIdsForExecutable -ExecutablePath $executable
+)
 $startedAt = (Get-Date).ToUniversalTime()
 $inputIdle = $false
 $mainWindowHandle = 0
@@ -272,6 +291,14 @@ $newFirewallNotifications = @(
     Where-Object { $_ -notin $firewallNotificationsBefore }
 )
 $firewallPromptGatePassed = $newFirewallNotifications.Count -eq 0
+$firewallApplicationRulesAfter = @(
+  Get-FirewallApplicationRuleIdsForExecutable -ExecutablePath $executable
+)
+$newFirewallApplicationRules = @(
+  $firewallApplicationRulesAfter |
+    Where-Object { $_ -notin $firewallApplicationRulesBefore }
+)
+$firewallRuleGatePassed = $newFirewallApplicationRules.Count -eq 0
 
 $passed = (
   [string]::IsNullOrWhiteSpace($failure) -and
@@ -281,10 +308,11 @@ $passed = (
   -not $exitedDuringObservation -and
   $closeRequested -and
   ($gracefulExit -or ($forcedCleanup -and $AllowForcedCleanup)) -and
-  $firewallPromptGatePassed
+  $firewallPromptGatePassed -and
+  $firewallRuleGatePassed
 )
 $report = [ordered]@{
-  schemaVersion = 3
+  schemaVersion = 4
   generatedAt = (Get-Date).ToUniversalTime().ToString('o')
   startedAt = $startedAt.ToString('o')
   engine = $Engine
@@ -321,6 +349,10 @@ $report = [ordered]@{
   firewallNotificationsAfter = $firewallNotificationsAfter
   newFirewallNotifications = $newFirewallNotifications
   firewallPromptGatePassed = $firewallPromptGatePassed
+  firewallApplicationRulesBefore = $firewallApplicationRulesBefore
+  firewallApplicationRulesAfter = $firewallApplicationRulesAfter
+  newFirewallApplicationRules = $newFirewallApplicationRules
+  firewallRuleGatePassed = $firewallRuleGatePassed
   exitCode = $exitCode
   failure = $failure
   passed = $passed
