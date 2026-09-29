@@ -252,6 +252,34 @@ if ($ignore -notcontains '.kfe/') {
   throw '.gitignore does not exclude the repository-local Engine workspace.'
 }
 
+$launcherChecks = @()
+foreach ($relativePath in @(
+    'tool/build_windows_debug_exe.bat',
+    'tool/build_windows_release_exe.bat',
+    'tool/run_windows_debug.bat',
+    'tool/run_windows_debug_exe.bat'
+  )) {
+  $launcherPath = Join-Path $repository $relativePath
+  $launcher = Get-Content -Raw -LiteralPath $launcherPath
+  if ($launcher -notmatch [regex]::Escape('%~dp0..')) {
+    throw "$relativePath does not resolve the repository from its own location."
+  }
+  if ($launcher -notmatch [regex]::Escape('flutterw.cmd')) {
+    throw "$relativePath bypasses the repository Flutter wrapper."
+  }
+  if ($launcher -match '(?im)^\s*flutter(?:\.bat)?\s' -or
+      $launcher -match '(?i)[A-Z]:\\Kirakara-App' -or
+      $launcher -match '(?i)Program Files\\Flutter') {
+    throw "$relativePath contains a bare Flutter command or a machine-specific path."
+  }
+  $launcherChecks += [ordered]@{
+    path = $relativePath
+    repositoryRelative = $true
+    usesFlutterWrapper = $true
+    machineSpecificPathAbsent = $true
+  }
+}
+
 $scratchParent = Join-Path $repository 'build\diagnostics\engine'
 $scratch = Join-Path $scratchParent (
   "project-bootstrap-test-$([Guid]::NewGuid().ToString('N'))")
@@ -758,6 +786,7 @@ New-Item -ItemType Directory -Path (Split-Path -Parent $absoluteReport) `
   toolReadyStampChecks = @($toolReadyStampChecks)
   vpythonBootstrapChecks = @($vpythonBootstrapChecks)
   wrapperArgumentChecks = @($wrapperArgumentChecks)
+  launcherChecks = @($launcherChecks)
   logRetention = $logRetention
   checkoutRecovery = @($checkoutRecovery)
   cleanupBoundaryPassed = $true

@@ -138,7 +138,10 @@ Flutter App clean，不删除 Engine 工作区。原有 `engine/scripts/*.ps1` �
 
 VS Code task 和 launch 示例调用相同的 `flutterw` 入口；Dart 调试器通过单独 attach
 连接，不另造绕过 ABI 门禁的启动流程。裸 `flutter` 不被劫持，因而相邻普通 Flutter
-仓库仍使用自己的 SDK、cache、参数和官方 Engine。
+仓库仍使用自己的 SDK、cache、参数和官方 Engine。根目录双击入口所调用的四个 Windows
+批处理也从 `%~dp0` 解析当前 clone，并统一经过 `flutterw.cmd`；它们不再绑定旧仓库盘符或
+`D:\Program Files\Flutter`。直接启动 Debug EXE 的入口会先执行一次增量 debug build，
+防止脚本更新、模式切换或 Engine 更新后绕过 ready-stamp 和 bundle 门禁。
 
 ## 当前主机验证
 
@@ -147,6 +150,7 @@ VS Code task 和 launch 示例调用相同的 `flutterw` 入口；Dart 调试器
 | 门禁 | 当前结果 |
 | --- | --- |
 | wrapper 命令推导、冲突拒绝、指纹、ready stamp 损坏 | 通过 |
+| 双击构建/启动入口的项目隔离 | 通过；四个批处理使用相对仓库根和 `flutterw.cmd`，无固定 SDK/仓库路径 |
 | stale ephemeral Engine 检测 | 通过 |
 | 有界日志及当前报告保护 | 通过 |
 | 中断目录恢复、干净 checkout 续拉、dirty checkout 拒绝 | 通过 |
@@ -192,7 +196,7 @@ clean clone 使用 Windows 默认 CRLF checkout，主工作区保留 LF；指纹
 
 关键报告：
 
-- `build/diagnostics/engine/project-bootstrap-tests-20260929-083752.json`；
+- `build/diagnostics/engine/project-bootstrap-tests-20260929-084450.json`；
 - `build/diagnostics/engine/flutterw-local-sdk-fallback-20260929-044316.json`；
 - `build/diagnostics/engine/flutterw-local-sdk-fallback-20260929-044440.json`；
 - `build/diagnostics/engine/project-engine-reuse-20260929-044304.json`；

@@ -132,7 +132,9 @@
   首次 debug `run`、首次 `pub get` 和首次默认 release `build windows` 完成冷自举、实际
   DLL 加载、ABI、二次廉价复用、隔离与清理边界门禁；该过程还修复了全新 vpython 缓存、
   PowerShell 短参数 `-d` 和 Engine 工具链环境泄漏三个只在干净入口暴露的问题。第二位
-  协作者复现仍未完成，因此 Phase 8 和总计划仍不能宣称全部完成。详见
+  协作者复现仍未完成。旧的双击构建/启动批处理也已移除固定盘符与裸 `flutter` 调用，
+  统一从自身位置解析仓库并经过同一个 `flutterw.cmd` 门禁；因此 Phase 8 和总计划仍不能
+  宣称全部完成。详见
   `docs/windows_compositor/phase8_repository_bootstrap.md`。
 
 ## 为什么要做这件事
@@ -744,6 +746,8 @@ ABI/patchset version、GN 参数、目标架构、构建模式、MSVC/Windows SD
   Engine 开发者入口，不再要求普通 App 开发者理解外部工作区。
 - 提供使用同一入口的 VS Code tasks/launch 配置示例；IDE 不得绕过 ABI gate，也不能
   直接拾取官方 cache 中的 `flutter_windows.dll`。
+- 仓库已有的双击构建/启动批处理必须从脚本位置解析当前 clone，并调用同一个 wrapper；
+  不得硬编码仓库盘符、Flutter SDK 路径或通过裸 `flutter` 绕过门禁。
 - 原有直接调用 `engine/scripts/build_windows_app.ps1` 的 CI/诊断脚本可继续使用，但必须
   能显式选择仓库 `.kfe/`，并与 wrapper 共享同一布局、锁和指纹实现。
 - 文档明确首次构建所需空间和时间、离线复用条件、可安全删除的目录，以及为什么裸

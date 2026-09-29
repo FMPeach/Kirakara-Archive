@@ -188,7 +188,7 @@ SHA-256。DLL、PDB、ZIP 和 Engine 源码都不进入普通 Git 历史。
 每台机器先在普通 PowerShell 采集一次只读清单，不要把结果写入 App 设置：
 
 ```powershell
-Set-Location 'D:\Kirakara-App-ascii'
+Set-Location '<你的 Kirakara-App clean clone>'
 .\tool\windows_compositor\capture_compatibility_inventory.ps1
 ```
 
@@ -198,12 +198,23 @@ GPU/屏幕。
 
 ### 真实高分屏和混合 DPI
 
+先用仓库入口准备并解析锁定的 debug Engine 与 Flutter SDK。普通实机验证默认使用仓库内
+`.kfe`；Phase 7 的严格 release-candidate 哈希重建和 stock/custom A/B 仍可按
+`engine/README.md` 使用显式外部工作区。
+
+```powershell
+.\flutterw.cmd engine prepare debug
+$engineDoctor = .\flutterw.cmd engine doctor | ConvertFrom-Json
+$flutterSdkRoot = $engineDoctor.flutterSdk.root
+$workspaceRoot = Join-Path (Get-Location) '.kfe'
+```
+
 每个 175%/200% 档位都启动新进程，第一次不要使用 `-SkipBuild`：
 
 ```powershell
 .\tool\windows_compositor\run_synthetic_compositor_probe.ps1 `
-  -FlutterSdkRoot 'D:\Program Files\Flutter' `
-  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -FlutterSdkRoot $flutterSdkRoot `
+  -WorkspaceRoot $workspaceRoot `
   -LocalEngine host_debug_kirakara_v4 `
   -ExpectedScalePercent 175 `
   -KeepOpen
@@ -224,8 +235,8 @@ Stage 前进且 Flutter delta 为 0；所有 HRESULT、device removal 和资源�
 
 ```powershell
 .\tool\windows_compositor\run_real_stage_compositor_probe.ps1 `
-  -FlutterSdkRoot 'D:\Program Files\Flutter' `
-  -WorkspaceRoot 'E:\Kirakara-Flutter-Engine' `
+  -FlutterSdkRoot $flutterSdkRoot `
+  -WorkspaceRoot $workspaceRoot `
   -LocalEngine host_debug_kirakara_v4 `
   -TimeoutSeconds 120 `
   -LifecycleProbe `

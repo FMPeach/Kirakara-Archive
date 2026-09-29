@@ -1,14 +1,14 @@
 @echo off
 setlocal
-set "PROJECT_DIR=D:\Kirakara-App-ascii"
-set "FLUTTER_BIN=D:\Program Files\Flutter\bin"
-set "PATH=%FLUTTER_BIN%;%PATH%"
+for %%I in ("%~dp0..") do set "PROJECT_DIR=%%~fI"
 
 cd /d "%PROJECT_DIR%"
 echo Starting Kirakara-App with Flutter debug runner...
 echo.
-flutter run -d windows
+call "%PROJECT_DIR%\flutterw.cmd" run -d windows
+set "RUN_EXIT_CODE=%ERRORLEVEL%"
 
 echo.
 echo Debug runner exited.
 pause
+exit /b %RUN_EXIT_CODE%

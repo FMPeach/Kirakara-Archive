@@ -139,6 +139,12 @@ lock. Ordinary `flutterw clean` remains Flutter's App clean and preserves the
 Engine workspace. Do not manually delete `.kfe/` while a wrapper process is
 running.
 
+The repository's double-click Windows build/run launchers under `tool/` resolve
+the current clone from their own location and call `flutterw.cmd`. They do not
+pin a drive path or prepend a machine-specific Flutter SDK. The direct Debug
+executable launcher performs an incremental wrapper build before launch so it
+cannot silently run a stale Engine bundle.
+
 The checked-in `engine/vscode` task and launch examples call `flutterw` as the
 same state-machine entry. The repository ignores local `.vscode/` preferences,
 so merge the examples into that directory as described by their README. The
