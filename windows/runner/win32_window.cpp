@@ -97,7 +97,12 @@ const wchar_t* WindowClassRegistrar::GetWindowClass() {
     window_class.hInstance = GetModuleHandle(nullptr);
     window_class.hIcon =
         LoadIcon(window_class.hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
-    window_class.hbrBackground = 0;
+    // DirectComposition intentionally makes the Flutter preview slot
+    // transparent. Keep the HWND client backing defined while the lower Stage
+    // Visual is not attached yet (startup, resource replacement, recovery), so
+    // an uncovered slot is black rather than the system's white erase color.
+    window_class.hbrBackground =
+        static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     window_class.lpszMenuName = nullptr;
     window_class.lpfnWndProc = Win32Window::WndProc;
     RegisterClass(&window_class);

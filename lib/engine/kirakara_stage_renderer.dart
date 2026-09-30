@@ -36,13 +36,17 @@ class KirakaraStageRenderer implements StageRenderer {
       // rebuilding this subtree cannot advance it. The idle cover lives above
       // the transparent composed hole so startup never exposes the undefined
       // HWND backing pixels before Show has published its first program.
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          _windowsStage,
-          if (playbackState.currentSong == null)
-            const ColoredBox(color: Colors.black),
-        ],
+      return AnimatedBuilder(
+        animation: _showService,
+        child: _windowsStage,
+        builder: (context, stage) => Stack(
+          fit: StackFit.expand,
+          children: [
+            stage!,
+            if (playbackState.currentSong == null || _showService.isLoading)
+              const ColoredBox(color: Colors.black),
+          ],
+        ),
       );
     }
     return ColoredBox(color: mediaFrame.backgroundColor);
@@ -158,15 +162,12 @@ class _ComposedStageHoleState extends State<_ComposedStageHole>
       final renderObject =
           _slotKey.currentContext?.findRenderObject() as RenderBox?;
       if (renderObject == null || !renderObject.hasSize) return;
-      final logicalTopLeft = renderObject.localToGlobal(Offset.zero);
-      final logicalBounds = logicalTopLeft & renderObject.size;
       final scale = View.of(context).devicePixelRatio;
       unawaited(widget.controller.setComposedGeometry(
-        physicalBounds: Rect.fromLTWH(
-          logicalBounds.left * scale,
-          logicalBounds.top * scale,
-          logicalBounds.width * scale,
-          logicalBounds.height * scale,
+        physicalBounds: transformedPhysicalStageBounds(
+          transform: renderObject.getTransformTo(null),
+          size: renderObject.size,
+          devicePixelRatio: scale,
         ),
         // The unified Stage texture already contains Show's authored
         // letterbox/pillarbox canvas. Match the legacy Flutter Texture path by
@@ -194,6 +195,32 @@ class _ComposedStageHoleState extends State<_ComposedStageHole>
       ),
     );
   }
+}
+
+/// Converts the complete paint transform of the Flutter preview slot to the
+/// physical client-space rectangle expected by DirectComposition.
+///
+/// In particular, [RenderBox.localToGlobal] transforms only a point. Pairing
+/// that point with the untransformed render-box size leaves a Stage Visual at
+/// its 1920x1080 design dimensions whenever [FittedBox] scales the controller
+/// UI down. Transforming the full rectangle keeps the native lower Visual and
+/// Flutter's transparent hole coincident at every window size.
+@visibleForTesting
+Rect transformedPhysicalStageBounds({
+  required Matrix4 transform,
+  required Size size,
+  required double devicePixelRatio,
+}) {
+  final logicalBounds = MatrixUtils.transformRect(
+    transform,
+    Offset.zero & size,
+  );
+  return Rect.fromLTRB(
+    logicalBounds.left * devicePixelRatio,
+    logicalBounds.top * devicePixelRatio,
+    logicalBounds.right * devicePixelRatio,
+    logicalBounds.bottom * devicePixelRatio,
+  );
 }
 
 /// Reports only real layout/paint-transform changes. This is deliberately not

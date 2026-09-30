@@ -208,6 +208,14 @@ class KirakaraShowService extends ChangeNotifier {
     final generation = ++_prepareGeneration;
     _preparingItemId = item.id;
 
+    // The first program has no previously rendered Stage frame to retain.
+    // Publish the loading state before cache preparation starts so Flutter can
+    // keep its opaque-black guard over the transparent compositor hole for the
+    // whole startup interval, not only for the final synchronous Show load.
+    if (_showNeedsAsyncWake) {
+      _beginShowLoading(generation);
+    }
+
     if (seamlessTransition) {
       _ffi?.pause();
     } else {
