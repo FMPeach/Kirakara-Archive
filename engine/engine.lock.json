@@ -29,20 +29,20 @@
   },
   "patchset": {
     "revision": "windows-dcomp-stage-visual",
-    "version": 4,
+    "version": 5,
     "abiVersion": 2,
-    "sourceTree": "a2a14855283c7ff5cc58cda583b7b3f87d0ccb75",
+    "sourceTree": "8144c37c3b06ac036c1ef6fd34c382a0dc2ce730",
     "additionalExports": [
       "FlutterDesktopKirakaraCompositorGetApi"
     ],
     "patches": [
       {
         "path": "engine/patches/0001-windows-dcomp-stage-visual-compositor.patch",
-        "sha256": "7D94672126B236F0C6EBB9E0871F8E21CC3A5561167DD33E129991C5F5D141CB"
+        "sha256": "177E4A44817ADD629FA65159028FD5CA901CA9557D9670E2E3D54CEFBCF22279"
       },
       {
         "path": "engine/patches/0002-windows-clipboard-contention.patch",
-        "sha256": "08BC97122592B7DD12C8E221316E7CE76FB8BD866C549663E515DBB337C5EED2"
+        "sha256": "02978CD10DB85ABCBE2FB113C8B9D7A522527F6C94A4421B56B00F0592F4B76F"
       }
     ],
     "builds": [
@@ -65,9 +65,9 @@
         ],
         "argsGnSha256": "3A3B2DBF61EB76D4BAC522EE9EB67E4A6B4745ED24E2C40B433C1DFE4FF34986",
         "artifacts": [
-          { "path": "flutter_windows.dll", "size": 45570560, "sha256": "40EF7DF5832A7EBD56FEBEE4BBF293B5397F23F8EFFD409B384E0C2D2F18FEA6" },
+          { "path": "flutter_windows.dll", "size": 45585920, "sha256": "3CF825139D68DEA8BC82499F213C809380E74D6EF899368AC186ABF29B0EE79B" },
           { "path": "flutter_windows.dll.lib", "size": 37536, "sha256": "146E1B45019BB4C974EE1107F615B108895EEBDBCBE13401D1FD289CBEF26AF2" },
-          { "path": "flutter_windows.dll.pdb", "size": 279277568, "sha256": "866529E86D09398F89FC944559BA90970F1109BBFE38E579EA83D53FACEA20C8" },
+          { "path": "flutter_windows.dll.pdb", "size": 309211136, "sha256": "87FE89977CF74670168A71DC1B52876BE07755E977367EA5C2E14219D416292E" },
           { "path": "icudtl.dat", "size": 10822192, "sha256": "1CF67874B5A87A8363A86FB3F81E3CBBED54D389062DAB8FB52308D5CF8C8612" },
           { "path": "dart-sdk/bin/dart.exe", "size": 5578240, "sha256": "4DAA3455F8844FF2A907DFFD68BA511F112BA67F5F6635D69A122E5B60BF91FF" },
           { "path": "dart-sdk/bin/snapshots/frontend_server_aot.dart.snapshot", "size": 16463808, "sha256": "C13F6AC79307107247ADC756ACC4F535E35D7D575C97771D61253757A03A11C8" },
@@ -94,11 +94,11 @@
         ],
         "argsGnSha256": "FCB1ACF81EDD3702B084D5FF38D56971183F2585623E8A3E7B187E143649B8DC",
         "artifacts": [
-          { "path": "flutter_windows.dll", "size": 21888000, "sha256": "8038006253B0CDFC6AC8FB48C7E587ACE5AEAA5099DFFD471BED9F44024F52D6" },
+          { "path": "flutter_windows.dll", "size": 21900800, "sha256": "3881C73B053FCB6C791627DBE21686CD5FE66C3782B2E47BD883B3DE31C890E6" },
           { "path": "flutter_windows.dll.lib", "size": 37536, "sha256": "146E1B45019BB4C974EE1107F615B108895EEBDBCBE13401D1FD289CBEF26AF2" },
-          { "path": "flutter_windows.dll.pdb", "size": 259018752, "sha256": "6FA6A3647D8C1245131C7C7BB4E2CAA7ADA656AC83349095319FC7A52EBA7F5E" },
+          { "path": "flutter_windows.dll.pdb", "size": 287928320, "sha256": "3B9FDD3C8718194FE6701A4376B395DEFCB6773D65EA5919D4D0913EBE9CF93B" },
           { "path": "icudtl.dat", "size": 10822192, "sha256": "1CF67874B5A87A8363A86FB3F81E3CBBED54D389062DAB8FB52308D5CF8C8612" },
-          { "path": "gen_snapshot.exe", "size": 5146112, "sha256": "7D75E21239B28B8B67F3ED6746AD3FD8281042FA7657D63A9DF3C48738568EEE" },
+          { "path": "gen_snapshot.exe", "size": 5150720, "sha256": "511E8000C5034D1BC396292F12A0682AFBB9AF0C7CCFCC33FC0037A39EC011A3" },
           { "path": "flutter_patched_sdk/platform_strong.dill", "size": 9951672, "sha256": "CE47D06E914B09E31BB824D3DB2E84E000D26D543CFE6B696A0DA1FCC7C1AEFE" },
           { "path": "flutter_patched_sdk/vm_outline_strong.dill", "size": 1904552, "sha256": "49452A3C63F569A2502065FCDA15FB2DC3D919F7F94AD81925719F576569AF6D" },
           { "path": "dart-sdk/bin/dart.exe", "size": 5578240, "sha256": "4DAA3455F8844FF2A907DFFD68BA511F112BA67F5F6635D69A122E5B60BF91FF" },
@@ -127,11 +127,11 @@
         ],
         "argsGnSha256": "4F9FD654F95A80BFC5837A3CCCADE965D0CDF49F112502AF24A270678741CD95",
         "artifacts": [
-          { "path": "flutter_windows.dll", "size": 21304832, "sha256": "03665D466DE8C3F20A1BB1ABF32348281B1E5BF35C61F537FB53F09A700B0532" },
+          { "path": "flutter_windows.dll", "size": 21318144, "sha256": "B4EC12AFF54E885CDEF6C192CE65C5D58901EB683054F691AD4C1A71C85A6D97" },
           { "path": "flutter_windows.dll.lib", "size": 37536, "sha256": "146E1B45019BB4C974EE1107F615B108895EEBDBCBE13401D1FD289CBEF26AF2" },
-          { "path": "flutter_windows.dll.pdb", "size": 253603840, "sha256": "3AAB6E22A060839BA09F967C3BDB8C924CC8B2B60AB699A2345A35FFE4C7FB93" },
+          { "path": "flutter_windows.dll.pdb", "size": 282152960, "sha256": "3DFCF148D97C8285CC69DC28C24F39D9FFCE4A621545C9A64603817EDEE5C8CD" },
           { "path": "icudtl.dat", "size": 10822192, "sha256": "1CF67874B5A87A8363A86FB3F81E3CBBED54D389062DAB8FB52308D5CF8C8612" },
-          { "path": "gen_snapshot.exe", "size": 4446720, "sha256": "AA408A7B7C588FF48DF90DD014422BD8B6B11DF91E9C320EB61B379BE0704BB9" },
+          { "path": "gen_snapshot.exe", "size": 4447232, "sha256": "E2562C6BE23C241CF06F2A6270E7C9E97EE85EC61B9A433D4CEF6C72887D2D81" },
           { "path": "flutter_patched_sdk/platform_strong.dill", "size": 9951616, "sha256": "38B8752AFD2BB01B42521C562E1C8A1DA0E5A41C816E5725AA1EBAAABAF96BF5" },
           { "path": "flutter_patched_sdk/vm_outline_strong.dill", "size": 1904552, "sha256": "49452A3C63F569A2502065FCDA15FB2DC3D919F7F94AD81925719F576569AF6D" },
           { "path": "dart-sdk/bin/dart.exe", "size": 5578240, "sha256": "4DAA3455F8844FF2A907DFFD68BA511F112BA67F5F6635D69A122E5B60BF91FF" },
@@ -150,7 +150,7 @@
     "workspace": ".kfe",
     "minimumFreeSpaceBytes": 68719476736,
     "maxLogFiles": 60,
-    "engineSourceTree": "b01f3bfaddb9129d5c9625aba9b2ef1d05f6e8bc",
+    "engineSourceTree": "bbec608dcc93d6b6b0c59dc83db9ba7460e3cb80",
     "engineSourcePatches": [
       {
         "path": "engine/bootstrap/0002-engine-output-outside-source-tree.patch",
@@ -180,14 +180,14 @@
       "schemaVersion": 1,
       "mode": "release",
       "localEngine": "host_release_kirakara_v4",
-      "engineSourceTree": "b01f3bfaddb9129d5c9625aba9b2ef1d05f6e8bc",
+      "engineSourceTree": "bbec608dcc93d6b6b0c59dc83db9ba7460e3cb80",
       "argsGnSha256": "4F9FD654F95A80BFC5837A3CCCADE965D0CDF49F112502AF24A270678741CD95",
       "artifacts": [
-        { "path": "flutter_windows.dll", "size": 21316608, "sha256": "DB07763F1551A8FD68346D30A547050975E14E73A79B1A239587F063CD70B0F8" },
+        { "path": "flutter_windows.dll", "size": 21318144, "sha256": "B4EC12AFF54E885CDEF6C192CE65C5D58901EB683054F691AD4C1A71C85A6D97" },
         { "path": "flutter_windows.dll.lib", "size": 37536, "sha256": "146E1B45019BB4C974EE1107F615B108895EEBDBCBE13401D1FD289CBEF26AF2" },
-        { "path": "flutter_windows.dll.pdb", "size": 282152960, "sha256": "04C6442599358ACAB04B89488660E8C9CA4568D89289B80DA5075F5F01F0D2B5" },
+        { "path": "flutter_windows.dll.pdb", "size": 282152960, "sha256": "3DFCF148D97C8285CC69DC28C24F39D9FFCE4A621545C9A64603817EDEE5C8CD" },
         { "path": "icudtl.dat", "size": 10822192, "sha256": "1CF67874B5A87A8363A86FB3F81E3CBBED54D389062DAB8FB52308D5CF8C8612" },
-        { "path": "gen_snapshot.exe", "size": 4447232, "sha256": "DA9687F2FFE4EB50FB3D5758706AFBDF8AD6C0D4752899600058B1BD63C58989" },
+        { "path": "gen_snapshot.exe", "size": 4447232, "sha256": "E2562C6BE23C241CF06F2A6270E7C9E97EE85EC61B9A433D4CEF6C72887D2D81" },
         { "path": "flutter_patched_sdk/platform_strong.dill", "size": 9951616, "sha256": "38B8752AFD2BB01B42521C562E1C8A1DA0E5A41C816E5725AA1EBAAABAF96BF5" },
         { "path": "flutter_patched_sdk/vm_outline_strong.dill", "size": 1904552, "sha256": "49452A3C63F569A2502065FCDA15FB2DC3D919F7F94AD81925719F576569AF6D" },
         { "path": "dart-sdk/bin/dart.exe", "size": 5578240, "sha256": "4DAA3455F8844FF2A907DFFD68BA511F112BA67F5F6635D69A122E5B60BF91FF" },

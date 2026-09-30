@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../domain/playback_state.dart';
 import '../services/kirakara_show_service.dart';
@@ -30,10 +31,19 @@ class KirakaraStageRenderer implements StageRenderer {
     required RenderPreset preset,
   }) {
     if (Platform.isWindows) {
-      // Keep the external texture element stable when unrelated controller
+      // Keep the native presentation element stable when unrelated controller
       // state changes. Native Show drives frame availability directly;
-      // rebuilding this subtree cannot advance it.
-      return _windowsStage;
+      // rebuilding this subtree cannot advance it. The idle cover lives above
+      // the transparent composed hole so startup never exposes the undefined
+      // HWND backing pixels before Show has published its first program.
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          _windowsStage,
+          if (playbackState.currentSong == null)
+            const ColoredBox(color: Colors.black),
+        ],
+      );
     }
     return ColoredBox(color: mediaFrame.backgroundColor);
   }
@@ -158,6 +168,10 @@ class _ComposedStageHoleState extends State<_ComposedStageHole>
           logicalBounds.width * scale,
           logicalBounds.height * scale,
         ),
+        // The unified Stage texture already contains Show's authored
+        // letterbox/pillarbox canvas. Match the legacy Flutter Texture path by
+        // mapping that completed canvas to the actual preview viewport.
+        fit: 'fill',
       ));
     });
   }
@@ -171,11 +185,68 @@ class _ComposedStageHoleState extends State<_ComposedStageHole>
   @override
   Widget build(BuildContext context) {
     _scheduleGeometryReport();
-    return CustomPaint(
-      key: _slotKey,
-      painter: const _ClearStageHolePainter(),
-      child: const SizedBox.expand(),
+    return _StageGeometryObserver(
+      onGeometryChanged: _scheduleGeometryReport,
+      child: CustomPaint(
+        key: _slotKey,
+        painter: const _ClearStageHolePainter(),
+        child: const SizedBox.expand(),
+      ),
     );
+  }
+}
+
+/// Reports only real layout/paint-transform changes. This is deliberately not
+/// a timer: a static Flutter scene performs no work while the lower Stage
+/// Visual continues presenting independently.
+class _StageGeometryObserver extends SingleChildRenderObjectWidget {
+  const _StageGeometryObserver({
+    required this.onGeometryChanged,
+    required super.child,
+  });
+
+  final VoidCallback onGeometryChanged;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderStageGeometryObserver(onGeometryChanged);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderStageGeometryObserver renderObject,
+  ) {
+    renderObject.onGeometryChanged = onGeometryChanged;
+  }
+}
+
+class _RenderStageGeometryObserver extends RenderProxyBox {
+  _RenderStageGeometryObserver(this._onGeometryChanged);
+
+  VoidCallback _onGeometryChanged;
+  Rect? _lastGlobalBounds;
+
+  set onGeometryChanged(VoidCallback value) {
+    _onGeometryChanged = value;
+  }
+
+  @override
+  void attach(PipelineOwner owner) {
+    _lastGlobalBounds = null;
+    super.attach(owner);
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final globalBounds = MatrixUtils.transformRect(
+      getTransformTo(null),
+      Offset.zero & size,
+    );
+    if (_lastGlobalBounds != globalBounds) {
+      _lastGlobalBounds = globalBounds;
+      _onGeometryChanged();
+    }
+    super.paint(context, offset);
   }
 }
 

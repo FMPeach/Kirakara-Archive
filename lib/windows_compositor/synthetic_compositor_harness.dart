@@ -447,7 +447,7 @@ class _SyntheticCompositorHarnessState
         'backendMetadataMatches': backend['backend'] == 'synthetic' &&
             backend['backendSelection'] == 'environment' &&
             backend['abiVersion'] == 2 &&
-            backend['patchsetVersion'] == 4 &&
+            backend['patchsetVersion'] == 5 &&
             backend['patchsetRevision'] == 'windows-dcomp-stage-visual',
         'singleVisibleTopLevelWindow':
             backend['visibleTopLevelWindowCount'] == 1 &&

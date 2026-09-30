@@ -264,6 +264,12 @@ failure. Both variants disable RBE and never copy Engine products into this
 repository. Verification rejects a generated `toolchain.ninja` or PE linker
 version that does not use the locked 14.34 toolset.
 
+The output-directory suffix is retained as a cache label; compatibility is
+decided by the exported ABI and patchset version, not by that directory name.
+The current v5 patchset presents one opaque-black external Stage placeholder
+before the first Show resource arrives. It has no producer timer and is replaced
+in place by the first real latest-frame resource.
+
 This pinned Engine source requires Windows SDK `10.0.22621.0`; newer SDKs do
 not substitute for it because upstream's stock toolchain script explicitly
 selects that version. The build script checks the required headers, x64

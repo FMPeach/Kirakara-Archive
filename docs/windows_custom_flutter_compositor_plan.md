@@ -71,6 +71,12 @@
   已改为保留同一 target/Visual tree 并原位 `ResizeBuffers`；修复后自动缩放/恢复门槛
   通过，tree commit 全程保持 1；用户实机复测确认白闪和缩放后整窗 Stage 穿透均已
   消失，Flutter 控件保持可见。
+- 2026-09-30 修复主线合并后发现的首曲前白底与预览 viewport 不跟随问题。patchset 5
+  在 Show 第一帧前只提交一次不透明黑色 Stage placeholder；App 未选歌时另有黑色上盖。
+  播放后统一 Stage 画布以 `fill` 映射到实际预览 viewport，布局或 paint transform 变化
+  才事件式重报物理矩形，无定时器或轮询。真实 Show 门槛在零 callback/零 frame submit
+  时确认 placeholder Present 为 1，随后静止样本仍为 Show/Stage/Flutter
+  `121 / 120 / 0`，窗口几何更新与全部同步/HRESULT 门槛通过。
 - Phase 3 已完成：Show 在独立分支/提交中增加版本化 NT handle + keyed mutex 的
   latest-frame Stage Visual API，App/Runner/Engine v3 将真实 Show GPU 帧接入下层
   DirectComposition Visual。两秒静止 Flutter 样本为 Show submit `+120`、Stage

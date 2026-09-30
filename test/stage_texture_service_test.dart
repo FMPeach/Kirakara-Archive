@@ -81,9 +81,11 @@ void main() {
     expect(attachment?.textureId, isNull);
     await controller.setComposedGeometry(
       physicalBounds: const Rect.fromLTWH(20, 30, 1280, 720),
+      fit: 'fill',
     );
     await controller.setComposedGeometry(
       physicalBounds: const Rect.fromLTWH(20, 30, 1280, 720),
+      fit: 'fill',
     );
     await controller.setActive(true);
     await controller.setActive(false);
@@ -101,6 +103,21 @@ void main() {
       'getBackendInfo',
       'attachStage',
     ]);
+    expect(
+      compositorCalls
+          .singleWhere(
+            (call) => call.method == 'setStageGeometry',
+          )
+          .arguments,
+      <String, Object?>{
+        'visible': true,
+        'x': 20.0,
+        'y': 30.0,
+        'width': 1280.0,
+        'height': 720.0,
+        'fit': 'fill',
+      },
+    );
   });
 
   test('failed composed geometry remains retryable', () async {

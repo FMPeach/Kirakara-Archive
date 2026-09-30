@@ -355,6 +355,8 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
       }
       await _reportGeometry();
       await _stageController.setActive(true);
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final idleBeforeFirstSong = await _readMap('getStageDiagnostics');
       await _loadFixture(show, fixtureRoot, 1);
       if (mounted) {
         setState(() => _status = '真实 Stage 已连接，正在执行运行门禁…');
@@ -876,12 +878,20 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
       final switchAfterShow = _map(switchAfter['show'], 'Show diagnostics');
       final finalEngine = engine(settledAfter);
       final finalShow = _map(settledAfter['show'], 'Show diagnostics');
+      final idleEngine = engine(idleBeforeFirstSong);
       final gates = <String, bool>{
         'backendMetadataMatches': backend['backend'] == 'composed' &&
             backend['backendSelection'] == 'custom-engine-default' &&
             backend['abiVersion'] == 2 &&
-            backend['patchsetVersion'] == 4 &&
+            backend['patchsetVersion'] == 5 &&
             backend['patchsetRevision'] == 'windows-dcomp-stage-visual',
+        'idleBeforeFirstSongPresentedBlackPlaceholder':
+            _counter(idleEngine, 'stagePresentCount') >= 1 &&
+                _counter(idleEngine, 'stageFrameSubmitCount') == 0 &&
+                _counter(idleEngine, 'stageResourceGeneration') == 0 &&
+                _counter(idleEngine, 'stageFrameId') == 0 &&
+                idleEngine['lastStagePresentHresult'] == 0 &&
+                idleEngine['lastStageResourceHresult'] == 0,
         'singleVisibleTopLevelWindow':
             backend['visibleInteractiveTopLevelWindowCount'] == 1 &&
                 _counter(backend, 'visibleTopLevelWindowCount') >= 1 &&
@@ -1120,6 +1130,7 @@ class _RealStageCompositorHarnessState extends State<RealStageCompositorHarness>
         'schemaVersion': 1,
         'recordedAtUtc': DateTime.now().toUtc().toIso8601String(),
         'backend': backend,
+        'idleBeforeFirstSong': idleBeforeFirstSong,
         'staticSample': <String, Object?>{
           'durationMilliseconds': staticWatch.elapsedMilliseconds,
           'before': staticBefore,

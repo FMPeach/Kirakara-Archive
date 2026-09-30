@@ -17,6 +17,16 @@ handle 复制失败、共享资源打开失败、stale frame 或 device removal�
 Engine 与 `host_debug_kirakara_v3` 也分别通过同一 external texture integration
 smoke，证明回退路径没有因 composed 接入而腐烂。
 
+2026-09-30 的发布后回归修复补齐了两个显示边界。Engine 在外部 Show 尚未提交资源时
+创建 16×9 composition swapchain，只清为不透明黑色并 Present 一次；真实 Show 探针
+在加载第一首歌前测得 Stage Present 为 1，而 Show callback、Stage frame submit、
+resource/content generation 与 frame ID 全为 0。App 同时在未选歌时保留 Flutter 黑色
+上盖，避免初始化时序或非定制 Engine 暴露未定义 HWND 背景。播放后，完整的 Show Stage
+画布使用 `fill` 映射到实际预览 viewport；paint-transform/layout 变化会事件式重报物理
+矩形，不增加轮询或常驻 timer。窗口几何探针中 `stageGeometryUpdateCount` 从 3 增至 5，
+所有 HRESULT、资源和同步门槛通过，报告为
+`build/diagnostics/real-stage-compositor-20260930-123139.json`。
+
 这不是 Phase 4 生命周期结论。最小化/恢复、显示器热插拔、睡眠/恢复、锁屏、主动
 graphics device removal、Show 销毁后重建和退出竞态仍要在下一阶段实现和验证。当前
 环境也没有物理双屏或 Cast 接收端，因此本阶段只证明 composed preview 不在代码或
@@ -24,17 +34,19 @@ graphics device removal、Show 销毁后重建和退出竞态仍要在下一阶�
 
 ## 锁定版本
 
-- App branch：`windows-custom-compositor-dev`
-- Show branch：`windows-custom-compositor-phase3`
+- App branch：`main`
+- Show branch：`main`
 - Show commits：`40e51d8 feat: add keyed Stage visual transport`；
   `7a822b2 test: harden Stage visual synchronization smoke`
 - Flutter Framework：`ad70ec4617166f1c38e5d2bfd388af71fda14f06`
 - Flutter Engine：`a10d8ac38de835021c8d2f920dbf50a920ccc030`
-- Engine patchset：ABI 2、version 3、`windows-dcomp-stage-visual`
+- Engine patchset：ABI 2、version 5、`windows-dcomp-stage-visual`
 - Engine patch SHA-256：
-  `7D94672126B236F0C6EBB9E0871F8E21CC3A5561167DD33E129991C5F5D141CB`
-- patched source tree：`ec7815c9af62ddd1b3073446fa2903d86d95d875`
-- debug local Engine：`host_debug_kirakara_v3`
+  `177E4A44817ADD629FA65159028FD5CA901CA9557D9670E2E3D54CEFBCF22279`、
+  `02978CD10DB85ABCBE2FB113C8B9D7A522527F6C94A4421B56B00F0592F4B76F`
+- patched source tree：`8144c37c3b06ac036c1ef6fd34c382a0dc2ce730`
+- repository-local source tree：`bbec608dcc93d6b6b0c59dc83db9ba7460e3cb80`
+- debug local Engine：`host_debug_kirakara_v4`（输出目录名沿用，运行时以 patchset 5 门禁）
 
 二进制与 PDB 只存在于外部 Engine `out/` 和本地 App `build/`，没有进入普通 Git
 历史。精确尺寸和 SHA-256 由 `engine/engine.lock.json` 锁定。

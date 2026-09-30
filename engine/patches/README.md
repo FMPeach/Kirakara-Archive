@@ -1,13 +1,14 @@
 # Engine patch stack
 
 The root build records in `engine.lock.json` preserve the patch-free Phase 1
-baseline. The ordered v4 stack contains two independently reviewable patches:
+baseline. The ordered v5 stack contains two independently reviewable patches:
 
 - `0001-windows-dcomp-stage-visual-compositor.patch` contains the versioned ABI,
   premultiplied Flutter composition surface, two-Visual DComp tree, independent
   synthetic D3D producer, external latest-frame Stage consumer, in-place
-  swapchain resize that preserves the visual tree, and bounded diagnostics
-  tests.
+  swapchain resize that preserves the visual tree, a one-shot opaque-black
+  external Stage placeholder before Show publishes its first frame, and
+  bounded diagnostics tests.
 - `0002-windows-clipboard-contention.patch` keeps Flutter's public Clipboard API
   unchanged while adding a temporary 16 ms message-window timer for
   `ERROR_ACCESS_DENIED` only. It stops after 16 attempts or 250 ms, whichever

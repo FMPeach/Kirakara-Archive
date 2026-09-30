@@ -45,7 +45,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..326c46f69e0e1741723b5c4222e52edf3ed7bd00
 --- /dev/null
 +++ b/engine/src/flutter/shell/platform/windows/egl/composition_window_surface.cc
-@@ -0,0 +1,1003 @@
+@@ -0,0 +1,1041 @@
 +// Copyright 2013 The Flutter Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -188,6 +188,7 @@ index 0000000000000000000000000000000000000000..326c46f69e0e1741723b5c4222e52edf
 +      (synthetic_stage() &&
 +       !CreateSyntheticStage(adapter.Get(), factory.Get())) ||
 +      !CreateCompositionTree(angle_dxgi_device.Get()) ||
++      (external_stage() && !CreateExternalStagePlaceholder()) ||
 +      !CreateFlutterEglSurface(angle_device.Get())) {
 +    return false;
 +  }
@@ -246,6 +247,43 @@ index 0000000000000000000000000000000000000000..326c46f69e0e1741723b5c4222e52edf
 +    return Fail(result, "query Stage IDXGISwapChain3");
 +  }
 +
++  return true;
++}
++
++bool CompositionWindowSurface::CreateExternalStagePlaceholder() {
++  // The Flutter surface is deliberately transparent over the preview slot.
++  // Give that slot defined opaque-black content before Show publishes its
++  // first resource instead of exposing uninitialized HWND backing pixels.
++  // A tiny 16:9 surface is sufficient because the product preview maps the
++  // completed Stage canvas to its viewport; this is presented exactly once.
++  constexpr uint32_t kPlaceholderWidth = 16;
++  constexpr uint32_t kPlaceholderHeight = 9;
++  HRESULT result =
++      EnsureExternalStageSwapChain(kPlaceholderWidth, kPlaceholderHeight);
++  if (FAILED(result)) {
++    return Fail(result, "create external Stage black placeholder");
++  }
++
++  Microsoft::WRL::ComPtr<ID3D11Texture2D> texture;
++  result = stage_swap_chain_->GetBuffer(
++      stage_swap_chain_->GetCurrentBackBufferIndex(), IID_PPV_ARGS(&texture));
++  Microsoft::WRL::ComPtr<ID3D11RenderTargetView> render_target;
++  if (SUCCEEDED(result)) {
++    result = stage_device_->CreateRenderTargetView(texture.Get(), nullptr,
++                                                   &render_target);
++  }
++  if (SUCCEEDED(result)) {
++    constexpr float kOpaqueBlack[] = {0.0f, 0.0f, 0.0f, 1.0f};
++    stage_context_->OMSetRenderTargets(1, render_target.GetAddressOf(), nullptr);
++    stage_context_->ClearRenderTargetView(render_target.Get(), kOpaqueBlack);
++    stage_context_->OMSetRenderTargets(0, nullptr, nullptr);
++    result = stage_swap_chain_->Present(0, 0);
++  }
++  state_->last_stage_present_hresult.store(result, std::memory_order_relaxed);
++  if (FAILED(result)) {
++    return Fail(result, "present external Stage black placeholder");
++  }
++  state_->stage_present_count.fetch_add(1, std::memory_order_relaxed);
 +  return true;
 +}
 +
@@ -1054,7 +1092,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..5384deae1ba96d9fc833014e4b9e893a613ca238
 --- /dev/null
 +++ b/engine/src/flutter/shell/platform/windows/egl/composition_window_surface.h
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,145 @@
 +// Copyright 2013 The Flutter Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1135,6 +1173,7 @@ index 0000000000000000000000000000000000000000..5384deae1ba96d9fc833014e4b9e893a
 +  bool CreateCompositionTree(IDXGIDevice* angle_dxgi_device);
 +  bool CreateStageDevice(IDXGIAdapter* adapter, IDXGIFactory2* factory);
 +  bool CreateSyntheticStage(IDXGIAdapter* adapter, IDXGIFactory2* factory);
++  bool CreateExternalStagePlaceholder();
 +  bool CreateFlutterEglSurface(ID3D11Device* angle_device);
 +  void StartStageProducer(bool render_initial_frame = true) const;
 +  void StopStageProducer();
@@ -2339,7 +2378,7 @@ index 0000000000000000000000000000000000000000..d087927b051fa29138af666f5efa8a58
 +#define KIRAKARA_FLUTTER_COMPOSITOR_EXPORT_NAME \
 +  "FlutterDesktopKirakaraCompositorGetApi"
 +#define KIRAKARA_FLUTTER_COMPOSITOR_ABI_VERSION 2u
-+#define KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION 3u
++#define KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_VERSION 4u
 +#define KIRAKARA_FLUTTER_COMPOSITOR_PATCHSET_REVISION \
 +  "windows-dcomp-stage-visual"
 +#define KIRAKARA_FLUTTER_COMPOSITOR_ENGINE_REVISION \

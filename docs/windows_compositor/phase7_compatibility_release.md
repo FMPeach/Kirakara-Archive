@@ -6,7 +6,7 @@ Phase 7 的自动门禁和仓库所有者确认的核心实机范围已经完成
 Release Candidate 的既定阶段验收完成，不表示所有 Windows/GPU/显示拓扑均已认证。
 当前已经得到：
 
-- 锁定的 v4 custom Engine debug/profile/release 三模式产物；
+- 锁定的 v5 custom Engine debug/profile/release 三模式产物；
 - 官方 Release 与 custom Release 对称的正常启动、窗口响应和优雅退出证据；
 - 运行时 ABI、结构大小、patchset 版本和 Engine revision 的硬失败门禁；
 - 可重复生成的 Portable、当前用户安装包、补丁源码包和独立 Engine 产物包；
@@ -27,27 +27,25 @@ bitmap-scaling 视觉质量需要补一次实机烟测。
 2026-09-30 还用当前 Stage Visual ABI 1 Show DLL（SHA-256
 `1CA811AE12B508903426F89F8A3B7E4B84261C9DEC4538173519F8E465E35519`）重建了 custom
 Release bundle；DLL 与 Show 仓库产物逐字节一致，默认 composed 启动、窗口响应、正常
-退出和 DPI-unaware manifest 门槛通过，未强制清理。仓库内 `.kfe` 的本次 Engine 重链
-产生了新的 PE/PDB identity，精确哈希与 `engine.lock.json` 不同且锁文件未自动修改，
-因此该样本是开发态 release 烟测，不冒充严格锁定的 Phase 7 Release Candidate。
+退出和 DPI-unaware manifest 门槛通过，未强制清理。随后首帧黑色占位与 viewport
+跟随修复提升为 patchset 5；仓库内 `.kfe` 三模式重新构建、锁定并通过源码树、导出、
+GN、工具链和产物哈希校验，Release App 也再次通过正常退出烟测。
 
 ## 锁定的 Engine 三模式
 
-`engine/engine.lock.json` 的 custom patchset v4 现在锁定 ABI 2，并同时锁定以下输出：
+`engine/engine.lock.json` 的 custom patchset v5 现在锁定 ABI 2，并同时锁定以下输出：
 
 | 模式 | GN 输出 | `flutter_windows.dll` SHA-256 |
 | --- | --- | --- |
-| debug | `host_debug_kirakara_v4` | `40EF7DF5832A7EBD56FEBEE4BBF293B5397F23F8EFFD409B384E0C2D2F18FEA6` |
-| profile | `host_profile_kirakara_v4` | `8038006253B0CDFC6AC8FB48C7E587ACE5AEAA5099DFFD471BED9F44024F52D6` |
-| release | `host_release_kirakara_v4` | `03665D466DE8C3F20A1BB1ABF32348281B1E5BF35C61F537FB53F09A700B0532` |
+| debug | `host_debug_kirakara_v4` | `3CF825139D68DEA8BC82499F213C809380E74D6EF899368AC186ABF29B0EE79B` |
+| profile | `host_profile_kirakara_v4` | `3881C73B053FCB6C791627DBE21686CD5FE66C3782B2E47BD883B3DE31C890E6` |
+| release | `host_release_kirakara_v4` | `B4EC12AFF54E885CDEF6C192CE65C5D58901EB683054F691AD4C1A71C85A6D97` |
 
-上表保留 Phase 7 外部工作区的历史候选，继续用于 stock/custom A/B。Phase 8 的真实中文
-路径构建另外锁定 `projectBootstrap.releaseCandidate`：同一
-`host_release_kirakara_v4` 的 DLL 为
-`DB07763F1551A8FD68346D30A547050975E14E73A79B1A239587F063CD70B0F8`，并精确锁定
-import library、PDB、ICU、`gen_snapshot`、patched SDK 与仓库内 Dart SDK。外部历史候选
-的旧 `gen_snapshot.exe` 在 `D:\仓库\Kirakara-App` 读取 AOT 输入时会把中文路径错误解码，
-所以不能冒充仓库本地 Unicode-safe 候选；两份契约分别保留，不静默覆盖历史 A/B 证据。
+上表记录当前仓库本地 Unicode-safe 输出；GN 输出名中的 `v4` 只作为已经存在的增量缓存
+标签保留，运行兼容性由导出的 ABI 2 / patchset 5 元数据门禁。Phase 8 的
+`projectBootstrap.releaseCandidate` 指向同一套 Release 产物，并精确锁定 import library、
+PDB、ICU、`gen_snapshot`、patched SDK 与仓库内 Dart SDK。stock/custom A/B 仍由独立的
+官方 Engine 和显式 backend 选择保留，不根据目录名推断版本。
 
 profile/release 除 Windows DLL、import library、PDB 和 ICU 外，还锁定
 `gen_snapshot.exe`、`flutter_patched_sdk/platform_strong.dill` 与
@@ -58,7 +56,7 @@ SDK 中另一份不匹配产物掩盖本地 Engine 缺件。
 
 严格验证报告为：
 
-- `build/diagnostics/engine/phase7-v4-all-modes-with-sdk-locked.json`；
+- `build/diagnostics/engine/patched-engine-20260930-122909.json`；
 - 三模式均保留官方 102 个导出，只增加
   `FlutterDesktopKirakaraCompositorGetApi`；
 - 源码树、补丁 SHA-256、`args.gn`、MSVC 14.34、PE linker 和所有锁定产物均匹配。
@@ -128,7 +126,7 @@ application-rule ID；任何新增提示或规则都会使报告和发布门禁�
 - custom DLL 以错误 ABI 请求时必须返回
   `kKirakaraFlutterCompositorVersionMismatch`；
 - API 结构大小错误时也必须返回同一明确错误；
-- 只有 ABI 2、patchset 4、`windows-dcomp-stage-visual` 和锁定 Engine revision
+- 只有 ABI 2、patchset 5、`windows-dcomp-stage-visual` 和锁定 Engine revision
   完全一致时才成功；
 - 返回的六个函数指针必须全部非空。
 
